@@ -94,14 +94,56 @@ If USBPcap is problematic, use a dedicated serial monitor:
 
 These intercept COM port traffic directly.
 
-### Option C: Logic Analyzer (Hardware)
+### Option C: Saleae Logic 8 (Recommended)
 
-For direct signal capture:
+We have a **Saleae Logic 8** for direct signal capture. This provides the cleanest captures and best Python automation.
 
-1. Use a Saleae Logic or similar ($10-400 depending on speed)
-2. Connect to the servo signal wire
-3. Configure async serial decoder
-4. Capture during programming operations
+#### Hardware Setup
+
+1. Connect the Saleae Logic 8 via USB
+2. Connect probes to the servo signal wire:
+   - **Channel 0 (black)**: TX line (Programmer → Servo)
+   - **Channel 1 (brown)**: RX line (Servo → Programmer)
+   - **GND**: Ground reference
+3. The servo bus uses half-duplex on a single wire, so you may connect both CH0 and CH1 to the same signal wire to capture both directions
+
+#### Software Setup
+
+```bash
+# Install Logic 2 software from https://www.saleae.com/downloads/
+# Then install Python automation library:
+pip install logic2-automation
+```
+
+#### Enable Automation API
+
+1. Open Logic 2 software
+2. Click gear icon (Preferences)
+3. Check "Enable automation server" (port 10430)
+
+#### Automated Capture
+
+```bash
+# Basic 5-second capture
+python tools/saleae_capture.py --duration 5
+
+# Trigger on signal activity
+python tools/saleae_capture.py --trigger --trigger-channel 0
+
+# Specify baud rate
+python tools/saleae_capture.py --baud 115200
+
+# Full example
+python tools/saleae_capture.py --duration 10 --baud 115200 --output servo_init
+```
+
+#### Manual Capture in Logic 2
+
+1. Open Logic 2
+2. Set sample rate to 10 MS/s (sufficient for serial up to 1 Mbps)
+3. Set voltage threshold to 3.3V or 5V depending on servo
+4. Add "Async Serial" analyzer with appropriate baud rate
+5. Click capture button
 
 ---
 

@@ -1,0 +1,10 @@
+# Axon Servo Programmer - Python Dependencies
+
+# Serial communication
+pyserial>=3.5
+
+# Saleae Logic 8 automation
+logic2-automation>=1.0.0
+
+# Data analysis (optional)
+# numpy>=1.20.0
