@@ -45,10 +45,12 @@
     "and error out cleanly in the CLI.",
     "",
     "Model IDs (the `id` key in 'models') are the ASCII bytes at",
-    "config offset 0x40..0x47 with trailing '*' as padding. Only the",
-    "Axon Mini has been confirmed empirically so far (SA33****); Max",
-    "and Micro are placeholders pending a physical read from those",
-    "models.",
+    "config offset 0x40..0x47 with trailing '*' as padding. Mini",
+    "(SA33****) and Micro (SA20BHS*) have been physically read. Max",
+    "(SA81BHMW) has its model id and bundled firmware populated from",
+    "the decrypted-firmware header, but its hardware-only fields",
+    "(defaults, magic bytes, max_range_deg) are null until a physical",
+    "Max is read via `axon read --svo`.",
     "",
     "IMPORTANT TERMINOLOGY: 'Sensitivity' (vendor name) is the PWM",
     "dead-band. 'Dampening Factor' (vendor name) is the D coefficient",
@@ -174,17 +176,16 @@
       }
     },
 
-    "_Axon_Max_placeholder": {
-      "_TODO": "Fill in once we can read a Max servo. Model ID unknown.",
+    "SA81BHMW": {
       "name": "Axon Max",
       "max_range_deg": null,
-      "pulse_range_us": [500, 2500],
+      "pulse_range_us": null,
       "docs_url": "https://docs.axon-robotics.com/servos/max",
       "recommended_pwm_power_percent_4v8": 66,
       "recommended_pwm_power_percent_6v0": null,
       "implementation": {
         "magic_bytes": null,
-        "notes": "Unknown until we get a physical Max to read."
+        "notes": "Model id extracted from the decrypted firmware header: both 'Axon_Max_Servo_Mode.sfw' and 'Axon_Max_Modified_CR_Mode.sfw' contain the Intel-HEX sentinel '@0801SA81BHMW' (ASCII bytes at offset 0x40..0x47 of the config block once loaded). The Max entry is populated *from firmware only* — no physical Max has been read yet. The hardware-only fields (max_range_deg, pulse_range_us, magic_bytes, defaults) are intentionally null because factory defaults vary by build vintage and the decomp (FUN_00405518) shows bytes 0-3 are a PPM-range selector keyed by the user's dropdown choice, not a per-model factory constant. The CLI must treat missing defaults as 'no default — leave value at current' rather than inventing one. Populate these fields after reading a physical Max via `axon read --svo`."
       },
       "bundled_firmware": {
         "standard": {
@@ -197,6 +198,9 @@
           "sha256": "1e7428593cac311dea15f470f6ae194ff128bef9de134d6679b4fefbd1985631",
           "description": "Modified continuous-rotation mode."
         }
+      },
+      "defaults": {
+        "_note": "No catalog defaults for the Max — factory defaults vary by build vintage and there is no physical capture yet. `axon set <param> default` on a Max will return 'no default — leaving value at current'. Populate after `axon read --svo` from a physical Max."
       }
     },
 

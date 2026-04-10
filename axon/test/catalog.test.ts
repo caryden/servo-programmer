@@ -53,6 +53,29 @@ describe("catalog", () => {
     expect(model?.pulse_range_us).toEqual([500, 2500]);
   });
 
+  test("findModel('SA81BHMW') returns Axon Max with firmware and no defaults", () => {
+    const catalog = loadCatalog();
+    const model = findModel(catalog, "SA81BHMW");
+    expect(model).toBeDefined();
+    expect(model?.name).toBe("Axon Max");
+    // Populated from the decrypted firmware header only — the
+    // hardware-only fields are intentionally null.
+    expect(model?.bundled_firmware?.standard?.sha256).toBe(
+      "6573946de5eeeb3dbf739ea79cfc71c649ba7cbd29bb3e781227a32cdca7db2e",
+    );
+    expect(model?.bundled_firmware?.continuous?.sha256).toBe(
+      "1e7428593cac311dea15f470f6ae194ff128bef9de134d6679b4fefbd1985631",
+    );
+    // Defaults map is intentionally empty except for the "_note"
+    // marker — getParameterDefault should return undefined for every
+    // parameter on Max.
+    expect(model?.defaults).toBeDefined();
+    const realDefaultKeys = Object.keys(model?.defaults ?? {}).filter(
+      (k) => !k.startsWith("_"),
+    );
+    expect(realDefaultKeys).toEqual([]);
+  });
+
   test("findModel('UNKNOWN') returns undefined", () => {
     const catalog = loadCatalog();
     expect(findModel(catalog, "UNKNOWN")).toBeUndefined();
