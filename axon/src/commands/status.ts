@@ -28,7 +28,8 @@
 import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
-import { identify, modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
+import { identify, type IdentifyReply, modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
+import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
 
 type StatusCategory =
@@ -67,7 +68,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
   }
 
   // ---- Phase 1: open and claim the HID handle -------------------------------
-  let handle;
+  let handle: DongleHandle;
   try {
     handle = await openDongle();
   } catch (e) {
@@ -90,7 +91,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
 
   try {
     // ---- Phase 2: identify ------------------------------------------------
-    let id;
+    let id: IdentifyReply;
     try {
       id = await identify(handle);
     } catch (e) {
