@@ -1,0 +1,30 @@
+# Axon servo programmer — libusb test scripts need root on macOS
+# to claim a HID-class interface (IOKit restriction).
+#
+# Scoped to ONLY the libusb test scripts in tools/. Any other sudo
+# command still prompts for password normally.
+#
+# Install with:
+#   sudo visudo -c -f /Users/caryden/github/servo-programmer/tools/axon-sudoers-rules.txt \
+#     && sudo install -m 0440 -o root -g wheel \
+#          /Users/caryden/github/servo-programmer/tools/axon-sudoers-rules.txt \
+#          /etc/sudoers.d/axon-testing
+#
+# Remove with:
+#   sudo rm /etc/sudoers.d/axon-testing
+
+caryden ALL=(root) NOPASSWD: /Users/caryden/tools/axon-hw-venv/bin/python3 /Users/caryden/github/servo-programmer/tools/axon_libusb_test*.py
+caryden ALL=(root) NOPASSWD: /Users/caryden/.bun/bin/bun /Users/caryden/github/servo-programmer/tools/*libusb*.ts
+caryden ALL=(root) NOPASSWD: /Users/caryden/.bun/bin/bun run /Users/caryden/github/servo-programmer/tools/*libusb*.ts
+
+# The axon CLI itself no longer needs sudo — it was switched from
+# libusb to hidapi (via node-hid), and hidapi goes through IOKit
+# HID Manager which does not require root. The lines below are
+# therefore no longer present, and the entire rules file is only
+# kept because the legacy tools/axon_libusb_test*.py scripts are
+# still useful for research and regression diagnostics.
+#
+# When those research scripts are no longer needed, you can uninstall
+# this whole rules file with:
+#
+#     bash tools/uninstall_sudoers.sh

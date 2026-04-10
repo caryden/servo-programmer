@@ -1,3 +1,15 @@
+# Vendor binaries — downloaded by the user, not owned by this repo.
+# Re-download with the URLs in docs/FINDINGS.md.
+downloads/
+
+# Scratch files from static analysis
+*.strings.txt
+*.bin
+/ID_10_*
+/strings_*.txt
+/tform1_*.txt
+/unit_names.txt
+
 # Python
 __pycache__/
 *.py[cod]
@@ -8,12 +20,22 @@ venv/
 .venv/
 ENV/
 
+# Node / Bun
+node_modules/
+*.log
+
 # Capture files (large binary data)
 captures/*.sal
 captures/*.csv
 captures/*.hex
 captures/*.sr
 !captures/.gitkeep
+
+# Large binary Saleae session files (>100 MB GitHub limit).
+# The decoded Async Serial CSV exports are small enough to commit
+# and contain everything we need from each capture — see
+# tools/decode_saleae_csv.py for the parser.
+samples/saleae/Session 0.sal
 
 # IDE
 .idea/

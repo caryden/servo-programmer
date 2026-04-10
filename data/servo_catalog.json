@@ -1,0 +1,101 @@
+{
+  "$schema_version": 1,
+  "catalog_version": "2026.04.09",
+  "source_docs": "https://docs.axon-robotics.com/archive/programmer",
+
+  "_notes": [
+    "This file is embedded in the axon CLI at build time and used as",
+    "the single source of truth for servo-model metadata, parameter",
+    "defaults, and bundled firmware file references.",
+    "",
+    "Model IDs (the `id` field) are the ASCII bytes at config offset",
+    "0x40..0x47 with trailing '*' as padding. Only the Axon Mini has",
+    "been confirmed empirically so far (SA33****); Max and Micro are",
+    "placeholders pending a physical read from those models.",
+    "",
+    "Parameter defaults and byte offsets are incomplete — filled in",
+    "progressively as we extract them from the vendor exe decomp",
+    "(see docs/BYTE_MAPPING.md)."
+  ],
+
+  "models": {
+    "SA33****": {
+      "name": "Axon Mini",
+      "max_range_deg": 355,
+      "pulse_range_us": [500, 2500],
+      "docs_url": "https://docs.axon-robotics.com/servos/mini",
+      "magic_bytes": "3b d0 0b f6",
+      "defaults": {
+        "_TODO": "populate from docs/BYTE_MAPPING.md once decomp walk is complete"
+      },
+      "bundled_firmware": {
+        "standard": {
+          "file": "Axon_Mini_Servo_Mode.sfw",
+          "sha256": "c9f038a854629c1f237e5008c9444a829d2fe5744203bcc959c8fd0c2e95c2c3",
+          "description": "Standard PWM position-control servo mode."
+        },
+        "continuous": {
+          "file": "Axon_Mini_Modified_CR_Mode.sfw",
+          "sha256": "684ba8d5f904b183e635469b6f55341b0bf7cb49546a6f069d59504cf9ae6380",
+          "description": "Modified continuous-rotation mode."
+        }
+      }
+    },
+
+    "_Axon_Max_placeholder": {
+      "_TODO": "Fill in once we can read a Max servo. Model ID unknown.",
+      "name": "Axon Max",
+      "max_range_deg": null,
+      "pulse_range_us": [500, 2500],
+      "docs_url": "https://docs.axon-robotics.com/servos/max",
+      "magic_bytes": null,
+      "bundled_firmware": {
+        "standard": {
+          "file": "Axon_Max_Servo_Mode.sfw",
+          "sha256": "6573946de5eeeb3dbf739ea79cfc71c649ba7cbd29bb3e781227a32cdca7db2e",
+          "description": "Standard PWM position-control servo mode."
+        },
+        "continuous": {
+          "file": "Axon_Max_Modified_CR_Mode.sfw",
+          "sha256": "1e7428593cac311dea15f470f6ae194ff128bef9de134d6679b4fefbd1985631",
+          "description": "Modified continuous-rotation mode."
+        }
+      }
+    },
+
+    "_Axon_Micro_placeholder": {
+      "_TODO": "Fill in once we can read a Micro servo. Model ID and firmware unknown.",
+      "name": "Axon Micro",
+      "max_range_deg": null,
+      "pulse_range_us": [500, 2500],
+      "docs_url": "https://docs.axon-robotics.com/servos/micro",
+      "magic_bytes": null,
+      "bundled_firmware": {}
+    }
+  },
+
+  "parameters": {
+    "_TODO": "populate from docs/BYTE_MAPPING.md once decomp walk is complete",
+    "range": {
+      "unit": "deg",
+      "description": "Total angular sweep of the servo. Maps to a byte value 0-255; actual degrees depend on the servo model's max_range_deg.",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#range"
+    },
+    "center": {
+      "unit": "deg",
+      "description": "Home/neutral angle at 1500 µs pulse.",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#center"
+    },
+    "direction": {
+      "unit": "enum",
+      "values": ["normal", "reversed"],
+      "description": "Rotation direction.",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#direction"
+    },
+    "deadband": {
+      "unit": "us",
+      "description": "PWM deadband around the center pulse.",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#deadband"
+    }
+  }
+}
