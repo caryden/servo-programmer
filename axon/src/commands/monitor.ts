@@ -5,9 +5,10 @@
  * Ctrl-C to stop.
  */
 
+import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
-import { identify, type ServoMode } from "../driver/protocol.ts";
+import { identify, modelIdFromConfig, readFullConfig, type ServoMode } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { ExitCode } from "../errors.ts";
 import { CLEAR_LINE, HIDE_CURSOR, renderStatusBar, SHOW_CURSOR } from "../util/tui.ts";
@@ -23,6 +24,7 @@ function modeLabel(mode: ServoMode): string | null {
 export async function runMonitor(flags: GlobalFlags): Promise<number> {
   let handle: DongleHandle | null = null;
   let lastLine = "";
+  let cachedModelName: string | null = null;
   const isTTY = process.stdout.isTTY === true;
 
   if (isTTY && !flags.json) process.stdout.write(HIDE_CURSOR);
@@ -35,39 +37,51 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
   process.on("SIGINT", cleanup);
 
   while (!stopping) {
-    let connected = false;
-    let model: string | null = null;
+    let adapterPresent = false;
+    let servoName: string | null = null;
     let mode: string | null = null;
-    let detail: string | null = null;
 
     try {
       if (handle === null) {
+        cachedModelName = null;
         if (isDonglePresent()) {
           try {
             handle = await openDongle();
-          } catch (e) {
-            detail = (e as Error).message;
+          } catch {
+            // claim failed — retry next tick
           }
         }
       }
 
       if (handle !== null) {
-        connected = true;
+        adapterPresent = true;
         try {
           const id = await identify(handle);
           if (id.present) {
             mode = modeLabel(id.mode);
-            // We don't read the full config every tick (too slow).
-            // Model name shows after the first successful identify.
-            model = "servo connected";
+            // Read model name once, cache it for subsequent ticks.
+            if (cachedModelName === null) {
+              try {
+                const config = await readFullConfig(handle);
+                const modelId = modelIdFromConfig(config);
+                const catalog = loadCatalog();
+                const model = findModel(catalog, modelId);
+                cachedModelName = model?.name ?? modelId;
+              } catch {
+                cachedModelName = "servo";
+              }
+            }
+            servoName = cachedModelName;
+          } else {
+            cachedModelName = null;
           }
         } catch {
-          // identify failed — release and retry next tick
           try {
             await handle.release();
           } catch {}
           handle = null;
-          connected = false;
+          adapterPresent = false;
+          cachedModelName = null;
         }
       }
     } catch {
@@ -77,10 +91,11 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
         } catch {}
         handle = null;
       }
+      cachedModelName = null;
     }
 
     if (flags.json) {
-      const obj = { connected, model, mode, detail };
+      const obj = { adapter: adapterPresent, servo: servoName, mode };
       const line = JSON.stringify(obj);
       if (line !== lastLine) {
         process.stdout.write(line + "\n");
@@ -88,17 +103,16 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
       }
     } else {
       const bar = renderStatusBar({
-        connected,
-        modelName: model,
+        adapter: adapterPresent,
+        servoName,
         modeName: mode,
       });
-      const line = bar + (detail ? `  ${detail}` : "");
-      if (line !== lastLine) {
+      if (bar !== lastLine) {
         if (isTTY && lastLine) {
           process.stdout.write(`\r${CLEAR_LINE}`);
         }
-        process.stdout.write(isTTY ? `\r${line}` : `${line}\n`);
-        lastLine = line;
+        process.stdout.write(isTTY ? `\r${bar}` : `${bar}\n`);
+        lastLine = bar;
       }
     }
 

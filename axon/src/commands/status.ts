@@ -207,8 +207,8 @@ function emit(flags: GlobalFlags, result: StatusObservation): void {
   // Pretty TUI output: colored status bar
   process.stdout.write(
     renderStatusBar({
-      connected: result.adapter === "connected",
-      modelName: result.model?.name ?? null,
+      adapter: result.adapter === "connected",
+      servoName: result.model?.name ?? (result.servo === "present" ? "servo" : null),
       modeName: result.mode_label ?? null,
     }) + "\n",
   );

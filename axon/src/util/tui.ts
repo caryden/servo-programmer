@@ -40,24 +40,40 @@ function pill(text: string, bg: string, fg: string): string {
 // ---- status bar -------------------------------------------------------------
 
 export interface StatusBarInfo {
-  connected: boolean;
-  modelName?: string | null;
+  /** Adapter is plugged in and the HID handle opened. */
+  adapter: boolean;
+  /** Servo model name (e.g. "Axon Mini"), or null if no servo. */
+  servoName?: string | null;
+  /** Human mode label (e.g. "Servo Mode"), or null if unknown. */
   modeName?: string | null;
 }
 
+/**
+ * Render the status bar. Rules:
+ *   - Pill 1: adapter state (always shown)
+ *   - Pill 2: servo name — only when adapter is connected
+ *   - Pill 3: mode — only when servo is present
+ */
 export function renderStatusBar(info: StatusBarInfo): string {
   const parts: string[] = [];
 
-  if (info.connected) {
-    parts.push(pill("Connected", BG_GREEN, FG_BLACK));
+  // Pill 1: adapter
+  if (info.adapter) {
+    parts.push(pill("Adapter", BG_GREEN, FG_BLACK));
   } else {
-    parts.push(pill("Disconnected", BG_RED, FG_WHITE));
+    parts.push(pill("No Adapter", BG_RED, FG_WHITE));
+    return parts.join("");
   }
 
-  if (info.modelName) {
-    parts.push(pill(info.modelName, BG_BLUE, FG_WHITE));
+  // Pill 2: servo (only if adapter connected)
+  if (info.servoName) {
+    parts.push(pill(info.servoName, BG_BLUE, FG_WHITE));
+  } else {
+    parts.push(pill("No Servo", BG_YELLOW, FG_BLACK));
+    return parts.join("");
   }
 
+  // Pill 3: mode (only if servo present)
   if (info.modeName) {
     parts.push(pill(info.modeName, BG_CYAN, FG_BLACK));
   }

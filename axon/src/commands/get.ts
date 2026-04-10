@@ -169,7 +169,7 @@ function listAllParamsForMode(
 
   // Status bar
   process.stdout.write(
-    renderStatusBar({ connected: true, modelName: modelName, modeName: modeLabel }) + "\n",
+    renderStatusBar({ adapter: true, servoName: modelName, modeName: modeLabel }) + "\n",
   );
 
   // Parameter table
