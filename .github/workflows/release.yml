@@ -39,11 +39,17 @@ jobs:
             bun_target: bun-linux-x64
             artifact: axon-linux-x64
             ext: ''
+            # linux-arm64 uses a public-larger-runner image that not
+            # every GH plan has enabled. We still try to build it,
+            # but a missing runner shouldn't block the rest of the
+            # release — the continue-on-error below lets the other
+            # four platforms ship even if this one fails.
           - os: ubuntu-24.04-arm
             target: linux-arm64
             bun_target: bun-linux-arm64
             artifact: axon-linux-arm64
             ext: ''
+            allow_failure: true
           - os: macos-latest
             target: darwin-arm64
             bun_target: bun-darwin-arm64
@@ -60,6 +66,7 @@ jobs:
             artifact: axon-windows-x64
             ext: '.exe'
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.allow_failure == true }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,10 +98,13 @@ jobs:
         run: bun run embed-sfw
 
       # `bun build --compile` produces a single executable that
-      # bundles the Bun runtime + our source. The --target flag
-      # selects which Bun runtime to embed; we match it to the
-      # current runner since node-hid is native and will only run on
-      # that runner's platform anyway.
+      # bundles the Bun runtime + our source. The --target flag is
+      # redundant on a matching host (it would let Bun cross-compile
+      # the runtime, but NOT the native node-hid .node addon —
+      # that's the reason we build per-runner in the first place).
+      # We pass --target anyway so a mis-configured matrix (wrong
+      # os/target pair) fails loudly at build time instead of
+      # shipping a binary with a wrong-arch .node inside.
       - name: Build standalone binary
         working-directory: axon
         shell: bash
