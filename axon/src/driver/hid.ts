@@ -19,12 +19,61 @@
  */
 
 import HID from "node-hid";
-import { AxonError } from "../errors.ts";
+import { AxonError, ExitCode } from "../errors.ts";
 import type { DongleHandle } from "./transport.ts";
 
 export const VID = 0x0471;
 export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
+
+/**
+ * Small utility: how long to wait before retrying a transient HID
+ * I/O failure. node-hid on macOS is occasionally flaky for a
+ * window of tens of milliseconds right after a device plug event
+ * (or a hot-swap between two Axon servos with the same
+ * VID/PID/product), so one retry dramatically reduces "false
+ * failure" exits without noticeably slowing down the normal path.
+ */
+const HID_RETRY_DELAY_MS = 50;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Translate a raw node-hid write failure into an AxonError with a
+ * clean user-facing message and an actionable hint. The top-level
+ * cli.ts handler renders AxonError specially (no stack trace), so
+ * wrapping here keeps the user experience graceful.
+ */
+function hidWriteError(detail: string): AxonError {
+  return new AxonError(
+    ExitCode.ServoIoError,
+    `Cannot write to the Axon dongle (${detail}).`,
+    "Unplug and replug the dongle, then retry. If the problem persists: " +
+      "make sure no other process is holding the device open (the vendor " +
+      "exe in Parallels, an older axon process, or a Saleae Logic 2 " +
+      "automation connection). On macOS, hot-swapping between two servos " +
+      "connected to the same dongle sometimes leaves the HID handle in a " +
+      "stale state for a few seconds — a physical dongle replug fixes it.",
+  );
+}
+
+/**
+ * Same idea for read failures (which on the Axon dongle are almost
+ * always write failures in disguise, because every read is preceded
+ * by a write that set up the response).
+ */
+function hidReadError(detail: string): AxonError {
+  return new AxonError(
+    ExitCode.ServoIoError,
+    `Cannot read from the Axon dongle (${detail}).`,
+    "Unplug and replug the dongle, then retry. If the dongle is enumerating " +
+      "but reads keep timing out, the servo may have been hot-swapped or " +
+      "gone into a cold state; replug the servo (leaving the dongle " +
+      "connected) to re-prime it.",
+  );
+}
 
 /**
  * Cheap "is there a dongle plugged in" check. Enumerates HID devices
@@ -49,47 +98,62 @@ class NodeHidDongle implements DongleHandle {
     this.device = device;
   }
 
-  write(data: Buffer, _timeoutMs = 500): Promise<void> {
+  async write(data: Buffer, _timeoutMs = 500): Promise<void> {
     if (this.released) {
-      return Promise.reject(new Error("write after release"));
+      throw hidWriteError("handle was released");
     }
     if (data.length > REPORT_SIZE) {
-      return Promise.reject(
-        new Error(`hid write: data is ${data.length} bytes, max ${REPORT_SIZE}`),
+      throw hidWriteError(
+        `buffer is ${data.length} bytes, max is ${REPORT_SIZE}`,
       );
     }
     const padded = Buffer.alloc(REPORT_SIZE);
     data.copy(padded, 0);
-    return new Promise<void>((resolve, reject) => {
+    const payload = Array.from(padded);
+
+    // Attempt the write, then retry once after a short delay on
+    // transient errors. node-hid can throw a raw TypeError here
+    // ("Cannot write to hid device") when the device is in a
+    // just-plugged / hot-swap / stale-handle state — one retry
+    // usually clears it.
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const n = this.device.write(Array.from(padded));
+        const n = this.device.write(payload);
         if (n <= 0) {
-          reject(new Error(`hid write returned ${n}`));
+          lastError = new Error(
+            `node-hid write returned ${n} (expected ${REPORT_SIZE})`,
+          );
         } else {
-          resolve();
+          return; // success
         }
       } catch (e) {
-        reject(e as Error);
+        lastError = e;
       }
-    });
+      if (attempt === 0) {
+        await sleep(HID_RETRY_DELAY_MS);
+      }
+    }
+    // Both attempts failed — surface a clean AxonError.
+    throw hidWriteError((lastError as Error).message ?? "unknown failure");
   }
 
-  read(timeoutMs = 500): Promise<Buffer> {
+  async read(timeoutMs = 500): Promise<Buffer> {
     if (this.released) {
-      return Promise.reject(new Error("read after release"));
+      throw hidReadError("handle was released");
     }
-    return new Promise<Buffer>((resolve, reject) => {
-      try {
-        const bytes = this.device.readTimeout(timeoutMs);
-        if (!bytes || bytes.length === 0) {
-          reject(new Error("hid read returned empty buffer (timeout?)"));
-          return;
-        }
-        resolve(Buffer.from(bytes));
-      } catch (e) {
-        reject(e as Error);
+    try {
+      const bytes = this.device.readTimeout(timeoutMs);
+      if (!bytes || bytes.length === 0) {
+        throw hidReadError(
+          `read timed out after ${timeoutMs} ms (no bytes available)`,
+        );
       }
-    });
+      return Buffer.from(bytes);
+    } catch (e) {
+      if (e instanceof AxonError) throw e;
+      throw hidReadError((e as Error).message ?? "unknown failure");
+    }
   }
 
   async release(): Promise<void> {
