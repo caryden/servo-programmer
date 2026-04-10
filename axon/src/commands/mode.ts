@@ -364,11 +364,25 @@ async function runModeSet(
     cmdSleepMs: Number.isFinite(cmdSleepOverride) ? cmdSleepOverride : undefined,
   });
 
-  // Re-identify to confirm the mode transition.
-  const afterId = await identify(handle);
-  if (!afterId.present) {
+  // Re-identify to confirm the mode transition. The servo reboots
+  // after the flash, so we retry a few times with a delay to let
+  // the new firmware come up.
+  let afterId: IdentifyReply | null = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const id2 = await identify(handle);
+      if (id2.present) {
+        afterId = id2;
+        break;
+      }
+    } catch {
+      // servo still rebooting — try again
+    }
+  }
+  if (afterId === null) {
     process.stderr.write(
-      "\nFlash completed but the servo did not respond. " +
+      "\nFlash completed but the servo did not respond after 6 seconds. " +
         "Replug the servo and check with `axon status`.\n",
     );
     return ExitCode.ServoIoError;
