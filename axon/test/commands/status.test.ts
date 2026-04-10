@@ -150,6 +150,47 @@ describe("axon status", () => {
     expect(result.hint).not.toMatch(/parallels|saleae|iokit|vendor exe/i);
   });
 
+  test("servo_io phase: config read failure after identify maps to servo_io", async () => {
+    // Identify succeeds, but the subsequent readFullConfig throws.
+    // The old code labeled this servo_present (wrong — scripts
+    // branching on the category would see success). Fixed: it now
+    // emits servo_io with the raw error, so machine consumers can
+    // distinguish a connected-and-working servo from one that
+    // failed mid-transaction.
+    const mockDongle = new MockDongle();
+    const origWrite = mockDongle.write.bind(mockDongle);
+    const origRead = mockDongle.read.bind(mockDongle);
+    let writeCount = 0;
+    mockDongle.write = async (data: Buffer, timeoutMs?: number) => {
+      writeCount++;
+      // Let the identify (write #1) through; fail on the first
+      // config read (write #2 onward) with a transport-layer error.
+      if (writeCount >= 2) {
+        const { AxonError } = await import("../../src/errors.ts");
+        throw AxonError.adapterIo("HID write -1 during config read (mock test)");
+      }
+      return origWrite(data, timeoutMs);
+    };
+    mockDongle.read = async (timeoutMs?: number) => origRead(timeoutMs);
+
+    await mock.module("../../src/driver/hid.ts", () => ({
+      isDonglePresent: () => true,
+      openDongle: async () => mockDongle,
+      VID: 0x0471,
+      PID: 0x13aa,
+      REPORT_SIZE: 64,
+    }));
+    const { runStatus } = await import("../../src/commands/status.ts");
+    const code = await runStatus(JSON_FLAGS);
+    expect(code).toBe(ExitCode.Ok);
+    const result = JSON.parse(io.stdout.trim());
+    expect(result.category).toBe("servo_io");
+    expect(result.adapter).toBe("connected");
+    expect(result.servo).toBe("present");
+    expect(result.error).toContain("HID I/O to the Axon adapter failed");
+    expect(result.error).toContain("during config read");
+  });
+
   test("servo_present phase: full pipeline succeeds on MockDongle", async () => {
     const mockDongle = new MockDongle();
     await mock.module("../../src/driver/hid.ts", () => ({

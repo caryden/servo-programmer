@@ -42,6 +42,7 @@ type StatusCategory =
   | "adapter_busy"
   | "adapter_io"
   | "no_servo"
+  | "servo_io"
   | "unknown_model"
   | "servo_present";
 
@@ -138,13 +139,15 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
       config = await readFullConfig(handle);
     } catch (e) {
       // We had a PRESENT identify reply but the config read failed.
-      // This would be a mid-transaction I/O error — surface it with
-      // the servo still reported as present.
+      // This is a mid-transaction I/O failure — surface it with a
+      // category that matches reality (servo_io), NOT servo_present.
+      // Scripts branching on `category === "servo_present"` must not
+      // see success here.
       if (e instanceof AxonError) {
         emit(flags, {
           adapter: "connected",
           servo: "present",
-          category: "servo_present",
+          category: "servo_io",
           hint: e.hint,
           error: e.message,
         });

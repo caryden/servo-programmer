@@ -28,4 +28,4 @@
 *.pdf     binary
 *.zip     binary
 *.bin     binary
-*.plain.bin binary
+*.plain.bin -text
