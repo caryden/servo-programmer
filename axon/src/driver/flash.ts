@@ -422,18 +422,14 @@ export async function flashFirmware(
     );
   }
 
-  // Phase 3: "cancel any previous flash" (0x83 FF 55 AA …).
-  progress({ phase: "cancel", message: "Cancelling any previous flash session..." });
-  const cancelBuf = Buffer.alloc(FLASH_PAYLOAD_SIZE);
-  cancelBuf[0] = 0xff;
-  cancelBuf[1] = 0x55;
-  cancelBuf[2] = 0xaa;
-  fillRandom(cancelBuf, 3);
-  // Expected reply is 1 byte of any value; swallow it to keep the
-  // HID input queue drained.
-  await exchange(handle, CMD_FLASH_MARKER, cancelBuf, 1, sleepMs);
+  // NOTE: 0x83 "cancel" is NOT sent here. In the vendor decomp
+  // (firmware_handler.c:227-238), the 0x83 cancel only appears in the
+  // ERROR path (cVar2 == 0 → "Error Update please check connection").
+  // The SUCCESS path goes straight from boot query → AES decrypt →
+  // key exchange. Sending 0x83 before 0x81 tells the servo "abort
+  // the flash session" and then the key exchange is rejected.
 
-  // Phase 4: key exchange (0x81 + 22 random bytes).
+  // Phase 3: key exchange (0x81 + 22 random bytes).
   progress({ phase: "key_exchange", message: "Negotiating flash session key..." });
   const challenge = randomBytes(FLASH_PAYLOAD_SIZE);
   const response = await exchange(handle, CMD_KEY_EXCHANGE, challenge, FLASH_PAYLOAD_SIZE, sleepMs);
