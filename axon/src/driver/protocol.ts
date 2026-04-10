@@ -11,8 +11,8 @@
  *
  * See docs/FINDINGS.md "Wire protocol decoded" and "HID reply
  * format" sections for the full derivation, and
- * tools/ghidra_out/param_helper_READ_004047d0_FUN_004047d0.c for
- * the vendor exe's equivalent function. Notable constants taken
+ * research/static-analysis/ghidra_out/param_helper_READ_004047d0_FUN_004047d0.c
+ * for the vendor exe's equivalent function. Notable constants taken
  * from that decomp:
  *
  *   - max chunk size = 59 bytes (0x3B)
@@ -22,12 +22,8 @@
  */
 
 import { AxonError } from "../errors.ts";
-import {
-  hidRead,
-  hidWrite,
-  REPORT_SIZE,
-  type DongleHandle,
-} from "./hid.ts";
+import { REPORT_SIZE } from "./hid.ts";
+import type { DongleHandle } from "./transport.ts";
 
 export const CMD_IDENTIFY = 0x8a;
 export const CMD_READ = 0xcd;
@@ -86,8 +82,8 @@ export async function identify(
   handle: DongleHandle,
 ): Promise<IdentifyReply> {
   const tx = buildTx(CMD_IDENTIFY, 0x00, 0x04);
-  await hidWrite(handle, tx);
-  const rx = await hidRead(handle);
+  await handle.write(tx);
+  const rx = await handle.read();
   // Well-known PRESENT fingerprint: rx[1]=0x01, rx[2]=0x00, rx[5] is
   // either 0x03 or 0x04 (we've seen 0x03 from the Mini), rx[7]=0x01.
   const present =
@@ -116,9 +112,9 @@ export async function readChunk(
   }
   await sleep(CHUNK_SLEEP_MS);
   const tx = buildTx(CMD_READ, addr, length);
-  await hidWrite(handle, tx);
+  await handle.write(tx);
   await sleep(WIRE_REPLY_SETTLE_MS);
-  const rx = await hidRead(handle);
+  const rx = await handle.read();
   if (rx[1] !== 0x01 || rx[2] !== 0x00) {
     // Distinguish "no servo" from other failures so the user gets a
     // useful recovery hint.
@@ -164,9 +160,9 @@ export async function writeChunk(
   }
   await sleep(CHUNK_SLEEP_MS);
   const tx = buildWriteTx(addr, data);
-  await hidWrite(handle, tx);
+  await handle.write(tx);
   await sleep(WIRE_REPLY_SETTLE_MS);
-  const rx = await hidRead(handle);
+  const rx = await handle.read();
   if (rx[1] === 0) {
     throw AxonError.servoIo(
       `write nack: rx[1]=0 (expected non-zero). rx[2]=0x${rx[2]!.toString(16).padStart(2, "0")}`,

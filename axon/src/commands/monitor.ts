@@ -11,11 +11,8 @@
  */
 
 import { identify } from "../driver/protocol.ts";
-import {
-  isDonglePresent,
-  openDongle,
-  type DongleHandle,
-} from "../driver/hid.ts";
+import { isDonglePresent, openDongle } from "../driver/hid.ts";
+import type { DongleHandle } from "../driver/transport.ts";
 import { ExitCode } from "../errors.ts";
 import type { GlobalFlags } from "../cli.ts";
 

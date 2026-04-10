@@ -1,32 +1,30 @@
 /**
- * HID transport for the Axon dongle via node-hid.
+ * Production HID transport for the Axon dongle via node-hid.
  *
- * This replaces an earlier libusb-based driver that required `sudo` on
- * macOS to claim HID-class interfaces. node-hid goes through the OS's
- * HID framework (IOKit HID Manager on macOS, hidraw on Linux, HID.dll
- * on Windows) and does NOT need elevated privileges on any platform.
+ * Implements the abstract `DongleHandle` interface from
+ * `transport.ts`. The protocol layer in `protocol.ts` only sees the
+ * abstract interface — it has no compile-time dependency on
+ * `node-hid`. Tests inject a `MockDongle` instead.
  *
- * The protocol layer above (driver/protocol.ts) is transport-agnostic
- * and talks to this module through a `DongleHandle` abstraction, so
- * swapping the transport is purely mechanical.
+ * This module replaces an earlier libusb-based driver that required
+ * `sudo` on macOS to claim HID-class interfaces. node-hid goes
+ * through the OS's HID framework (IOKit HID Manager on macOS,
+ * hidraw on Linux, HID.dll on Windows) and does NOT need elevated
+ * privileges on any platform.
  *
  * IMPORTANT: the dongle has a state machine that can be put into a
- * "cold" mode by a USB bus reset. Never issue one. `node-hid` does
- * not expose such a primitive, so we're safe here by construction —
- * the risk was a libusb-era footgun.
+ * "cold" mode by a USB bus reset. node-hid does not expose any
+ * primitive that can do this — we're safe by construction. The risk
+ * was a libusb-era footgun.
  */
 
 import HID from "node-hid";
 import { AxonError } from "../errors.ts";
+import type { DongleHandle } from "./transport.ts";
 
 export const VID = 0x0471;
 export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
-
-export interface DongleHandle {
-  device: HID.HID;
-  release(): Promise<void>;
-}
 
 /**
  * Cheap "is there a dongle plugged in" check. Enumerates HID devices
@@ -36,6 +34,73 @@ export interface DongleHandle {
 export function isDonglePresent(): boolean {
   const matches = HID.devices(VID, PID);
   return matches.length > 0;
+}
+
+/**
+ * Concrete `DongleHandle` implementation backed by a node-hid
+ * `HID.HID` instance. Internal — instances are produced by
+ * `openDongle()`.
+ */
+class NodeHidDongle implements DongleHandle {
+  private device: HID.HID;
+  private released = false;
+
+  constructor(device: HID.HID) {
+    this.device = device;
+  }
+
+  write(data: Buffer, _timeoutMs = 500): Promise<void> {
+    if (this.released) {
+      return Promise.reject(new Error("write after release"));
+    }
+    if (data.length > REPORT_SIZE) {
+      return Promise.reject(
+        new Error(`hid write: data is ${data.length} bytes, max ${REPORT_SIZE}`),
+      );
+    }
+    const padded = Buffer.alloc(REPORT_SIZE);
+    data.copy(padded, 0);
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const n = this.device.write(Array.from(padded));
+        if (n <= 0) {
+          reject(new Error(`hid write returned ${n}`));
+        } else {
+          resolve();
+        }
+      } catch (e) {
+        reject(e as Error);
+      }
+    });
+  }
+
+  read(timeoutMs = 500): Promise<Buffer> {
+    if (this.released) {
+      return Promise.reject(new Error("read after release"));
+    }
+    return new Promise<Buffer>((resolve, reject) => {
+      try {
+        const bytes = this.device.readTimeout(timeoutMs);
+        if (!bytes || bytes.length === 0) {
+          reject(new Error("hid read returned empty buffer (timeout?)"));
+          return;
+        }
+        resolve(Buffer.from(bytes));
+      } catch (e) {
+        reject(e as Error);
+      }
+    });
+  }
+
+  async release(): Promise<void> {
+    if (this.released) return;
+    this.released = true;
+    try {
+      this.device.close();
+    } catch {
+      // best effort — node-hid occasionally throws on double-close
+    }
+  }
 }
 
 /**
@@ -71,69 +136,5 @@ export async function openDongle(): Promise<DongleHandle> {
     );
   }
 
-  const release = async (): Promise<void> => {
-    try {
-      device.close();
-    } catch {
-      // best effort — node-hid occasionally throws on double-close
-    }
-  };
-
-  return { device, release };
-}
-
-/**
- * Send a 64-byte HID output report. The input data is padded with
- * zeros if shorter than `REPORT_SIZE`. `data[0]` must be the HID
- * report id (`0x04` for this device).
- */
-export function hidWrite(
-  handle: DongleHandle,
-  data: Buffer,
-  _timeoutMs = 500,
-): Promise<void> {
-  if (data.length > REPORT_SIZE) {
-    throw new Error(
-      `hidWrite: data is ${data.length} bytes, max ${REPORT_SIZE}`,
-    );
-  }
-  const padded = Buffer.alloc(REPORT_SIZE);
-  data.copy(padded, 0);
-  // node-hid's .write is synchronous but conceptually async —
-  // wrap to keep the protocol-layer API async.
-  return new Promise<void>((resolve, reject) => {
-    try {
-      const n = handle.device.write(Array.from(padded));
-      if (n <= 0) {
-        reject(new Error(`hidWrite returned ${n}`));
-      } else {
-        resolve();
-      }
-    } catch (e) {
-      reject(e as Error);
-    }
-  });
-}
-
-/**
- * Read a single HID input report with a blocking timeout. Returns a
- * Buffer of the full report bytes. `readTimeout` is synchronous in
- * node-hid; we wrap in a Promise for API symmetry with hidWrite.
- */
-export function hidRead(
-  handle: DongleHandle,
-  timeoutMs = 500,
-): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    try {
-      const bytes = handle.device.readTimeout(timeoutMs);
-      if (!bytes || bytes.length === 0) {
-        reject(new Error("hidRead returned empty buffer (timeout?)"));
-        return;
-      }
-      resolve(Buffer.from(bytes));
-    } catch (e) {
-      reject(e as Error);
-    }
-  });
+  return new NodeHidDongle(device);
 }
