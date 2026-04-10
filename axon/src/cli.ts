@@ -244,7 +244,7 @@ function printCommandHelp(command: string): void {
     case "status":
       process.stdout.write(
         `axon status — one-shot presence check\n\n` +
-          `Prints whether the dongle is connected and whether the servo reports PRESENT.\n` +
+          `Prints whether the adapter is connected and whether the servo reports PRESENT.\n` +
           `Always exits 0; the output is informational.\n\n` +
           `FLAGS:\n` +
           `  --json      Machine-readable output\n` +

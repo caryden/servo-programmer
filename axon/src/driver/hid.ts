@@ -39,11 +39,11 @@ export const REPORT_SIZE = 64;
  * actually fix the bug instead of papering over it.
  */
 function hidWriteError(detail: string): AxonError {
-  return AxonError.adapterStale(detail);
+  return AxonError.adapterIo(detail);
 }
 
 function hidReadError(detail: string): AxonError {
-  return AxonError.adapterStale(detail);
+  return AxonError.adapterIo(detail);
 }
 
 /**

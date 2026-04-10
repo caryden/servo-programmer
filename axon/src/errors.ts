@@ -28,11 +28,11 @@ export type ExitCodeValue = (typeof ExitCode)[ExitCodeName];
  * situation and exactly one suggested recovery.
  */
 export type ErrorCategory =
-  | "no_adapter" // dongle not on USB
-  | "adapter_busy" // enumerates but something else owns it
-  | "adapter_stale" // opens but first HID write/read rejected (post-plug or hot-swap)
+  | "no_adapter" // adapter not on USB
+  | "adapter_busy" // enumerates but the HID open failed (positive observation)
+  | "adapter_io" // HID write or read on an open handle failed (observation, not cause)
   | "no_servo" // adapter OK, identify returns rx[2]=0xFA
-  | "servo_io" // mid-transaction I/O error (lost during read/write)
+  | "servo_io" // mid-transaction servo I/O error (lost during read/write after identify)
   | "unknown_model" // servo present but its model id isn't in the catalog
   | "validation" // user input out of range, bad file, etc.
   | "usage" // CLI argument problem
@@ -67,10 +67,9 @@ export class AxonError extends Error {
   }
 
   /**
-   * The dongle enumerated on USB but the HID handle could not be
-   * opened. We don't know why — could be permissions, another
-   * process, a stale handle, anything. Surface the raw OS error so
-   * it can be diagnosed rather than papering over it.
+   * The adapter enumerated on USB but `new HID.HID(path)` threw.
+   * Surface the raw OS error verbatim so the actual cause (EACCES,
+   * device in use, etc.) is visible rather than papered over.
    */
   static adapterBusy(detail: string): AxonError {
     return new AxonError(
@@ -82,16 +81,17 @@ export class AxonError extends Error {
   }
 
   /**
-   * The dongle opened but a HID write or read was rejected. Surface
-   * the raw OS error so the actual cause is visible, not hidden
-   * behind a speculative hint.
+   * HID write or read on an already-open handle failed. This is a
+   * pure observation — we do not speculate about the cause (stale
+   * handle, hot-swap, OS-level weirdness, etc.). The raw OS error is
+   * included verbatim so the user has something concrete to chase.
    */
-  static adapterStale(detail: string): AxonError {
+  static adapterIo(detail: string): AxonError {
     return new AxonError(
       ExitCode.ServoIoError,
       `HID I/O to the Axon adapter failed: ${detail}`,
       "Unplug and replug the adapter, then retry.",
-      "adapter_stale",
+      "adapter_io",
     );
   }
 

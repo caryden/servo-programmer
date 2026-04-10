@@ -11,13 +11,14 @@
  * States this command can report:
  *
  *   no_adapter      — nothing on USB with the right VID/PID
- *   adapter_busy    — USB device found but HID open failed (another
- *                     process has it)
- *   adapter_stale   — HID open succeeded but the first identify was
- *                     rejected (stale handle, needs a dongle replug)
+ *   adapter_busy    — USB device found but `HID.HID(path)` threw
+ *                     (positive observation that the open failed)
+ *   adapter_io      — open succeeded but the first HID write/read
+ *                     was rejected (pure observation, no speculation)
  *   no_servo        — identify worked but rx[2]=0xFA (no servo on
  *                     the wire, user needs to replug the servo)
  *   servo_present   — everything is fine; model id is reported
+ *   unknown_model   — servo reports a model id not in the catalog
  *
  * In --json mode, every response includes a machine-readable
  * `category` field that an agent or script can branch on instead
@@ -28,12 +29,12 @@ import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
 import { identify, modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
-import { AxonError, type ErrorCategory, ExitCode } from "../errors.ts";
+import { AxonError, ExitCode } from "../errors.ts";
 
 type StatusCategory =
   | "no_adapter"
   | "adapter_busy"
-  | "adapter_stale"
+  | "adapter_io"
   | "no_servo"
   | "unknown_model"
   | "servo_present";
@@ -60,9 +61,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
       adapter: "disconnected",
       servo: "unknown",
       category: "no_adapter",
-      hint:
-        "Plug in the Axon dongle. It should enumerate as VID 0471 PID " +
-        "13AA ('USBBootloader V1.3' / 'Stone Laboratories inc.').",
+      hint: "Plug in the Axon servo programmer adapter.",
     });
     return ExitCode.Ok;
   }
@@ -95,15 +94,13 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
     try {
       id = await identify(handle);
     } catch (e) {
-      // The adapter opened but the first HID write/read failed. Most
-      // likely a stale IOKit/HID handle on our side.
+      // The adapter opened but the first HID write/read failed.
+      // Report the raw observation verbatim — no speculation.
       if (e instanceof AxonError) {
         emit(flags, {
           adapter: "connected",
           servo: "unknown",
-          category: (e.category === "adapter_stale"
-            ? "adapter_stale"
-            : "adapter_stale") as StatusCategory,
+          category: "adapter_io",
           hint: e.hint,
           error: e.message,
         });
@@ -113,7 +110,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
     }
 
     if (!id.present) {
-      // Adapter is fine, HID transport is fine, but the dongle
+      // Adapter is fine, HID transport is fine, but the adapter
       // reports no servo attached (rx[2]=0xFA is the canonical
       // "no servo" response). Tell the user exactly what to do.
       emit(flags, {
@@ -122,10 +119,9 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
         category: "no_servo",
         servo_status_byte: `0x${id.statusLo.toString(16).padStart(2, "0")}`,
         hint:
-          "Adapter is connected but no servo is detected. Unplug the " +
-          "servo from the dongle and plug it back in, leaving the " +
-          "adapter connected. This re-primes the dongle's servo-presence " +
-          "state.",
+          "Adapter is connected but no servo is detected. " +
+          "Unplug the servo from the adapter and plug it back in " +
+          "(leave the adapter connected).",
       });
       return ExitCode.Ok;
     }
