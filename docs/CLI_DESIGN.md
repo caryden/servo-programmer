@@ -188,5 +188,5 @@ These are hidden from the `--help` output and live under
 | `axon shell` (REPL) | Nice-to-have; not critical for v1 |
 | `axon debug decrypt-sfw` | Dev-only, hidden unless `AXON_DEV=1` |
 | Raw HID framing access | Internal to the protocol module |
-| Saleae integration | Dev-only, stays in `tools/` |
+| Saleae integration | Dev-only, stays in `research/static-analysis/` |
 | Multiple dongle support | Not needed, enforced absent |

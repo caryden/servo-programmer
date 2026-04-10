@@ -11,7 +11,7 @@ mapping. The mapping is authored by reading the vendor exe decomp
 - On the wire it's identical — no encoding.
 - `.svo` files are a raw dump of these 95 bytes, with no header.
 
-## Source functions (Ghidra decomp, `tools/ghidra_out/`)
+## Source functions (Ghidra decomp, `research/static-analysis/ghidra_out/`)
 
 | File | Purpose |
 |---|---|

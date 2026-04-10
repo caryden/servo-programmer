@@ -29,9 +29,9 @@ Information.
 
 Re-run the end-to-end decryption yourself:
 
-    python3 tools/static_analyze.py decrypt \
-        downloads/Axon_Max_Servo_Mode.sfw samples/decrypted/Axon_Max_Servo_Mode.plain.bin
-    head -20 samples/decrypted/Axon_Max_Servo_Mode.plain.bin
+    python3 research/static-analysis/static_analyze.py decrypt \
+        downloads/Axon_Max_Servo_Mode.sfw research/decrypted-firmware/Axon_Max_Servo_Mode.plain.bin
+    head -20 research/decrypted-firmware/Axon_Max_Servo_Mode.plain.bin
 
 ## Files analysed
 
@@ -424,9 +424,9 @@ the `FillChar` write above, and the `push ecx` that forwards it as the
 Reproduce:
 
 ```bash
-python3 tools/static_analyze.py decrypt \
+python3 research/static-analysis/static_analyze.py decrypt \
     downloads/Axon_Max_Servo_Mode.sfw \
-    samples/decrypted/Axon_Max_Servo_Mode.plain.bin
+    research/decrypted-firmware/Axon_Max_Servo_Mode.plain.bin
 ```
 
 ### 3.4 Encryption engine
@@ -540,7 +540,7 @@ traffic is batched into a single user-initiated commit.
 
 ### The commit routine (`FUN_00403060`)
 
-Decompile in `tools/ghidra_out/param_read_caller_00403060_FUN_00403060.c`.
+Decompile in `research/static-analysis/ghidra_out/param_read_caller_00403060_FUN_00403060.c`.
 Paraphrased:
 
 ```c
@@ -760,7 +760,7 @@ requires the physical programmer.
 3. [ ] **Enumerate HID opcodes.** Walk the 21 HID callsites in §2.2, dump
        the bytes each one sets in the TX buffer at `0x7c52ac`, and build a
        `(cmd_byte, args, response_shape)` table. This is pure decompiler
-       work now that Ghidra 12 + our `tools/ghidra_scripts/axon_hunt_aes.py`
+       work now that Ghidra 12 + our `research/static-analysis/ghidra_scripts/axon_hunt_aes.py`
        flow is set up.
 4. [ ] **Enumerate parameter IDs.** The parameter-UI event handlers
        (`rztrNeutralChange`, `rztrDampingChange`, `cxhyprlnkdt1Click`, …)
@@ -826,21 +826,21 @@ One additional statically-verifiable item that would be worthwhile:
   orientation.
 - **CPython 3 + `pefile` + `capstone`** (`pip install --user pefile capstone
   pycryptodome`) for quick PE probes, targeted linear disassembly,
-  xref scans, and the `.sfw` decrypter (`tools/static_analyze.py`).
+  xref scans, and the `.sfw` decrypter (`research/static-analysis/static_analyze.py`).
 - **Ghidra 12.0.4 PUBLIC** (`~/tools/ghidra_12.0.4_PUBLIC/`), downloaded
   from the NSA GitHub release. Launched headlessly via
   `support/analyzeHeadless` with **Amazon Corretto JDK 21** as
   `JAVA_HOME` (Android Studio's bundled JBR 21 also worked for plain
   headless use but triggers a SIGBUS in `CodeHeap::allocate` when
   embedded in a Python process via PyGhidra/JPype — see below).
-- Ghidra post-processing scripts under `tools/ghidra_scripts/`:
+- Ghidra post-processing scripts under `research/static-analysis/ghidra_scripts/`:
   - `axon_hunt_aes.py` — **Jython 2.7** script that runs in `analyzeHeadless`,
     locates the "Error 1030" string, byte-scans `.text` for the xref (the
     string sits inside a Delphi `AnsiString` header so
     `getReferencesTo()` alone returns nothing), walks backwards from the
     ref to find a `55 8B EC` function prologue, force-disassembles and
     creates a function there, decompiles it and all direct callees, and
-    writes the results to `tools/ghidra_out/`.
+    writes the results to `research/static-analysis/ghidra_out/`.
   - `axon_hunt_aes_pyghidra.py` — **CPython 3** equivalent using
     `pyghidra.open_program()`. Left in the repo as documentation — on
     Apple Silicon macOS it **does not work** because the Python
@@ -851,7 +851,7 @@ One additional statically-verifiable item that would be worthwhile:
     helps — it's the underlying `mmap` call that fails. On Linux or
     Intel Macs this path should work fine.
 - **`pip install pycryptodome`** for the AES implementation used by
-  `tools/static_analyze.py decrypt`.
+  `research/static-analysis/static_analyze.py decrypt`.
 
 ### Repro of the Ghidra walk
 
@@ -871,7 +871,7 @@ mv ~/tools/ghidra_12.0.4_PUBLIC/Ghidra/Features/PyGhidra{,_disabled}
 ~/tools/ghidra_12.0.4_PUBLIC/support/analyzeHeadless \
     /tmp/ghidra_proj axon \
     -import downloads/Axon_Servo_Programming_Software_v1.0.5.exe \
-    -scriptPath tools/ghidra_scripts \
+    -scriptPath research/static-analysis/ghidra_scripts \
     -postScript axon_hunt_aes.py
 
 # Subsequent runs: skip re-analysis, just re-run the script.
@@ -879,14 +879,14 @@ mv ~/tools/ghidra_12.0.4_PUBLIC/Ghidra/Features/PyGhidra{,_disabled}
     /tmp/ghidra_proj axon \
     -process Axon_Servo_Programming_Software_v1.0.5.exe \
     -noanalysis \
-    -scriptPath tools/ghidra_scripts \
+    -scriptPath research/static-analysis/ghidra_scripts \
     -postScript axon_hunt_aes.py
 
 # Restore PyGhidra when done so the install isn't broken for future use.
 mv ~/tools/ghidra_12.0.4_PUBLIC/Ghidra/Features/PyGhidra{_disabled,}
 ```
 
-Outputs land in `tools/ghidra_out/`:
+Outputs land in `research/static-analysis/ghidra_out/`:
 `firmware_handler.c`, `004c4e94_atTXAesatAESDecFileqqrpct1puc.c`,
 `004c4930_atTXAesatSetKeyLenqqri.c`, `firmware_handler_datarefs.txt`,
 `data_printable_runs.txt`, and a decompilation of every direct callee
@@ -895,9 +895,9 @@ of the firmware-upload handler.
 Then:
 
 ```bash
-python3 tools/static_analyze.py decrypt \
+python3 research/static-analysis/static_analyze.py decrypt \
     downloads/Axon_Max_Servo_Mode.sfw \
-    samples/decrypted/Axon_Max_Servo_Mode.plain.bin
+    research/decrypted-firmware/Axon_Max_Servo_Mode.plain.bin
 ```
 
 gives you the plaintext Intel HEX firmware image that the programmer
@@ -910,10 +910,10 @@ sends to the servo over the 3-wire bus.
 Captured on the signal wire with a Saleae Logic 2 while the vendor exe
 ran one **Read** cycle against an Axon Mini. Analyzer: Async Serial,
 **9600 baud**, 8N1, inverted=no. Decoded data is in
-`samples/saleae/0xcd-data.csv`. Re-parse any future capture with:
+`research/saleae-captures/0xcd-data.csv`. Re-parse any future capture with:
 
-    ~/tools/axon-hw-venv/bin/python3 tools/decode_saleae_csv.py \
-        samples/saleae/0xcd-data.csv --head 40
+    ~/tools/axon-hw-venv/bin/python3 research/static-analysis/decode_saleae_csv.py \
+        research/saleae-captures/0xcd-data.csv --head 40
 
 ### Frame format
 
@@ -986,13 +986,13 @@ servo: FF FF 01 26 00 <36 data bytes> <chksum>
 Key landmarks:
 
 - **`0x00..0x06` = `3B D0 0B F6 82 82 80`** — stable header/magic.
-  Identical to the first seven bytes of `samples/mini.svo`, confirming
+  Identical to the first seven bytes of `vendor/samples/mini.svo`, confirming
   that a `.svo` file is a raw dump of this exact 95-byte region.
 - **`0x40..0x47` = `"SA33****"`** — ASCII model id string. This is the
   byte range the exe's `rd addr=0x40 len=8` model-id probe reads, and
   it is exactly where we guessed it would be.
 - **`0x5E = 0x01`** — end-of-config sentinel / layout version byte.
-- Diff vs `samples/mini.svo`: 67/95 bytes match. Every mismatch is
+- Diff vs `vendor/samples/mini.svo`: 67/95 bytes match. Every mismatch is
   `wire=<non-zero>` vs `svo=0x00`, i.e. `mini.svo` was saved when the
   servo was in a more-zeroed state (defaults / unconfigured), whereas
   the live servo has populated limits, calibration curves, and
@@ -1017,9 +1017,9 @@ command sequence. See the next section.
 
 ### HID reply format — the dongle IS a transparent proxy when primed
 
-Confirmed via dual capture: `tools/axon_libusb_test7.py` driving
+Confirmed via dual capture: `research/python-tests/axon_libusb_test7.py` driving
 the dongle while Saleae captured the wire simultaneously. Results
-in `samples/saleae/dual_test7_623.csv` (wire) and in the script's
+in `research/saleae-captures/dual_test7_623.csv` (wire) and in the script's
 stdout (HID). The wire showed the exact same `0xCD` frames the
 vendor exe emits, and the HID reply bytes match the wire reply
 bytes **byte-for-byte**.
@@ -1100,7 +1100,7 @@ to arm — see task #19.
 - The replacement CLI's `--write` command issues `0xCB` writes in
   the same chunking — see next section.
 
-### Write (`0xCB`) — decoded from `samples/saleae/0xcb-data.csv`
+### Write (`0xCB`) — decoded from `research/saleae-captures/0xcb-data.csv`
 
 Clicking **Write** in the vendor exe produces a full
 read-modify-write cycle on the wire:
@@ -1114,7 +1114,7 @@ t=2.672  HOST:  FF FF 01 3E CB 00 <59 data bytes> <chk>  ; write chunk 0
 t=2.787  HOST:  FF FF 01 27 CB 3B <36 data bytes> <chk>  ; write chunk 1
 ```
 
-All checksums OK (verified by `tools/decode_saleae_csv.py`).
+All checksums OK (verified by `research/static-analysis/decode_saleae_csv.py`).
 
 **Write frame format:**
 

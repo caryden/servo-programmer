@@ -81,6 +81,8 @@ docs     https://docs.axon-robotics.com/servos/mini
 - [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md) — the v1 command surface
 - [docs/FINDINGS.md](docs/FINDINGS.md) — protocol reference (will be polished and renamed to `wire-protocol.md` in [issue #9](https://github.com/caryden/servo-programmer/issues/9))
 - [docs/BYTE_MAPPING.md](docs/BYTE_MAPPING.md) — byte offset → parameter mapping
+- [research/](research/) — all the captures, scripts, and decompiled exe artifacts used during the reverse-engineering session
+- [vendor/](vendor/) — vendor-supplied assets (not part of the MIT-licensed source tree)
 - The plan to v1.0 lives in the [v0.2-clean-baseline](https://github.com/caryden/servo-programmer/milestone/1) and [v1.0](https://github.com/caryden/servo-programmer/milestone/2) milestones
 
 ## How it was built

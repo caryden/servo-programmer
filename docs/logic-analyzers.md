@@ -1,7 +1,7 @@
 # USB Logic Analyzers for Servo Protocol Reverse Engineering
 
 > **PURCHASED:** Saleae Logic 8 (Red) - 8-Channel Logic Analyzer
-> - See `tools/saleae_capture.py` for automated capture scripts
+> - See `research/static-analysis/saleae_capture.py` for automated capture scripts
 > - Install: `pip install logic2-automation`
 
 ---
@@ -644,7 +644,7 @@ def get_samples(driver, samplerate, num_samples):
 
 ### Using with analyze_capture.py
 
-The existing `tools/analyze_capture.py` can process hex dumps and Wireshark JSON exports. Logic analyzer captures can be converted:
+The existing `research/static-analysis/analyze_capture.py` can process hex dumps and Wireshark JSON exports. Logic analyzer captures can be converted:
 
 ```python
 # Export from sigrok-cli to format compatible with analyze_capture.py

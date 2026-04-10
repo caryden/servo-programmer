@@ -10,6 +10,11 @@ downloads/
 /tform1_*.txt
 /unit_names.txt
 
+# But DO commit the decrypted firmware plaintexts under research/ —
+# they're useful as ground truth for the SFW decrypter port (issue #11)
+# and small enough to live in git.
+!research/decrypted-firmware/*.plain.bin
+
 # Python
 __pycache__/
 *.py[cod]
@@ -34,8 +39,8 @@ captures/*.sr
 # Large binary Saleae session files (>100 MB GitHub limit).
 # The decoded Async Serial CSV exports are small enough to commit
 # and contain everything we need from each capture — see
-# tools/decode_saleae_csv.py for the parser.
-samples/saleae/Session 0.sal
+# research/static-analysis/decode_saleae_csv.py for the parser.
+research/saleae-captures/Session 0.sal
 
 # IDE
 .idea/

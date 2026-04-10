@@ -39,30 +39,30 @@ this revision — but the working CLI runs from source.
 - `docs/BYTE_MAPPING.md` — byte offset → parameter mapping with
   confirmed entries from the vendor exe decomp and a to-do for the
   remaining offsets.
-- `docs/SESSION_2026-04-09_VM_PROBE.md` — Parallels / ETW investigation
-  notes.
-- `tools/axon_libusb_test{,2,3,4,5,6,7}.py` — seven progressively
+- `research/session-notes/SESSION_2026-04-09_VM_PROBE.md` — Parallels / ETW
+  investigation notes.
+- `research/python-tests/axon_libusb_test{,2,3,4,5,6,7}.py` — seven progressively
   smarter libusb experiments that led to the final working protocol
   understanding.
-- `tools/axon_libusb_test_monitor.py`, `tools/axon_libusb_test_status.py`
+- `research/python-tests/axon_libusb_test_monitor.py`, `research/python-tests/axon_libusb_test_status.py`
   — simple live presence monitors using the final pattern.
-- `tools/axon_hid_test_probe.py` — the 5-minute hidapi retest that
+- `research/python-tests/axon_hid_test_probe.py` — the 5-minute hidapi retest that
   proved libusb was never actually needed and unlocked the sudo-free CLI.
-- `tools/decode_saleae_csv.py` — frame-aware Async Serial decoder.
-- `tools/{install,uninstall}_sudoers.sh` and
-  `tools/axon-sudoers-rules.txt` — narrow NOPASSWD rule for the
+- `research/static-analysis/decode_saleae_csv.py` — frame-aware Async Serial decoder.
+- `research/sudoers/{install,uninstall}_sudoers.sh` and
+  `research/sudoers/axon-sudoers-rules.txt` — narrow NOPASSWD rule for the
   legacy libusb research scripts.
-- `tools/ghidra_out/` — decompiled exe functions including the two
+- `research/static-analysis/ghidra_out/` — decompiled exe functions including the two
   UI overlays (FUN_00405518, FUN_00406248), the chunked read/write
   helpers (FUN_004047d0, FUN_00404900), and the AES-decrypt path for
   `.sfw` firmware files.
-- `tools/ghidra_scripts/` — Jython scripts driving `analyzeHeadless`.
-- `samples/saleae/*.csv` — multiple decoded wire captures including
+- `research/static-analysis/ghidra_scripts/` — Jython scripts driving `analyzeHeadless`.
+- `research/saleae-captures/*.csv` — multiple decoded wire captures including
   the `0xCD` read button click, the `0xCB` write button click, and
   the final dual libusb + Saleae capture.
-- `samples/axon-usb.{etl,xml}` — ETW USB trace from the vendor exe
+- `research/etw-traces/axon-usb.{etl,xml}` — ETW USB trace from the vendor exe
   in Parallels on Windows 11 ARM.
-- `samples/mini.svo`, `samples/decrypted/` — captured config block
+- `vendor/samples/mini.svo`, `research/decrypted-firmware/` — captured config block
   and decrypted `.sfw` firmware plaintexts.
 
 ### Discovered (the protocol)
