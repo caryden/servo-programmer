@@ -20,8 +20,12 @@ jobs:
         os:
           - ubuntu-latest    # Linux x64
           - macos-latest     # macOS arm64 (M-series)
-          - macos-13         # macOS x64 (Intel)
           - windows-latest   # Windows x64
+        # macos-13 (Intel Mac x64) is intentionally omitted — the
+        # free runner image was deprecated and our plan can no longer
+        # schedule it. Intel Mac users can build from source until we
+        # find a replacement runner, or run the arm64 binary via
+        # Rosetta once Bun ships arm64-on-Intel support (unlikely).
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout

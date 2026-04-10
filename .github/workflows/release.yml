@@ -55,11 +55,16 @@ jobs:
             bun_target: bun-darwin-arm64
             artifact: axon-darwin-arm64
             ext: ''
+          # macos-13 (Intel Mac x64) is opt-in — the free runner
+          # image was deprecated on some plans. Matches the ci.yml
+          # decision. allow_failure keeps the release flowing if
+          # the runner isn't available.
           - os: macos-13
             target: darwin-x64
             bun_target: bun-darwin-x64
             artifact: axon-darwin-x64
             ext: ''
+            allow_failure: true
           - os: windows-latest
             target: windows-x64
             bun_target: bun-windows-x64

@@ -1,0 +1,31 @@
+# Enforce LF line endings across all platforms. Without this,
+# Windows CI runners check out files with CRLF and Biome's
+# formatter reports every single file as having wrong line
+# endings, failing the build.
+* text=auto eol=lf
+
+# Explicitly treat source and config files as LF text.
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.js      text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.toml    text eol=lf
+*.svg     text eol=lf
+*.sh      text eol=lf
+*.py      text eol=lf
+
+# Binary files — never apply EOL conversion.
+*.svo     binary
+*.sfw     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+*.zip     binary
+*.bin     binary
+*.plain.bin binary
