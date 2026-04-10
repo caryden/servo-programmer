@@ -16,6 +16,15 @@
     "parameters are intentionally OMITTED from this catalog; they are",
     "out of scope for v1.0 and tracked as a post-v1.0 epic.",
     "",
+    "SERVO MODES: Axon V1.3 servos operate in one of two firmware",
+    "modes. The mode is determined by which .sfw firmware is",
+    "flashed, and different parameters are valid in each mode. The",
+    "CLI must respect this — 'axon set <param>' should reject",
+    "attempts to set a parameter that is not valid in the current",
+    "mode. See the top-level 'servo_modes' object below for the",
+    "mode identification protocol and the per-parameter 'modes'",
+    "field below for which parameters apply in which mode.",
+    "",
     "The canonical V1.3 parameter list is sourced from the vendor's",
     "archive docs (see source_docs above) and enumerates exactly nine",
     "parameters: Servo Angle, Servo Neutral, Dampening Factor,",
@@ -39,6 +48,50 @@
     "Earlier revisions of this file incorrectly conflated them — that",
     "has been corrected."
   ],
+
+  "servo_modes": {
+    "_note": "Axon V1.3 servos operate in one of two firmware modes. The mode determines which parameters are meaningful and editable. Mode detection is done via the 'identify' command (0x8A): the servo replies with FF FF 01 06 00 <MODE_ID> 02 01 08 <chksum>, where MODE_ID is either 0x03 (Servo Mode) or 0x04 (CR Mode). The CLI's is_present() check already accepts both; the protocol layer should additionally expose the mode byte so that command-layer code can branch on it.",
+    "servo_mode": {
+      "id_byte": 3,
+      "id_byte_hex": "0x03",
+      "name": "Servo Mode",
+      "description": "Standard PWM position-control servo mode. The servo tracks a target angle commanded by the PWM pulse width, holds position, and reports servo-style parameters. This is the default mode for a factory-fresh servo and the mode used by most FTC applications.",
+      "sfw_pattern": "Axon_*_Servo_Mode.sfw",
+      "decomp_ui_panel": "FUN_00405518 (primary overlay — ~25 writes, the full parameter set)",
+      "available_parameters": [
+        "servo_angle",
+        "servo_neutral",
+        "sensitivity",
+        "inversion",
+        "loose_pwm_protection",
+        "pwm_power",
+        "dampening_factor",
+        "soft_start",
+        "overload_protection"
+      ]
+    },
+    "cr_mode": {
+      "id_byte": 4,
+      "id_byte_hex": "0x04",
+      "name": "CR Mode",
+      "description": "Modified Continuous Rotation mode. The servo is re-purposed to act like a variable-speed gearmotor: the PWM pulse width commands a rotation speed (and direction) instead of a target angle. In this mode most position-control parameters (angle, deadband, PID damping, overload protection) are not meaningful and are either ignored by the firmware or clamped to defaults. The CR-mode UI panel in the vendor exe is significantly smaller than the Servo-Mode panel for exactly this reason.",
+      "sfw_pattern": "Axon_*_Modified_CR_Mode.sfw",
+      "decomp_ui_panel": "FUN_00406248 (secondary overlay — only 3 byte writes: 0x12, bits in 0x25, and 0x36)",
+      "available_parameters": [
+        "servo_neutral",
+        "inversion",
+        "loose_pwm_protection",
+        "pwm_power",
+        "soft_start"
+      ],
+      "unavailable_parameters": {
+        "servo_angle": "CR mode rotates continuously; there is no fixed angular range",
+        "sensitivity": "Dead-band around neutral only makes sense for a servo that is trying to hold a position",
+        "dampening_factor": "The PID D coefficient is for position control; CR mode is speed control",
+        "overload_protection": "Vendor docs explicitly state '3-stage in Servo Mode; unavailable in CR Mode'"
+      }
+    }
+  },
 
   "models": {
     "SA33****": {
@@ -110,7 +163,8 @@
       "vendor_label": "Servo Angle",
       "unit": "raw",
       "physical_unit": "deg",
-      "description": "Operating travel of the servo. The vendor docs describe this as 'scaled from 0→255 to 0→355' — the raw value is a byte in 0..255 that maps proportionally to the servo's full documented angular range. Stored as a big-endian u16 at config offset 0x0A..0x0B and mirrored (same widget, same value) at 0x27..0x28, 0x29..0x2A, and 0x2B..0x2C; each mirror is an internal rate-limit register initialized from the user's Servo Angle setting.",
+      "modes": ["servo_mode"],
+      "description": "Operating travel of the servo. The vendor docs describe this as 'scaled from 0→255 to 0→355' — the raw value is a byte in 0..255 that maps proportionally to the servo's full documented angular range. Stored as a big-endian u16 at config offset 0x0A..0x0B and mirrored (same widget, same value) at 0x27..0x28, 0x29..0x2A, and 0x2B..0x2C; each mirror is an internal rate-limit register initialized from the user's Servo Angle setting. Not meaningful in CR Mode (which has no fixed angular range).",
       "offset": "0x0A..0x0B",
       "mirrors": ["0x27..0x28", "0x29..0x2A", "0x2B..0x2C"],
       "encoding": "be_u16",
@@ -128,7 +182,8 @@
       "vendor_label": "Servo Neutral",
       "unit": "us",
       "physical_unit": "us",
-      "description": "Offsets the neutral position of the servo, measured in microseconds. The vendor UI calls this 'Neutral' (VCL event-handler symbol 'rztrNeutralChange' at 0x007a9888). Stored as a single byte at config offset 0x06 with encoding 'stored = user_us + 0x80', so raw 0x80 (128) is the factory-default 0 µs offset (i.e., the servo's neutral PWM is exactly 1500 µs). Significant adjustments can cause unintended side effects; use small changes only.",
+      "modes": ["servo_mode", "cr_mode"],
+      "description": "Offsets the neutral position of the servo, measured in microseconds. In Servo Mode this is the PWM pulse width at which the servo holds its center angle. In CR Mode it is the PWM pulse width at which the servo is stopped (the 'dead center' of the speed command range). Both modes use it. The vendor UI calls this 'Neutral' (VCL event-handler symbol 'rztrNeutralChange' at 0x007a9888). Stored as a single byte at config offset 0x06 with encoding 'stored = user_us + 0x80', so raw 0x80 (128) is the factory-default 0 µs offset (i.e., the servo's neutral PWM is exactly 1500 µs). Significant adjustments can cause unintended side effects; use small changes only.",
       "offset": "0x06",
       "encoding": "u8_signed_offset_from_0x80",
       "widget": "p1+0x380",
@@ -143,7 +198,8 @@
       "vendor_label": "Sensitivity",
       "unit": "step",
       "physical_unit": "us",
-      "description": "The PWM dead-band — the microsecond window around the neutral pulse where the servo doesn't move. Smaller dead-band = more sensitive to small command changes. The vendor docs specify 'Ultra high = 1us'. Stored as a single byte at config offset 0x0C with encoding 'stored = (user_step + 1) × 16', giving 15 discrete user-visible steps (user_step = 0..14). Step 0 is 'ultra high' (1 µs dead-band); higher steps give progressively larger dead-bands.",
+      "modes": ["servo_mode"],
+      "description": "The PWM dead-band — the microsecond window around the neutral pulse where the servo doesn't move. Smaller dead-band = more sensitive to small command changes. The vendor docs specify 'Ultra high = 1us'. Stored as a single byte at config offset 0x0C with encoding 'stored = (user_step + 1) × 16', giving 15 discrete user-visible steps (user_step = 0..14). Step 0 is 'ultra high' (1 µs dead-band); higher steps give progressively larger dead-bands. Only meaningful in Servo Mode — CR Mode has no concept of 'holding a position', so a dead-band around neutral is not applicable.",
       "offset": "0x0C",
       "encoding": "nibble_times_16",
       "widget": "p1+0x378",
@@ -165,7 +221,8 @@
       "vendor_label": "Inversion",
       "unit": "enum",
       "values": ["normal", "reversed"],
-      "description": "Reverses the direction of the servo. CCW (normal) is the factory default. Stored as bit 0x02 of the flags byte at config offset 0x25. A secondary 'dirty' bit at 0x01 is toggled each time the user changes the checkbox, but only bit 0x02 is the persistent setting.",
+      "modes": ["servo_mode", "cr_mode"],
+      "description": "Reverses the direction of the servo. CCW (normal) is the factory default. In Servo Mode this flips the mapping of PWM pulse width to target angle; in CR Mode it flips the mapping of PWM pulse width to rotation direction. Both modes use it. Stored as bit 0x02 of the flags byte at config offset 0x25. A secondary 'dirty' bit at 0x01 is toggled each time the user changes the checkbox, but only bit 0x02 is the persistent setting.",
       "offset": "0x25",
       "encoding": "bit",
       "bit_mask": "0x02",
@@ -179,7 +236,8 @@
       "vendor_label": "Loose PWM Protection",
       "unit": "enum",
       "values": ["release", "hold", "neutral"],
-      "description": "Servo behavior when the PWM signal is lost but power remains. The vendor docs describe three modes: 'Release: acts as if the servo wasn't powered', 'Hold: holds the last position it was set to', and 'Neutral: goes to the middle position'. Stored as two bits of the flags byte at config offset 0x25 (bits 0x60) — a 3-way enum. The specific numeric-value → mode mapping is not yet confirmed from the decomp alone and requires a three-way .svo A/B diff.",
+      "modes": ["servo_mode", "cr_mode"],
+      "description": "Servo behavior when the PWM signal is lost but power remains. Both modes have signal-loss behavior (in Servo Mode, what angle to hold or release; in CR Mode, whether to stop or coast). The vendor docs describe three modes: 'Release: acts as if the servo wasn't powered', 'Hold: holds the last position it was set to', and 'Neutral: goes to the middle position'. Stored as two bits of the flags byte at config offset 0x25 (bits 0x60) — a 3-way enum. The specific numeric-value → mode mapping is not yet confirmed from the decomp alone and requires a three-way .svo A/B diff.",
       "offset": "0x25",
       "encoding": "bits",
       "bit_mask": "0x60",
@@ -194,7 +252,8 @@
       "vendor_label": "PWM Power",
       "unit": "raw",
       "physical_unit": "percent",
-      "description": "Caps the maximum power output of the servo. Useful for use on current-limited devices. 0% = no power, 100% = max power. Stored as a single byte at config offset 0x11 and mirrored to 0x12, 0x13, and 0x0F (where 0x0F = primary − 0x14); the widget behind it (p1+0x370) writes all four in one pass. The 4-byte mirror pattern likely corresponds to the main cap plus the three progressive reductions used by the Overload Protection state machine — precise per-stage mapping requires the load-side decomp.",
+      "modes": ["servo_mode", "cr_mode"],
+      "description": "Caps the maximum power output of the servo. Useful for use on current-limited devices. 0% = no power, 100% = max power. Applies to both Servo Mode and CR Mode (both need a motor-power limit). In CR Mode the FUN_00406248 overlay writes this to byte 0x12 (one of the mirrors of the primary byte 0x11). Stored as a single byte at config offset 0x11 and mirrored to 0x12, 0x13, and 0x0F (where 0x0F = primary − 0x14); the widget behind it (p1+0x370) writes all four in one pass. The 4-byte mirror pattern likely corresponds to the main cap plus the three progressive reductions used by the Overload Protection state machine — precise per-stage mapping requires the load-side decomp.",
       "offset": "0x11",
       "mirrors": ["0x12", "0x13", "0x0F"],
       "mirror_0x0F_offset": -20,

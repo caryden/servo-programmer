@@ -12,6 +12,61 @@ diffs (fallback).
 - On the wire it's identical — no encoding.
 - `.svo` files are a raw dump of these 95 bytes, with no header.
 
+## Servo Mode vs CR Mode — parameter visibility depends on mode
+
+Axon V1.3 servos run in one of two firmware modes, determined by
+which `.sfw` file is flashed. Different parameters are valid in
+each mode — the CLI must respect this and reject
+`axon set <param>` attempts for parameters that don't apply in
+the current mode.
+
+| Mode | Identify byte 5 (`rx[5]`) | UI panel decomp | SFW file pattern |
+|---|---|---|---|
+| **Servo Mode** (position control, the default) | `0x03` | `FUN_00405518` — primary overlay, ~25 byte writes covering the full parameter set | `Axon_*_Servo_Mode.sfw` |
+| **CR Mode** (continuous rotation / speed control) | `0x04` | `FUN_00406248` — secondary overlay, only 3 byte writes (`0x12`, bits in `0x25`, and `0x36`) | `Axon_*_Modified_CR_Mode.sfw` |
+
+The two-mode split explains two things we previously found
+surprising:
+
+1. Why `FUN_00406248` is so much smaller than `FUN_00405518` — it
+   only has to write the 3-4 bytes that are actually editable in
+   CR Mode. The other ~20 bytes are left untouched.
+2. Why bytes `0x14..0x18` (the monotonically-decreasing 5-point
+   curve) and `0x19..0x1E` (three BE-u16 duration fields) are
+   *read* by `FUN_00405518` but not *written* — they are the
+   Overload Protection state-machine values, and the docs
+   explicitly say Overload Protection is "3-stage in Servo Mode,
+   unavailable in CR Mode." Those bytes are set from a separate
+   handler (probably `FUN_00404b28`, the load-side function we
+   don't yet have decomp for) and are only valid when the servo is
+   in Servo Mode.
+
+**Mode detection at runtime:** the CLI's `identify` function
+already reads `rx[5]`. Extend it to expose the mode byte so the
+command layer can branch on it. The protocol layer's
+`IdentifyReply` type should add a `mode: "servo_mode" | "cr_mode"
+| "unknown"` field.
+
+**Parameter availability by mode:**
+
+| Parameter | Servo Mode | CR Mode | Why |
+|---|---|---|---|
+| Servo Angle | ✅ yes | ❌ no | CR rotates continuously — no fixed range |
+| Servo Neutral | ✅ yes | ✅ yes | Both modes use a neutral PWM pulse width |
+| Sensitivity (deadband) | ✅ yes | ❌ no | Dead-band is meaningful only for a "hold position" servo |
+| Dampening Factor | ✅ yes | ❌ no | Position-loop PID D; CR is speed control |
+| Inversion | ✅ yes | ✅ yes | Both modes have a direction |
+| Loose PWM Protection | ✅ yes | ✅ yes | Both modes have failsafe behavior on signal loss |
+| PWM Power | ✅ yes | ✅ yes | Both modes need a motor power cap |
+| Soft Start | ✅ yes | ✅ yes | Both modes can limit acceleration |
+| Overload Protection | ✅ yes (3-stage) | ❌ no | Archive docs: "3-stage in Servo Mode; unavailable in CR Mode" |
+
+The catalog's per-parameter `modes` field encodes this table
+directly. The `axon set` command should read the current mode via
+`identify` at the start of the read-modify-write cycle and
+refuse to set parameters whose `modes` array does not include
+the current mode, returning exit code 5 with a clear message.
+
 ## Target bootloader version — V1.3, NOT MK2
 
 **This project targets the Axon `USBBootloader V1.3` dongle**, which is
