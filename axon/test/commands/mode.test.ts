@@ -482,7 +482,7 @@ describe("parseFlashRx helper", () => {
     const rx = Buffer.alloc(REPORT_SIZE);
     rx[0] = REPORT_ID;
     rx[1] = 0;
-    expect(() => parseFlashRx(rx, 1)).toThrow(/status byte/);
+    expect(() => parseFlashRx(rx, 1)).toThrow(/unexpected reply/);
   });
 
   test("rejects a non-zero length-field", () => {
@@ -490,7 +490,7 @@ describe("parseFlashRx helper", () => {
     rx[0] = REPORT_ID;
     rx[1] = 1;
     rx[2] = 0xff;
-    expect(() => parseFlashRx(rx, 1)).toThrow(/length-field/);
+    expect(() => parseFlashRx(rx, 1)).toThrow(/unexpected reply/);
   });
 
   test("returns the requested payload slice on a good reply", () => {

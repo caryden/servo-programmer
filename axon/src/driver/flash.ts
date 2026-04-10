@@ -185,14 +185,14 @@ export function parseFlashRx(rx: Buffer, expectLength: number): Buffer {
   if (rx.length < 5 + expectLength) {
     throw AxonError.servoIo(`flash: rx is ${rx.length} bytes, need >= ${5 + expectLength}`);
   }
-  if (rx[1] === 0) {
+  if (rx[1] === 0 || rx[2] !== 0) {
+    // Dump the first 16 bytes so we can see exactly what the servo
+    // returned — critical for diagnosing protocol mismatches.
+    const hex = Array.from(rx.subarray(0, 16))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
     throw AxonError.servoIo(
-      `flash: status byte is 0 (expected non-zero). rx[2]=0x${rx[2]!.toString(16).padStart(2, "0")}`,
-    );
-  }
-  if (rx[2] !== 0) {
-    throw AxonError.servoIo(
-      `flash: length-field is 0x${rx[2]!.toString(16).padStart(2, "0")} (expected 0). Dongle rejected the command.`,
+      `flash: unexpected reply. rx[0..15]: ${hex}`,
     );
   }
   return rx.subarray(5, 5 + expectLength);
@@ -215,6 +215,11 @@ async function exchange(
   const tx = buildFlashTx(cmd, payload);
   await handle.write(tx);
   const rx = await handle.read();
+  if (process.env.AXON_DEBUG === "1") {
+    const txHex = Array.from(tx.subarray(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const rxHex = Array.from(rx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    process.stderr.write(`  [wire] cmd=0x${cmd.toString(16)} tx[0..7]: ${txHex}  rx[0..15]: ${rxHex}\n`);
+  }
   return parseFlashRx(rx, expectLength);
 }
 
@@ -367,13 +372,14 @@ export async function flashFirmware(
     modeLockTx[1] = CMD_MODE_LOCK;
     modeLockTx[2] = 0x00; // enter flash mode
     await handle.write(modeLockTx);
-    await handle.read(); // drain reply (content ignored by vendor)
+    const modeLockRx = await handle.read();
+    if (process.env.AXON_DEBUG === "1") {
+      const hex = Array.from(modeLockRx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      process.stderr.write(`  [wire] 0x90 enter rx[0..15]: ${hex}\n`);
+    }
   }
 
   // Phase 2: boot version query (0x80 + 4-byte payload 01 02 03 04).
-  // The vendor exe has a Sleep(5) between write and read here
-  // (firmware_handler.c:182). We match that with a post-write delay
-  // to give the dongle time to prepare the boot version reply.
   progress({ phase: "boot_query", message: "Querying bootloader version..." });
   {
     const bootTx = buildFlashTx(CMD_BOOT_QUERY, Uint8Array.from([0x01, 0x02, 0x03, 0x04]));
@@ -381,7 +387,12 @@ export async function flashFirmware(
     await handle.write(bootTx);
     await sleep(5); // vendor exe: Sleep(5) between write and read
   }
-  const bootReply = parseFlashRx(await handle.read(), 6);
+  const bootRx = await handle.read();
+  if (process.env.AXON_DEBUG === "1") {
+    const hex = Array.from(bootRx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    process.stderr.write(`  [wire] 0x80 boot rx[0..15]: ${hex}\n`);
+  }
+  const bootReply = parseFlashRx(bootRx, 6);
   if (bootReply[0] !== 0x56) {
     throw AxonError.servoIo(
       `flash: boot query reply[0]=0x${bootReply[0]!.toString(16)} (expected 0x56 'V')`,
