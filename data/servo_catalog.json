@@ -13,9 +13,17 @@
     "been confirmed empirically so far (SA33****); Max and Micro are",
     "placeholders pending a physical read from those models.",
     "",
-    "Parameter defaults and byte offsets are incomplete — filled in",
-    "progressively as we extract them from the vendor exe decomp",
-    "(see docs/BYTE_MAPPING.md)."
+    "Parameter byte offsets and encodings come from docs/BYTE_MAPPING.md",
+    "which cites specific lines in the Ghidra decomp under",
+    "research/static-analysis/ghidra_out/.",
+    "",
+    "Default values for the SA33**** Mini are the raw bytes observed in",
+    "research/saleae-captures/dual_test7_623.csv (a live read of a",
+    "factory-default Mini). Any `deg` / `percent` values are the best",
+    "available human-unit interpretation; fields marked `_approx: true`",
+    "still need confirmation via .svo A/B diff (tracked in issue #11).",
+    "Fields marked `_unknown: true` could not be determined from the",
+    "decomp alone."
   ],
 
   "models": {
@@ -26,7 +34,11 @@
       "docs_url": "https://docs.axon-robotics.com/servos/mini",
       "magic_bytes": "3b d0 0b f6",
       "defaults": {
-        "_TODO": "populate from docs/BYTE_MAPPING.md once decomp walk is complete"
+        "range":       { "raw": 80,  "deg": 355, "_approx": true, "_comment": "BE u16 at 0x0A..0x0B = 0x0050 mirrored at 0x27..0x2C; raw 80 believed to encode full Mini range (~355 deg), deg formula unconfirmed." },
+        "center":      { "raw": 128, "deg": 0,                    "_comment": "byte 0x06 = 0x80; encoding stored = user + 0x80, so raw 128 = 0 deg offset (centered)." },
+        "direction":   "normal",
+        "damping":     { "raw": 80,  "user": 4,                   "_comment": "byte 0x0C = 0x50; encoding stored = (user + 1) * 16, so raw 80 → user 4 (out of 0..14)." },
+        "speed_limit": { "raw": 220, "percent": null, "_approx": true, "_comment": "byte 0x11 = 0xDC mirrored at 0x12, 0x13, and 0x0F (= primary - 0x14); unit unknown." }
       },
       "bundled_firmware": {
         "standard": {
@@ -75,27 +87,82 @@
   },
 
   "parameters": {
-    "_TODO": "populate from docs/BYTE_MAPPING.md once decomp walk is complete",
     "range": {
-      "unit": "deg",
-      "description": "Total angular sweep of the servo. Maps to a byte value 0-255; actual degrees depend on the servo model's max_range_deg.",
+      "unit": "raw",
+      "physical_unit": "deg",
+      "description": "Total angular sweep of the servo. Stored as a big-endian u16 at config offset 0x0A..0x0B, and mirrored (same widget, same value) at 0x27..0x28, 0x29..0x2A, and 0x2B..0x2C — each mirror is an internal rate-limit register initialized from the user's range setting.",
+      "offset": "0x0A..0x0B",
+      "mirrors": ["0x27..0x28", "0x29..0x2A", "0x2B..0x2C"],
+      "encoding": "be_u16",
+      "widget": "p1+0x374",
+      "confidence": "high",
+      "min_raw": 0,
+      "max_raw": 65535,
+      "deg_formula": "approx: deg = raw * (model.max_range_deg / 80); unverified, needs A/B .svo diff",
+      "source": "decomp_slider_overlay_0x352_00405518.c lines 211-230",
       "docs_url": "https://docs.axon-robotics.com/servos/parameters#range"
     },
     "center": {
-      "unit": "deg",
-      "description": "Home/neutral angle at 1500 µs pulse.",
+      "unit": "raw",
+      "physical_unit": "deg",
+      "description": "Home / neutral offset. In the vendor UI this is the 'Neutral' trackbar (VCL event-handler symbol `rztrNeutralChange` at 0x007a9888). Stored as a single byte at config offset 0x06 with encoding `stored = user + 0x80`, so raw 0x80 is the factory-neutral 0-degree offset.",
+      "offset": "0x06",
+      "encoding": "u8_signed_offset_from_0x80",
+      "widget": "p1+0x380",
+      "confidence": "high",
+      "min_raw": 0,
+      "max_raw": 255,
+      "deg_formula": "deg = (raw - 128) * model.deg_per_count; deg_per_count unverified, needs A/B .svo diff",
+      "source": "decomp_slider_overlay_0x352_00405518.c line 193",
       "docs_url": "https://docs.axon-robotics.com/servos/parameters#center"
     },
     "direction": {
       "unit": "enum",
       "values": ["normal", "reversed"],
-      "description": "Rotation direction.",
+      "description": "Rotation direction. Stored as bit 0x02 of the flags byte at config offset 0x25. A secondary 'dirty' bit at 0x01 is toggled each time the user changes the checkbox, but only bit 0x02 is the persistent setting.",
+      "offset": "0x25",
+      "encoding": "bit",
+      "bit_mask": "0x02",
+      "widget": "p1+0x360",
+      "confidence": "medium",
+      "confidence_note": "Byte/bit location derived from the checkbox-toggle→persistent-bit pattern in FUN_00405518 lines 88-108. No literal 'Direction' label string was found in data_printable_runs.txt; a .svo A/B diff of the vendor UI's 'Reverse' checkbox would promote this to high confidence.",
+      "source": "decomp_slider_overlay_0x352_00405518.c lines 88-108",
       "docs_url": "https://docs.axon-robotics.com/servos/parameters#direction"
     },
-    "deadband": {
-      "unit": "us",
-      "description": "PWM deadband around the center pulse.",
-      "docs_url": "https://docs.axon-robotics.com/servos/parameters#deadband"
+    "damping": {
+      "unit": "raw",
+      "physical_unit": "step",
+      "aliases": ["deadband"],
+      "description": "Control-loop damping factor. In the vendor UI this is the 'Damping Factor: ' trackbar (ASCII format string at 0x007a734a, VCL event-handler symbol `rztrDampingChange` at 0x007a98b4). Stored as a single byte at config offset 0x0C with encoding `stored = (user + 1) * 16`, giving 15 discrete user-visible steps (user = 0..14).",
+      "offset": "0x0C",
+      "encoding": "nibble_times_16",
+      "widget": "p1+0x378",
+      "confidence": "high",
+      "label_confidence": "medium",
+      "min_raw": 16,
+      "max_raw": 240,
+      "min_user": 0,
+      "max_user": 14,
+      "user_formula": "user = (raw / 16) - 1",
+      "source": "decomp_slider_overlay_0x352_00405518.c line 194",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#damping"
+    },
+    "speed_limit": {
+      "unit": "raw",
+      "physical_unit": null,
+      "description": "Maximum slew rate / speed limit. Stored as a single byte at config offset 0x11 and mirrored to 0x12, 0x13, and 0x0F (where 0x0F = primary - 0x14). The widget behind it (`p1+0x370`) writes all four in one pass. Physical unit is unknown — likely percent (0..100) or raw PWM counts.",
+      "offset": "0x11",
+      "mirrors": ["0x12", "0x13", "0x0F"],
+      "mirror_0x0F_offset": -20,
+      "encoding": "u8",
+      "widget": "p1+0x370",
+      "confidence": "medium",
+      "confidence_note": "Byte locations are certain (directly from FUN_00405518 lines 203-210). The 'speed_limit' label is inferential: the one-widget-many-rate-limit-registers pattern is canonical for max-speed / max-current settings, but we haven't seen a label string to confirm it. _unknown_unit: true — expose in raw for v1.0 until confirmed.",
+      "_unknown_unit": true,
+      "min_raw": 0,
+      "max_raw": 255,
+      "source": "decomp_slider_overlay_0x352_00405518.c lines 203-210",
+      "docs_url": "https://docs.axon-robotics.com/servos/parameters#speed-limit"
     }
   }
 }
