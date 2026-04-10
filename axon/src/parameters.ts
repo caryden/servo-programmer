@@ -1,0 +1,655 @@
+/**
+ * Named parameter registry and per-parameter read/write logic.
+ *
+ * This module is the bridge between the raw 95-byte config block and
+ * the user-visible named-parameter surface ('axon get' / 'axon set').
+ * Every parameter definition captures:
+ *
+ *   - user-facing metadata (vendor label, description, unit, modes,
+ *     min/max/values, docs_url) — safe to render in help text
+ *   - implementation metadata (byte offsets, encoding, formulas) —
+ *     kept internal, NEVER rendered in end-user output
+ *   - read/write/parse/validate functions
+ *
+ * Parameter byte layouts and encodings come from
+ * `data/servo_catalog.json` (which is in turn derived from the vendor
+ * exe decomp plus A/B .svo diffs — see docs/BYTE_MAPPING.md).
+ */
+
+import {
+  type CatalogParameterSpec,
+  findParameter as findCatalogParameter,
+  findModel,
+  isNotYetMapped,
+  loadCatalog,
+  loadParameters as loadCatalogParameters,
+  loadNotYetMapped,
+  type ModelDefaultValue,
+} from "./catalog.ts";
+import { AxonError } from "./errors.ts";
+
+// ---------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------
+
+/**
+ * The value of a parameter, decoded from a config block. `raw` is the
+ * raw byte(s) as stored on the wire; `physical` is the human-readable
+ * decoded form (degrees / microseconds / percent / enum / etc.).
+ */
+export interface ParameterValue {
+  raw: number | number[];
+  physical?: number | string | boolean;
+  unit?: string;
+  is_default?: boolean;
+  notes?: string;
+}
+
+export interface ParameterSpec {
+  name: string;
+  vendorLabel: string;
+  description: string;
+  unit: string;
+  modes: string[];
+  min?: number | null;
+  max?: number | null;
+  values?: string[];
+  docsUrl?: string;
+
+  /** For help/debug; NOT rendered in user-facing output. */
+  offset?: string;
+  encoding?: string;
+
+  /** Decode the parameter value from a config buffer. */
+  read(config: Buffer, modelId: string): ParameterValue;
+
+  /** Return a NEW buffer with this parameter written. */
+  write(config: Buffer, value: unknown, modelId: string): Buffer;
+
+  /** Parse a user-supplied string into the canonical value type. Throws on bad input. */
+  parseUserInput(input: string, modelId: string): unknown;
+
+  /** Validate a parsed value. Returns null on OK, an error message string otherwise. */
+  validate(value: unknown, modelId: string): string | null;
+}
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function maxRangeDeg(modelId: string): number {
+  const catalog = loadCatalog();
+  const model = findModel(catalog, modelId);
+  if (!model || model.max_range_deg == null) {
+    // Fall back to a sane default. We never actually encounter this
+    // in practice because the CLI refuses to operate on unknown
+    // models — but keep the math well-defined rather than NaN.
+    return 355;
+  }
+  return model.max_range_deg;
+}
+
+function cloneConfig(config: Buffer): Buffer {
+  return Buffer.from(config);
+}
+
+function requireCatalogEntry(name: string): CatalogParameterSpec {
+  const entry = findCatalogParameter(name);
+  if (!entry) {
+    throw new Error(
+      `parameters.ts: no catalog entry for '${name}' — did the catalog schema change?`,
+    );
+  }
+  return entry;
+}
+
+// ---------------------------------------------------------------------
+// Parameter implementations
+// ---------------------------------------------------------------------
+
+/**
+ * servo_angle — BE u16 at 0x0A..0x0B, mirrored at 0x27..0x28,
+ * 0x29..0x2A, 0x2B..0x2C. The raw value is u8 in the low byte of the
+ * u16 (the high byte is always 0 in the range we've observed). Vendor
+ * formula: deg = raw_u8 * (max_range_deg / 255).
+ */
+function buildServoAngle(): ParameterSpec {
+  const entry = requireCatalogEntry("servo_angle");
+  return {
+    name: "servo_angle",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    min: entry.min ?? 0,
+    max: null, // max comes from the model's max_range_deg
+    values: entry.values,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config, modelId) {
+      const rawU16 = ((config[0x0a] ?? 0) << 8) | (config[0x0b] ?? 0);
+      const rawU8 = rawU16 & 0xff;
+      const deg = Math.round((rawU8 * maxRangeDeg(modelId)) / 255);
+      return {
+        raw: rawU8,
+        physical: deg,
+        unit: "deg",
+      };
+    },
+
+    write(config, value, modelId) {
+      const deg = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(deg)) {
+        throw AxonError.validation(
+          `servo_angle: value must be a number, got ${JSON.stringify(value)}`,
+        );
+      }
+      const maxDeg = maxRangeDeg(modelId);
+      if (deg < 0 || deg > maxDeg) {
+        throw AxonError.validation(
+          `servo_angle: ${deg}° out of range (0..${maxDeg}° for this model).`,
+        );
+      }
+      const rawU8 = clamp(Math.round((deg * 255) / maxDeg), 0, 255);
+      const out = cloneConfig(config);
+      // Primary offset + three mirrors
+      for (const addr of [0x0a, 0x27, 0x29, 0x2b] as const) {
+        out[addr] = 0;
+        out[addr + 1] = rawU8;
+      }
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input
+        .trim()
+        .replace(/°\s*$/, "")
+        .replace(/\s*deg\s*$/i, "");
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        throw AxonError.validation(
+          `servo_angle: could not parse '${input}' as a number of degrees.`,
+        );
+      }
+      return n;
+    },
+
+    validate(value, modelId) {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "servo_angle: value must be a number of degrees.";
+      }
+      const maxDeg = maxRangeDeg(modelId);
+      if (value < 0 || value > maxDeg) {
+        return `servo_angle: ${value}° out of range (0..${maxDeg}°).`;
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * servo_neutral — u8 at 0x06 with encoding stored = user_us + 0x80.
+ * User-facing range is -127..+127 µs offset from the 1500 µs center.
+ */
+function buildServoNeutral(): ParameterSpec {
+  const entry = requireCatalogEntry("servo_neutral");
+  return {
+    name: "servo_neutral",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    min: entry.min ?? -127,
+    max: entry.max ?? 127,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config) {
+      const raw = config[0x06] ?? 0x80;
+      const us = raw - 128;
+      return {
+        raw,
+        physical: us,
+        unit: "us",
+      };
+    },
+
+    write(config, value) {
+      const us = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(us)) {
+        throw AxonError.validation(
+          `servo_neutral: value must be a number of microseconds, got ${JSON.stringify(value)}`,
+        );
+      }
+      if (us < -127 || us > 127) {
+        throw AxonError.validation(`servo_neutral: ${us} µs out of range (-127..+127 µs).`);
+      }
+      const raw = clamp(Math.round(us) + 128, 1, 255);
+      const out = cloneConfig(config);
+      out[0x06] = raw;
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input.trim().replace(/\s*(us|µs|us)\s*$/i, "");
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        throw AxonError.validation(
+          `servo_neutral: could not parse '${input}' as a number of microseconds.`,
+        );
+      }
+      return n;
+    },
+
+    validate(value) {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "servo_neutral: value must be a number of microseconds.";
+      }
+      if (value < -127 || value > 127) {
+        return `servo_neutral: ${value} µs out of range (-127..+127).`;
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * sensitivity — u8 at 0x0C with encoding stored = (user_step + 1) * 16.
+ * User-facing range is 0..14 (step 0 = ultra high, 1 µs dead-band).
+ */
+function buildSensitivity(): ParameterSpec {
+  const entry = requireCatalogEntry("sensitivity");
+  return {
+    name: "sensitivity",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    min: entry.min ?? 0,
+    max: entry.max ?? 14,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config) {
+      const raw = config[0x0c] ?? 0x10;
+      const step = Math.floor(raw / 16) - 1;
+      return {
+        raw,
+        physical: step,
+        unit: "step",
+      };
+    },
+
+    write(config, value) {
+      const step = typeof value === "number" ? value : Number(value);
+      if (!Number.isInteger(step)) {
+        throw AxonError.validation(
+          `sensitivity: value must be an integer step 0..14, got ${JSON.stringify(value)}`,
+        );
+      }
+      if (step < 0 || step > 14) {
+        throw AxonError.validation(`sensitivity: ${step} out of range (0..14).`);
+      }
+      const raw = (step + 1) * 16;
+      const out = cloneConfig(config);
+      out[0x0c] = raw;
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input.trim().replace(/\s*step\s*$/i, "");
+      const n = Number(trimmed);
+      if (!Number.isInteger(n)) {
+        throw AxonError.validation(`sensitivity: could not parse '${input}' as an integer step.`);
+      }
+      return n;
+    },
+
+    validate(value) {
+      if (!Number.isInteger(value as number)) {
+        return "sensitivity: value must be an integer step 0..14.";
+      }
+      const n = value as number;
+      if (n < 0 || n > 14) {
+        return `sensitivity: ${n} out of range (0..14).`;
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * inversion — bit 0x02 of the flags byte at 0x25. Value set → "reversed".
+ */
+function buildInversion(): ParameterSpec {
+  const entry = requireCatalogEntry("inversion");
+  return {
+    name: "inversion",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    values: entry.values,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config) {
+      const raw = config[0x25] ?? 0;
+      const bit = (raw & 0x02) !== 0;
+      return {
+        raw,
+        physical: bit ? "reversed" : "normal",
+        unit: "enum",
+      };
+    },
+
+    write(config, value) {
+      if (value !== "normal" && value !== "reversed") {
+        throw AxonError.validation(
+          `inversion: value must be 'normal' or 'reversed', got ${JSON.stringify(value)}`,
+        );
+      }
+      const out = cloneConfig(config);
+      const current = out[0x25] ?? 0;
+      if (value === "reversed") {
+        out[0x25] = current | 0x02;
+      } else {
+        out[0x25] = current & ~0x02;
+      }
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input.trim().toLowerCase();
+      if (trimmed === "normal" || trimmed === "reversed") return trimmed;
+      throw AxonError.validation(
+        `inversion: value must be 'normal' or 'reversed', got '${input}'.`,
+      );
+    },
+
+    validate(value) {
+      if (value !== "normal" && value !== "reversed") {
+        return "inversion: value must be 'normal' or 'reversed'.";
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * loose_pwm_protection — two bits 0x60 in the flags byte at 0x25.
+ * READ-ONLY in v1.0: we know the bit location but not which numeric
+ * bit value maps to release/hold/neutral. Write is rejected.
+ */
+function buildLoosePwmProtection(): ParameterSpec {
+  const entry = requireCatalogEntry("loose_pwm_protection");
+  return {
+    name: "loose_pwm_protection",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    values: entry.values,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config) {
+      const raw = config[0x25] ?? 0;
+      const bits = (raw & 0x60) >> 5;
+      return {
+        raw,
+        physical: `raw_bits=${bits} (mode mapping unknown; see docs/BYTE_MAPPING.md)`,
+        unit: "enum",
+        notes:
+          "The bit-value → mode mapping (release/hold/neutral) is unresolved. " +
+          "Values are exposed as raw bits only; 'set' is rejected.",
+      };
+    },
+
+    write(_config, _value) {
+      throw AxonError.validation(
+        "loose_pwm_protection: 'set' is not yet supported for this parameter; " +
+          "the bit-value mapping (release/hold/neutral) is unknown. " +
+          "See docs/BYTE_MAPPING.md for the status.",
+      );
+    },
+
+    parseUserInput(_input) {
+      throw AxonError.validation(
+        "loose_pwm_protection: 'set' is not yet supported for this parameter; " +
+          "the bit-value mapping (release/hold/neutral) is unknown. " +
+          "See docs/BYTE_MAPPING.md for the status.",
+      );
+    },
+
+    validate(_value) {
+      return "loose_pwm_protection: 'set' is not yet supported for this parameter.";
+    },
+  };
+}
+
+/**
+ * pwm_power — u8 at 0x11 mirrored at 0x12, 0x13, and 0x0F (= primary − 20).
+ * User-facing unit is percent (0..100).
+ */
+function buildPwmPower(): ParameterSpec {
+  const entry = requireCatalogEntry("pwm_power");
+  return {
+    name: "pwm_power",
+    vendorLabel: entry.vendor_label,
+    description: entry.description,
+    unit: entry.unit,
+    modes: entry.modes,
+    min: entry.min ?? 0,
+    max: entry.max ?? 100,
+    docsUrl: entry.docs_url,
+    offset: entry.implementation.offset,
+    encoding: entry.implementation.encoding,
+
+    read(config) {
+      const raw = config[0x11] ?? 0;
+      const percent = Math.round((raw * 100) / 255);
+      return {
+        raw,
+        physical: percent,
+        unit: "percent",
+      };
+    },
+
+    write(config, value) {
+      const pct = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(pct)) {
+        throw AxonError.validation(
+          `pwm_power: value must be a number of percent, got ${JSON.stringify(value)}`,
+        );
+      }
+      if (pct < 0 || pct > 100) {
+        throw AxonError.validation(`pwm_power: ${pct}% out of range (0..100).`);
+      }
+      const primary = clamp(Math.round((pct * 255) / 100), 0, 255);
+      const out = cloneConfig(config);
+      out[0x11] = primary;
+      out[0x12] = primary;
+      out[0x13] = primary;
+      out[0x0f] = Math.max(0, primary - 20);
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input
+        .trim()
+        .replace(/\s*%\s*$/, "")
+        .replace(/\s*percent\s*$/i, "");
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        throw AxonError.validation(`pwm_power: could not parse '${input}' as a number of percent.`);
+      }
+      return n;
+    },
+
+    validate(value) {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "pwm_power: value must be a number of percent.";
+      }
+      if (value < 0 || value > 100) {
+        return `pwm_power: ${value}% out of range (0..100).`;
+      }
+      return null;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------
+
+let cachedRegistry: ParameterSpec[] | null = null;
+
+function buildRegistry(): ParameterSpec[] {
+  return [
+    buildServoAngle(),
+    buildServoNeutral(),
+    buildSensitivity(),
+    buildInversion(),
+    buildLoosePwmProtection(),
+    buildPwmPower(),
+  ];
+}
+
+export function listParameters(): ParameterSpec[] {
+  if (cachedRegistry === null) cachedRegistry = buildRegistry();
+  return cachedRegistry;
+}
+
+export function findParameter(name: string): ParameterSpec | undefined {
+  return listParameters().find((p) => p.name === name);
+}
+
+/**
+ * Is `name` a canonical V1.3 parameter that we've documented but not
+ * yet mapped to a specific byte? Checked by 'get'/'set' BEFORE the
+ * "unknown parameter" path so users get a meaningful explanation.
+ */
+export function isParameterNotYetMapped(name: string): boolean {
+  return isNotYetMapped(name);
+}
+
+/**
+ * Get the `reason_blocked` string from the catalog for a not-yet-mapped
+ * parameter, or undefined if the parameter isn't in the not-yet-mapped
+ * list.
+ */
+export function notYetMappedReason(name: string): string | undefined {
+  const nym = loadNotYetMapped();
+  return nym[name]?.reason_blocked;
+}
+
+/**
+ * Convenience: the full list of "canonical V1.3 parameter" names the
+ * CLI should recognize — mapped + not-yet-mapped — so that 'axon get'
+ * can distinguish "unknown parameter" from "known-but-unmapped".
+ */
+export function listAllKnownNames(): string[] {
+  const mapped = listParameters().map((p) => p.name);
+  const unmapped = Object.keys(loadNotYetMapped());
+  return [...mapped, ...unmapped];
+}
+
+// ---------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------
+
+/**
+ * Look up the "default" value for a parameter from the model's
+ * `defaults` map. Returns the user-facing canonical value (e.g. a
+ * number of degrees for servo_angle, the string "normal" for
+ * inversion), not the raw byte. Returns undefined if there's no
+ * default defined in the catalog.
+ */
+export function getParameterDefault(name: string, modelId: string): unknown | undefined {
+  const catalog = loadCatalog();
+  const model = findModel(catalog, modelId);
+  if (!model) return undefined;
+  const raw = model.defaults[name];
+  if (raw === undefined) return undefined;
+  return canonicalizeDefault(name, raw, modelId);
+}
+
+function canonicalizeDefault(
+  name: string,
+  rawDefault: ModelDefaultValue,
+  modelId: string,
+): unknown | undefined {
+  // Primitives (e.g. "normal" for inversion) pass through.
+  if (
+    typeof rawDefault === "string" ||
+    typeof rawDefault === "number" ||
+    typeof rawDefault === "boolean" ||
+    rawDefault === null
+  ) {
+    return rawDefault;
+  }
+  // Structured form: pick the most useful user-facing field per
+  // parameter. We intentionally prefer user-facing fields
+  // ("user_step", "us", "percent_approx", "deg_approx") over the raw
+  // byte because the user-facing semantics are what parseUserInput
+  // produces and validate() checks.
+  switch (name) {
+    case "servo_angle": {
+      // Prefer deg_approx if present; otherwise compute from raw.
+      if (typeof rawDefault.deg_approx === "number") return rawDefault.deg_approx;
+      if (typeof rawDefault.raw === "number") {
+        return Math.round((rawDefault.raw * maxRangeDeg(modelId)) / 255);
+      }
+      return undefined;
+    }
+    case "servo_neutral": {
+      if (typeof rawDefault.us === "number") return rawDefault.us;
+      if (typeof rawDefault.raw === "number") return rawDefault.raw - 128;
+      return undefined;
+    }
+    case "sensitivity": {
+      if (typeof rawDefault.user_step === "number") return rawDefault.user_step;
+      if (typeof rawDefault.raw === "number") return Math.floor(rawDefault.raw / 16) - 1;
+      return undefined;
+    }
+    case "pwm_power": {
+      if (typeof rawDefault.percent_approx === "number") return rawDefault.percent_approx;
+      if (typeof rawDefault.raw === "number") {
+        return Math.round((rawDefault.raw * 100) / 255);
+      }
+      return undefined;
+    }
+    case "loose_pwm_protection":
+      // The catalog explicitly records the mode as null here: we can't
+      // restore a meaningful default because we don't know the bit
+      // mapping yet. Skip.
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+// Re-export the catalog types so callers can use them without a direct
+// catalog import when they only touch the parameter layer.
+export type { CatalogParameterSpec };
+
+/**
+ * Iterate the catalog's raw parameter list (useful when the CLI needs
+ * to inspect "all canonical parameters, mapped or not"). Alias of the
+ * catalog's export, re-exported here so the parameters module is the
+ * single import point for the CLI command layer.
+ */
+export function listCatalogParameters(): CatalogParameterSpec[] {
+  return loadCatalogParameters();
+}

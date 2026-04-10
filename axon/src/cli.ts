@@ -10,8 +10,10 @@
  * adding a dep for it would outweigh the benefit.
  */
 
+import { printGetHelp, runGet } from "./commands/get.ts";
 import { runMonitor } from "./commands/monitor.ts";
 import { runRead } from "./commands/read.ts";
+import { runSet } from "./commands/set.ts";
 import { runStatus } from "./commands/status.ts";
 import { runWrite } from "./commands/write.ts";
 import { AxonError, ExitCode } from "./errors.ts";
@@ -95,6 +97,8 @@ COMMANDS:
   monitor           Live presence polling (Ctrl-C to stop)
   read              Read config from servo
   write             Write config to servo
+  get               Read a named parameter (or list them)
+  set               Write a named parameter
   help              Show this message
 
 GLOBAL FLAGS:
@@ -118,8 +122,15 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (parsed.flags.help || parsed.flags.h) {
-    printCommandHelp(parsed.command);
-    return ExitCode.Ok;
+    // `axon get <param> --help` is handled inside the get command so
+    // it can render per-parameter help from the catalog. Everything
+    // else (including bare `axon get --help`) uses printCommandHelp.
+    if (parsed.command === "get" && parsed.positional.length > 0) {
+      // fall through to the command dispatcher below
+    } else {
+      printCommandHelp(parsed.command);
+      return ExitCode.Ok;
+    }
   }
 
   try {
@@ -149,14 +160,33 @@ async function main(argv: string[]): Promise<number> {
         return await runWrite(parsed.global, { from, dryRun });
       }
 
-      case "get":
-      case "set":
+      case "get": {
+        // Per-parameter --help is a pure catalog lookup; no hardware.
+        // Top-level `axon get --help` is covered by the global help path.
+        if ((parsed.flags.help || parsed.flags.h) && parsed.positional.length === 0) {
+          return printGetHelp(parsed.global);
+        }
+        const param = parsed.positional[0];
+        const raw = !!parsed.flags.raw;
+        const help = !!(parsed.flags.help || parsed.flags.h);
+        return await runGet(parsed.global, { param, raw, help });
+      }
+
+      case "set": {
+        const backup = typeof parsed.flags.backup === "string" ? parsed.flags.backup : undefined;
+        const dryRun = parsed.flags["dry-run"] === true;
+        return await runSet(parsed.global, {
+          positional: parsed.positional,
+          backup,
+          dryRun,
+        });
+      }
+
       case "mode": {
         process.stderr.write(
           `axon ${parsed.command} is not yet implemented in the v1 scaffold.\n` +
-            `Currently implemented: status, monitor, read, write.\n` +
-            `See docs/BYTE_MAPPING.md for the byte→parameter mapping work blocking 'set'/'get',\n` +
-            `and docs/CLI_DESIGN.md for the full v1 design.\n`,
+            `Currently implemented: status, monitor, read, write, get, set.\n` +
+            `See docs/CLI_DESIGN.md for the full v1 design.\n`,
         );
         return ExitCode.UsageError;
       }
@@ -236,6 +266,26 @@ function printCommandHelp(command: string): void {
           `Always reads the current config, shows a byte-level diff, asks for\n` +
           `confirmation, writes, and verifies. Refuses to write if the file's\n` +
           `model id does not match the connected servo.\n`,
+      );
+      break;
+    case "get":
+      printGetHelp({ json: false, quiet: false, yes: false });
+      break;
+    case "set":
+      process.stdout.write(
+        `axon set — write a named parameter to the servo\n\n` +
+          `USAGE:\n` +
+          `  axon set <param> <value>         Read-modify-write with diff + confirm\n` +
+          `  axon set <param> default         Reset one parameter to the model default\n` +
+          `  axon set default                 Reset ALL parameters in the current mode\n` +
+          `  axon set default --backup <f>    Save current config to <f> before resetting\n\n` +
+          `FLAGS:\n` +
+          `  --yes        Skip confirmation prompt\n` +
+          `  --dry-run    Show the diff without writing\n` +
+          `  --json       Machine-readable output (implies --yes)\n\n` +
+          `Example:\n` +
+          `  axon set servo_angle 180\n` +
+          `  axon set pwm_power 75\n`,
       );
       break;
     default:

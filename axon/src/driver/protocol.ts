@@ -36,10 +36,13 @@ export const MAX_CHUNK = 0x3b; // 59
 export const CHUNK_SLEEP_MS = 25;
 export const WIRE_REPLY_SETTLE_MS = 80; // empirically adequate for 9600 baud
 
+export type ServoMode = "servo_mode" | "cr_mode" | "unknown";
+
 export interface IdentifyReply {
   present: boolean;
   rawRx: Buffer;
   statusLo: number; // rx[2]: 0x00 ok, 0xFA no servo, etc.
+  mode: ServoMode; // from rx[5]: 0x03 → servo_mode, 0x04 → cr_mode
 }
 
 function buildTx(cmd: number, addr: number, length: number): Buffer {
@@ -89,7 +92,12 @@ export async function identify(handle: DongleHandle): Promise<IdentifyReply> {
     rx[2] === 0x00 &&
     (rx[5] === 0x03 || rx[5] === 0x04) &&
     rx[7] === 0x01;
-  return { present, rawRx: rx, statusLo: rx[2] ?? 0xff };
+  let mode: ServoMode = "unknown";
+  if (present) {
+    if (rx[5] === 0x03) mode = "servo_mode";
+    else if (rx[5] === 0x04) mode = "cr_mode";
+  }
+  return { present, rawRx: rx, statusLo: rx[2] ?? 0xff, mode };
 }
 
 /**
