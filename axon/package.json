@@ -9,7 +9,9 @@
   },
   "scripts": {
     "axon": "bun run src/cli.ts",
+    "prebuild": "bun run scripts/embed-sfw.ts",
     "build": "bun build --compile --outfile=./bin/axon ./src/cli.ts",
+    "embed-sfw": "bun run scripts/embed-sfw.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "bun x @biomejs/biome lint .",
     "format": "bun x @biomejs/biome format --write .",

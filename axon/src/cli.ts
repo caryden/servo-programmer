@@ -11,6 +11,7 @@
  */
 
 import { printGetHelp, runGet } from "./commands/get.ts";
+import { type ModeSubcommand, runMode } from "./commands/mode.ts";
 import { runMonitor } from "./commands/monitor.ts";
 import { runRead } from "./commands/read.ts";
 import { runSet } from "./commands/set.ts";
@@ -99,6 +100,7 @@ COMMANDS:
   write             Write config to servo
   get               Read a named parameter (or list them)
   set               Write a named parameter
+  mode              List / show / flash bundled servo modes
   help              Show this message
 
 GLOBAL FLAGS:
@@ -183,12 +185,29 @@ async function main(argv: string[]): Promise<number> {
       }
 
       case "mode": {
-        process.stderr.write(
-          `axon ${parsed.command} is not yet implemented in the v1 scaffold.\n` +
-            `Currently implemented: status, monitor, read, write, get, set.\n` +
-            `See docs/CLI_DESIGN.md for the full v1 design.\n`,
-        );
-        return ExitCode.UsageError;
+        const sub = parsed.positional[0];
+        if (sub === undefined) {
+          throw AxonError.usage(
+            "`axon mode` requires a sub-command: list, current, or set. " +
+              "Run 'axon mode --help' for details.",
+          );
+        }
+        if (sub !== "list" && sub !== "current" && sub !== "set") {
+          throw AxonError.usage(
+            `unknown 'mode' sub-command: ${sub}. Expected: list, current, set.`,
+          );
+        }
+        const subcommand: ModeSubcommand = sub;
+        if (subcommand === "set") {
+          const filePath = typeof parsed.flags.file === "string" ? parsed.flags.file : undefined;
+          const modeName = parsed.positional[1];
+          return await runMode(parsed.global, {
+            subcommand,
+            modeName,
+            filePath,
+          });
+        }
+        return await runMode(parsed.global, { subcommand });
       }
 
       default:
@@ -200,11 +219,11 @@ async function main(argv: string[]): Promise<number> {
     if (e instanceof AxonError) {
       if (parsed.global.json) {
         process.stderr.write(
-          JSON.stringify({
+          `${JSON.stringify({
             error: e.message,
             code: e.code,
             hint: e.hint ?? null,
-          }) + "\n",
+          })}\n`,
         );
       } else {
         process.stderr.write(`error: ${e.message}\n`);
@@ -214,7 +233,7 @@ async function main(argv: string[]): Promise<number> {
     }
     process.stderr.write(`unexpected error: ${(e as Error).message}\n`);
     if ((e as Error).stack) {
-      process.stderr.write((e as Error).stack! + "\n");
+      process.stderr.write(`${(e as Error).stack!}\n`);
     }
     return ExitCode.ServoIoError;
   }
@@ -286,6 +305,23 @@ function printCommandHelp(command: string): void {
           `Example:\n` +
           `  axon set servo_angle 180\n` +
           `  axon set pwm_power 75\n`,
+      );
+      break;
+    case "mode":
+      process.stdout.write(
+        `axon mode — list, inspect, and flash bundled servo modes\n\n` +
+          `USAGE:\n` +
+          `  axon mode list                     Show bundled modes for the connected servo\n` +
+          `  axon mode current                  Show the mode the servo is currently in\n` +
+          `  axon mode set <name>               Flash a bundled mode (standard | continuous)\n` +
+          `  axon mode set --file <path>        Flash an arbitrary .sfw file\n\n` +
+          `Flashing is destructive and cannot be undone. 'axon mode set' always shows\n` +
+          `a prominent warning and requires you to type the mode name (or file\n` +
+          `basename) to confirm — --yes does NOT bypass this prompt.\n\n` +
+          `Example:\n` +
+          `  axon mode list\n` +
+          `  axon mode set continuous\n` +
+          `  axon mode set --file ./community/custom_cr.sfw\n`,
       );
       break;
     default:
