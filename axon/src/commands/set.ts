@@ -149,7 +149,28 @@ export async function runSetWithHandle(
     if (rawValue === "default") {
       const def = getParameterDefault(paramName, modelId);
       if (def === undefined) {
-        throw AxonError.validation(`no default value for '${paramName}' on model ${modelId}.`);
+        // No definitive factory default is known for this parameter
+        // on this model. The vendor exe's own "Default" button is
+        // greyed out in exactly this situation (widget-driven defaults
+        // with nothing to fall back to). Rather than inventing one,
+        // report the observation and leave the servo untouched.
+        const current = spec.read(currentConfig, modelId);
+        const currentText = formatForDiff(spec, current.physical);
+        if (global.json) {
+          process.stdout.write(
+            JSON.stringify({
+              changed: false,
+              reason: "no_default",
+              param: paramName,
+              current: currentText,
+            }) + "\n",
+          );
+        } else if (!global.quiet) {
+          process.stderr.write(
+            `no default value for '${paramName}' on model ${modelId} — leaving value at ${currentText}\n`,
+          );
+        }
+        return ExitCode.Ok;
       }
       parsed = def;
     } else {

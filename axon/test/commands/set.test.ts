@@ -233,6 +233,53 @@ describe("axon set (default restoration)", () => {
     expect(Math.abs(mock.config[0x11]! - 219)).toBeLessThanOrEqual(1);
   });
 
+  test("set <param> default with no catalog default leaves value unchanged", async () => {
+    // The Axon Max (SA81BHMW) is populated in the catalog from
+    // decrypted firmware only — it has no defaults map, so
+    // `axon set <param> default` must print an observation and leave
+    // the servo untouched rather than throwing a validation error.
+    const maxSeed = Buffer.from(
+      new MockDongle().config, // borrow the Mini fixture as the byte soup
+    );
+    // Overwrite the model-id bytes (0x40..0x47) with "SA81BHMW" so
+    // modelIdFromConfig() classifies this as a Max.
+    const maxId = Buffer.from("SA81BHMW", "ascii");
+    maxId.copy(maxSeed, 0x40);
+    const mock = new MockDongle(maxSeed);
+    // Capture what servo_angle's raw byte was before the attempted reset.
+    const before = Buffer.from(mock.config);
+    const code = await runSetWithHandle(mock, GLOBALS, {
+      positional: ["servo_angle", "default"],
+      dryRun: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    // Config bytes must be untouched — the command reported the
+    // observation without writing anything.
+    expect(Array.from(mock.config)).toEqual(Array.from(before));
+    // The human-readable message is on stderr.
+    expect(io.stderr).toContain("no default value");
+    expect(io.stderr).toContain("servo_angle");
+    expect(io.stderr).toContain("SA81BHMW");
+    expect(io.stderr).toContain("leaving value at");
+  });
+
+  test("set <param> default with no catalog default emits no_default in --json", async () => {
+    const maxSeed = Buffer.from(new MockDongle().config);
+    Buffer.from("SA81BHMW", "ascii").copy(maxSeed, 0x40);
+    const mock = new MockDongle(maxSeed);
+    const code = await runSetWithHandle(mock, GLOBALS_JSON, {
+      positional: ["servo_angle", "default"],
+      dryRun: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    const line = io.stdout.trim().split("\n").pop()!;
+    const parsed = JSON.parse(line);
+    expect(parsed.changed).toBe(false);
+    expect(parsed.reason).toBe("no_default");
+    expect(parsed.param).toBe("servo_angle");
+    expect(typeof parsed.current).toBe("string");
+  });
+
   test("set default --backup writes the current config to the backup file", async () => {
     const mock = new MockDongle();
     const backupPath = join(tmpdir(), `axon-set-default-backup-${Date.now()}.svo`);
