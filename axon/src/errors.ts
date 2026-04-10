@@ -61,7 +61,7 @@ export class AxonError extends Error {
     return new AxonError(
       ExitCode.DongleNotFound,
       detail,
-      "Plug in the Axon servo programmer.",
+      "Plug in the Axon servo programmer adapter.",
       "no_adapter",
     );
   }
@@ -75,8 +75,8 @@ export class AxonError extends Error {
   static adapterBusy(detail: string): AxonError {
     return new AxonError(
       ExitCode.DongleNotFound,
-      `Could not open the Axon dongle: ${detail}`,
-      "Unplug and replug the dongle, then retry.",
+      `Could not open the Axon adapter: ${detail}`,
+      "Unplug and replug the adapter, then retry.",
       "adapter_busy",
     );
   }
@@ -89,8 +89,8 @@ export class AxonError extends Error {
   static adapterStale(detail: string): AxonError {
     return new AxonError(
       ExitCode.ServoIoError,
-      `HID I/O to the Axon dongle failed: ${detail}`,
-      "Unplug and replug the dongle, then retry.",
+      `HID I/O to the Axon adapter failed: ${detail}`,
+      "Unplug and replug the adapter, then retry.",
       "adapter_stale",
     );
   }
@@ -104,7 +104,7 @@ export class AxonError extends Error {
     return new AxonError(
       ExitCode.NotPrimed,
       detail,
-      "Unplug and replug the servo from the dongle (leave the adapter connected).",
+      "Unplug and replug the servo from the adapter (leave the adapter connected).",
       "no_servo",
     );
   }
@@ -117,7 +117,7 @@ export class AxonError extends Error {
     return new AxonError(
       ExitCode.ServoIoError,
       `Servo I/O error: ${detail}`,
-      "Unplug and replug the servo from the dongle (leave the adapter connected).",
+      "Unplug and replug the servo from the adapter (leave the adapter connected).",
       "servo_io",
     );
   }

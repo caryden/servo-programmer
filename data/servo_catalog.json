@@ -94,7 +94,8 @@
         "inversion",
         "loose_pwm_protection",
         "pwm_power",
-        "soft_start"
+        "soft_start",
+        "proptl"
       ],
       "unavailable_parameters": {
         "servo_angle": "Continuous rotation has no fixed range",
@@ -199,8 +200,7 @@
       }
     },
 
-    "_Axon_Micro_placeholder": {
-      "_TODO": "Fill in model id and defaults once we can read a Micro servo. Firmware files are now bundled.",
+    "SA20BHS*": {
       "name": "Axon Micro",
       "max_range_deg": null,
       "pulse_range_us": [500, 2500],
@@ -208,8 +208,35 @@
       "recommended_pwm_power_percent_4v8": null,
       "recommended_pwm_power_percent_6v0": null,
       "implementation": {
-        "magic_bytes": null,
-        "notes": "Model id string at 0x40..0x47 unknown until we can physically read a Micro. The bundled firmware files below use space-separated names (from the vendor's download page), different from the Mini/Max underscore convention."
+        "magic_bytes": "3b d0 0b f6",
+        "notes": "Physically read from an Axon Micro in CR mode on 2026-04-10. Model id at offset 0x40..0x47 is the ASCII 'SA20BHS*' (7 chars + 1 padding '*'). Manufactured 2023-10-05 per the vendor exe screenshot. The full 95-byte default CR-mode config block is checked in as research/saleae-captures/micro-cr-initial-connection.csv and mirrored as a live read via the axon CLI. The Micro bundled firmware files use space-separated names from the vendor download page (different from Mini/Max underscore convention).",
+        "captured_cr_mode_defaults_hex": "3b d0 0b f6 23 69 00 03 00 0a 00 7c fa 00 00 dc 0c dc dc dc 05 05 05 05 0a 00 2d 00 2d 00 2d 00 00 00 00 00 01 a0 00 01 c2 01 c2 01 c2 00 00 00 05 0a 17 00 00 a0 ff 80 50 40 78 24 20 00 00 00 53 41 32 30 42 48 53 2a 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      },
+      "defaults": {
+        "_note": "Defaults captured from a factory-fresh Axon Micro in CR mode. Servo-mode defaults are TBD (requires flashing the Micro to Servo Mode with 'Axon Micro Servo Mode.sfw' and re-reading).",
+        "servo_neutral": {
+          "raw": 128,
+          "us": 0,
+          "implementation": {
+            "notes": "byte 0x06 = 0x80 → 0 us offset from the 1500us neutral."
+          }
+        },
+        "pwm_power": {
+          "raw": 220,
+          "percent_approx": 86,
+          "implementation": {
+            "_approx": true,
+            "notes": "byte 0x11 = 0xDC mirrored at 0x12, 0x13. 220/255 ≈ 86% — matches the vendor exe's displayed PWM Power: 86.3% for this servo."
+          }
+        },
+        "proptl": {
+          "raw": 255,
+          "seconds": 25.5,
+          "implementation": {
+            "notes": "byte 0x36 = 0xFF → 25.5s, matching the vendor exe's displayed ProPTL: 25.5 s."
+          }
+        },
+        "inversion": "normal"
       },
       "bundled_firmware": {
         "standard": {
@@ -329,6 +356,28 @@
         "value_mapping_note": "Byte/bit location is certain from FUN_00405518 lines 179-192. Which specific bit value (0x00, 0x40, or 0x60) corresponds to which vendor mode name is unknown. CLI should expose 'get' as a raw-bit annotation until an A/B .svo diff resolves the mapping, and should reject 'set' attempts with a clear message.",
         "source": "decomp_slider_overlay_0x352_00405518.c lines 179-192 + archive docs",
         "notes": "Two bits of the flags byte at 0x25 encode a 3-way enum. Mapping bit values to vendor mode names needs a three-way .svo A/B diff."
+      }
+    },
+    "proptl": {
+      "vendor_label": "ProPTL",
+      "description": "An overheat-prevention timeout, in seconds, that automatically cuts the servo's output after continuous operation for this long. Only applies to the Axon Micro in CR mode. The maximum is 25.5 seconds (the factory default); there is no 'disabled' setting. If your application needs continuous rotation for longer, you will need to stop and restart the servo. The vendor exe calls this 'ProPTL' (undocumented in the public Axon docs).",
+      "unit": "s",
+      "modes": ["cr_mode"],
+      "applies_to_models": ["SA20BHS*"],
+      "min": 0,
+      "max": 25.5,
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x36",
+        "encoding": "u8",
+        "widget": "p1+0x3dc",
+        "confidence": "high",
+        "min_raw": 0,
+        "max_raw": 255,
+        "seconds_formula": "seconds = raw * 0.1",
+        "seconds_formula_confidence": "high",
+        "source": "decomp_slider_overlay_0x357_00406248.c line 29 + axon_servo_programming_exe screenshot + Axon Micro CR mode .svo capture",
+        "notes": "Only the CR-mode overlay function FUN_00406248 writes this byte (line 29), confirming it is not used in servo mode. Cross-referenced against a physical Axon Micro (model id SA20BHS*) where the observed raw value 0xFF corresponds exactly to the vendor exe's displayed value of 25.5 s — confirming the raw*0.1 scale. Per prior user research, this is a Micro-specific feature; other models may not have it in their CR-mode firmware."
       }
     },
     "pwm_power": {
