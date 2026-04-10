@@ -348,16 +348,26 @@ export async function flashFirmware(
   // Phase 1b: enter flash mode (0x90 param=0). The vendor exe sends
   // this when the HID product name matches its whitelist — which our
   // dongle ("USBBootloader V1.3") does. Without this command the
-  // dongle stays in normal mode and rejects the key exchange (0x81).
+  // servo stays in normal mode and rejects the key exchange (0x81).
   //
-  // The 0x90 write/read is done DIRECTLY to the HID handle (not via
-  // the exchange() helper) because the reply format may differ from
-  // the standard status/length/data layout — the vendor exe does the
-  // same (firmware_handler.c:164-172 bypasses FUN_004082f0).
+  // IMPORTANT: 0x90 has a DIFFERENT wire layout than the other flash
+  // commands. The vendor writes directly to the HID buffer
+  // (firmware_handler.c:164-168), NOT through FUN_00408220. The
+  // param goes at tx[2] — there is no length field:
+  //
+  //   tx[0] = 0x04  (report ID)
+  //   tx[1] = 0x90  (command)
+  //   tx[2] = 0x00  (param: 0=enter, 1=exit)
+  //   tx[3..63] = 0x00
+  //
+  // Do NOT use buildFlashTx here — it puts a length byte at tx[2].
   {
-    const modeLockTx = buildFlashTx(CMD_MODE_LOCK, Uint8Array.from([0x00]));
+    const modeLockTx = Buffer.alloc(REPORT_SIZE);
+    modeLockTx[0] = REPORT_ID;
+    modeLockTx[1] = CMD_MODE_LOCK;
+    modeLockTx[2] = 0x00; // enter flash mode
     await handle.write(modeLockTx);
-    await handle.read(); // drain reply (content ignored)
+    await handle.read(); // drain reply (content ignored by vendor)
   }
 
   // Phase 2: boot version query (0x80 + 4-byte payload 01 02 03 04).
@@ -491,11 +501,13 @@ export async function flashFirmware(
   fillRandom(finishBuf, 3);
   await exchange(handle, CMD_FLASH_MARKER, finishBuf, 1, sleepMs);
 
-  // Phase 8: exit flash mode (0x90 param=1). Mirror of the enter
-  // in phase 1b. Direct HID write/read, same as the vendor exe
-  // (firmware_handler.c:717-723).
+  // Phase 8: exit flash mode (0x90 param=1). Same direct layout as
+  // the enter in phase 1b (firmware_handler.c:717-723).
   {
-    const modeUnlockTx = buildFlashTx(CMD_MODE_LOCK, Uint8Array.from([0x01]));
+    const modeUnlockTx = Buffer.alloc(REPORT_SIZE);
+    modeUnlockTx[0] = REPORT_ID;
+    modeUnlockTx[1] = CMD_MODE_LOCK;
+    modeUnlockTx[2] = 0x01; // exit flash mode
     await handle.write(modeUnlockTx);
     await handle.read(); // drain reply
   }
