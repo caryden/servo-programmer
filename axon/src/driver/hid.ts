@@ -19,7 +19,7 @@
  */
 
 import HID from "node-hid";
-import { AxonError, ExitCode } from "../errors.ts";
+import { AxonError } from "../errors.ts";
 import type { DongleHandle } from "./transport.ts";
 
 export const VID = 0x0471;
@@ -27,52 +27,23 @@ export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
 
 /**
- * Small utility: how long to wait before retrying a transient HID
- * I/O failure. node-hid on macOS is occasionally flaky for a
- * window of tens of milliseconds right after a device plug event
- * (or a hot-swap between two Axon servos with the same
- * VID/PID/product), so one retry dramatically reduces "false
- * failure" exits without noticeably slowing down the normal path.
- */
-const HID_RETRY_DELAY_MS = 50;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Translate a raw node-hid write failure into an AxonError with a
- * clean user-facing message and an actionable hint. The top-level
- * cli.ts handler renders AxonError specially (no stack trace), so
- * wrapping here keeps the user experience graceful.
+ * Wrap a raw node-hid failure in an AxonError so the top-level
+ * catch in cli.ts renders it cleanly (no stack trace). The detail
+ * string is the raw error message from node-hid — we do NOT
+ * speculate about the cause in the hint; we just surface what the
+ * OS told us and ask the user to replug.
+ *
+ * Previously this file retried once on failure. The retry was
+ * removed because it masked the root cause — if node-hid keeps
+ * failing, we want to see the first error verbatim so we can
+ * actually fix the bug instead of papering over it.
  */
 function hidWriteError(detail: string): AxonError {
-  return new AxonError(
-    ExitCode.ServoIoError,
-    `Cannot write to the Axon dongle (${detail}).`,
-    "Unplug and replug the dongle, then retry. If the problem persists: " +
-      "make sure no other process is holding the device open (the vendor " +
-      "exe in Parallels, an older axon process, or a Saleae Logic 2 " +
-      "automation connection). On macOS, hot-swapping between two servos " +
-      "connected to the same dongle sometimes leaves the HID handle in a " +
-      "stale state for a few seconds — a physical dongle replug fixes it.",
-  );
+  return AxonError.adapterStale(detail);
 }
 
-/**
- * Same idea for read failures (which on the Axon dongle are almost
- * always write failures in disguise, because every read is preceded
- * by a write that set up the response).
- */
 function hidReadError(detail: string): AxonError {
-  return new AxonError(
-    ExitCode.ServoIoError,
-    `Cannot read from the Axon dongle (${detail}).`,
-    "Unplug and replug the dongle, then retry. If the dongle is enumerating " +
-      "but reads keep timing out, the servo may have been hot-swapped or " +
-      "gone into a cold state; replug the servo (leaving the dongle " +
-      "connected) to re-prime it.",
-  );
+  return AxonError.adapterStale(detail);
 }
 
 /**
@@ -109,33 +80,17 @@ class NodeHidDongle implements DongleHandle {
     }
     const padded = Buffer.alloc(REPORT_SIZE);
     data.copy(padded, 0);
-    const payload = Array.from(padded);
-
-    // Attempt the write, then retry once after a short delay on
-    // transient errors. node-hid can throw a raw TypeError here
-    // ("Cannot write to hid device") when the device is in a
-    // just-plugged / hot-swap / stale-handle state — one retry
-    // usually clears it.
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const n = this.device.write(payload);
-        if (n <= 0) {
-          lastError = new Error(
-            `node-hid write returned ${n} (expected ${REPORT_SIZE})`,
-          );
-        } else {
-          return; // success
-        }
-      } catch (e) {
-        lastError = e;
+    try {
+      const n = this.device.write(Array.from(padded));
+      if (n <= 0) {
+        throw hidWriteError(
+          `node-hid write returned ${n} (expected ${REPORT_SIZE})`,
+        );
       }
-      if (attempt === 0) {
-        await sleep(HID_RETRY_DELAY_MS);
-      }
+    } catch (e) {
+      if (e instanceof AxonError) throw e;
+      throw hidWriteError((e as Error).message ?? "unknown failure");
     }
-    // Both attempts failed — surface a clean AxonError.
-    throw hidWriteError((lastError as Error).message ?? "unknown failure");
   }
 
   async read(timeoutMs = 500): Promise<Buffer> {
@@ -169,16 +124,20 @@ class NodeHidDongle implements DongleHandle {
 
 /**
  * Open the single Axon dongle. Enforces the "exactly one" invariant
- * from the CLI design spec — zero or more-than-one dongles yields
- * `ExitCode.DongleNotFound`.
+ * from the CLI design spec, and emits state-specific errors:
+ *
+ *   - No matches   → AxonError.noAdapter (category "no_adapter")
+ *   - >1 matches   → AxonError.noAdapter
+ *   - Open fails   → AxonError.adapterBusy (category "adapter_busy",
+ *                    usually another process is claiming it)
  */
 export async function openDongle(): Promise<DongleHandle> {
   const matches = HID.devices(VID, PID);
   if (matches.length === 0) {
-    throw AxonError.dongleNotFound("Axon dongle not found on USB.");
+    throw AxonError.noAdapter("Axon dongle not found on USB.");
   }
   if (matches.length > 1) {
-    throw AxonError.dongleNotFound(
+    throw AxonError.noAdapter(
       `Found ${matches.length} Axon dongles on USB — expected exactly 1.`,
     );
   }
@@ -186,7 +145,7 @@ export async function openDongle(): Promise<DongleHandle> {
   const desc = matches[0]!;
   const path = desc.path;
   if (!path) {
-    throw AxonError.dongleNotFound(
+    throw AxonError.noAdapter(
       "Axon dongle enumerated but no device path (node-hid returned an entry without `path`).",
     );
   }
@@ -195,9 +154,7 @@ export async function openDongle(): Promise<DongleHandle> {
   try {
     device = new HID.HID(path);
   } catch (e) {
-    throw AxonError.dongleNotFound(
-      `failed to open Axon dongle at ${path}: ${(e as Error).message}`,
-    );
+    throw AxonError.adapterBusy((e as Error).message);
   }
 
   return new NodeHidDongle(device);
