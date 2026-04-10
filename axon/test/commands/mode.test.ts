@@ -427,16 +427,14 @@ describe("mode set (flash round-trip)", () => {
     expect(mock.hexRecords).toBe(dec.hexRecords.length);
     expect(mock.finishedFlashes).toBeGreaterThanOrEqual(1);
 
-    // Verify the ordering: 0x90 enter → 0x80 boot → ... → 0x83 finalize → 0x90 exit.
+    // Verify the ordering: 0x80 boot → ... → 0x83 finalize.
+    // No 0x90 enter/exit — see flash.ts comment about why.
     const firstFlashCmd = mock.flashCommandHistory[0];
     expect(firstFlashCmd).toBeDefined();
-    expect(firstFlashCmd?.cmd).toBe(0x90); // enter flash mode
-    const secondFlashCmd = mock.flashCommandHistory[1];
-    expect(secondFlashCmd).toBeDefined();
-    expect(secondFlashCmd?.cmd).toBe(0x80); // boot query
+    expect(firstFlashCmd?.cmd).toBe(0x80); // boot query
     const lastFlashCmd = mock.flashCommandHistory.at(-1);
     expect(lastFlashCmd).toBeDefined();
-    expect(lastFlashCmd?.cmd).toBe(0x90); // exit flash mode
+    expect(lastFlashCmd?.cmd).toBe(0x83); // finalize
     // 0x81 key exchange should appear exactly once.
     const keyExchanges = mock.flashCommandHistory.filter((c) => c.cmd === 0x81);
     expect(keyExchanges.length).toBe(1);

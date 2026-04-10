@@ -366,18 +366,15 @@ export async function flashFirmware(
   //   tx[3..63] = 0x00
   //
   // Do NOT use buildFlashTx here — it puts a length byte at tx[2].
-  {
-    const modeLockTx = Buffer.alloc(REPORT_SIZE);
-    modeLockTx[0] = REPORT_ID;
-    modeLockTx[1] = CMD_MODE_LOCK;
-    modeLockTx[2] = 0x00; // enter flash mode
-    await handle.write(modeLockTx);
-    const modeLockRx = await handle.read();
-    if (process.env.AXON_DEBUG === "1") {
-      const hex = Array.from(modeLockRx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-      process.stderr.write(`  [wire] 0x90 enter rx[0..15]: ${hex}\n`);
-    }
-  }
+  // NOTE: 0x90 "enter flash mode" is intentionally NOT sent here.
+  // The vendor exe only sends 0x90 when the HID product name matches
+  // a specific whitelist (firmware_handler.c:153-174). Sending it to
+  // a dongle that doesn't expect it puts the dongle into a state that
+  // survives handle.close() and blocks all subsequent commands (the
+  // dongle returns 0x02 to everything until physically unplugged for
+  // several seconds). The flash protocol works without 0x90 — the
+  // servo's MCU handles the boot query / key exchange / data write
+  // sequence directly.
 
   // Phase 2: boot version query (0x80 + 4-byte payload 01 02 03 04).
   progress({ phase: "boot_query", message: "Querying bootloader version..." });
@@ -512,16 +509,8 @@ export async function flashFirmware(
   fillRandom(finishBuf, 3);
   await exchange(handle, CMD_FLASH_MARKER, finishBuf, 1, sleepMs);
 
-  // Phase 8: exit flash mode (0x90 param=1). Same direct layout as
-  // the enter in phase 1b (firmware_handler.c:717-723).
-  {
-    const modeUnlockTx = Buffer.alloc(REPORT_SIZE);
-    modeUnlockTx[0] = REPORT_ID;
-    modeUnlockTx[1] = CMD_MODE_LOCK;
-    modeUnlockTx[2] = 0x01; // exit flash mode
-    await handle.write(modeUnlockTx);
-    await handle.read(); // drain reply
-  }
+  // NOTE: 0x90 "exit flash mode" is NOT sent — see the comment at
+  // the top of this function about why 0x90 is omitted.
 
   progress({
     phase: "done",
