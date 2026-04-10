@@ -506,7 +506,7 @@ function buildSoftStart(): ParameterSpec {
     vendorLabel: "Soft Start",
     description: "Limits acceleration on startup to prevent sudden motion.",
     unit: "enum",
-    modes: ["servo_mode", "cr_mode"],
+    modes: ["servo_mode"],
     values: ["on", "off"],
     docsUrl: undefined,
     offset: "0x25 bit 0x10",

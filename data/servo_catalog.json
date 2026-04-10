@@ -92,17 +92,17 @@
         "notes": "Detected at runtime from the identify reply: rx[5] == 0x04. In this mode most position-control parameters (angle, deadband, PID damping, overload protection) are ignored by the firmware."
       },
       "available_parameters": [
-        "servo_neutral",
-        "inversion",
-        "loose_pwm_protection",
         "pwm_power",
-        "soft_start",
-        "proptl"
+        "proptl",
+        "inversion"
       ],
       "unavailable_parameters": {
         "servo_angle": "Continuous rotation has no fixed range",
+        "servo_neutral": "Not shown in vendor CR mode panel (confirmed by screenshot)",
         "sensitivity": "Dead-band around neutral is only meaningful when holding a position",
         "dampening_factor": "The PID D coefficient controls position tracking, not speed",
+        "loose_pwm_protection": "Not shown in vendor CR mode panel",
+        "soft_start": "Not shown in vendor CR mode panel",
         "overload_protection": "Vendor docs: '3-stage in Servo Mode; unavailable in CR Mode'"
       }
     }
@@ -283,9 +283,9 @@
     },
     "servo_neutral": {
       "vendor_label": "Servo Neutral",
-      "description": "Adjusts the PWM pulse width at which the servo is centered (Servo Mode) or stopped (CR Mode). Measured in microseconds, offset from the default 1500 µs. Keep adjustments small — large changes can cause unexpected behavior.",
+      "description": "Adjusts the PWM pulse width at which the servo is centered. Measured in microseconds, offset from the default 1500 µs. Keep adjustments small — large changes can cause unexpected behavior.",
       "unit": "us",
-      "modes": ["servo_mode", "cr_mode"],
+      "modes": ["servo_mode"],
       "min": -127,
       "max": 127,
       "docs_url": "https://docs.axon-robotics.com/archive/programmer",
@@ -348,7 +348,7 @@
       "description": "What the servo does when it loses the PWM signal but still has power. 'release' goes limp (no torque). 'hold' holds the last commanded position. 'neutral' returns to the center / zero-speed position.",
       "unit": "enum",
       "values": ["release", "hold", "neutral"],
-      "modes": ["servo_mode", "cr_mode"],
+      "modes": ["servo_mode"],
       "docs_url": "https://docs.axon-robotics.com/archive/programmer",
       "implementation": {
         "offset": "0x25",
@@ -367,7 +367,7 @@
       "description": "An overheat-prevention timeout, in seconds, that automatically cuts the servo's output after continuous operation for this long. Only applies to the Axon Micro in CR mode. The maximum is 25.5 seconds (the factory default); there is no 'disabled' setting. If your application needs continuous rotation for longer, you will need to stop and restart the servo. The vendor exe calls this 'ProPTL' (undocumented in the public Axon docs).",
       "unit": "s",
       "modes": ["cr_mode"],
-      "applies_to_models": ["SA20BHS*"],
+      "applies_to_models": null,
       "min": 0,
       "max": 25.5,
       "docs_url": "https://docs.axon-robotics.com/archive/programmer",
