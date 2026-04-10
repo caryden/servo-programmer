@@ -26,6 +26,7 @@ import {
   type ParameterSpec,
   type ParameterValue,
 } from "../parameters.ts";
+import { renderStatusBar } from "../util/tui.ts";
 
 export interface GetFlags {
   param?: string;
@@ -75,7 +76,7 @@ export async function runGetWithHandle(
 
   // If no parameter specified, list.
   if (!local.param) {
-    return listAllParamsForMode(config, modelId, id.mode, global);
+    return listAllParamsForMode(config, modelId, model.name, id.mode, global);
   }
 
   // Not-yet-mapped? Return a clean validation error with the
@@ -119,11 +120,11 @@ function friendlyModeLabel(mode: ServoMode): string {
 function listAllParamsForMode(
   config: Buffer,
   modelId: string,
+  modelName: string,
   mode: ServoMode,
   global: GlobalFlags,
 ): number {
   const all = listParameters();
-  // Filter to those available in the current mode.
   const applicable = all.filter((p) => p.modes.includes(mode));
 
   if (global.json) {
@@ -164,10 +165,14 @@ function listAllParamsForMode(
     return ExitCode.Ok;
   }
 
-  const modeSpec = findServoMode(mode === "servo_mode" ? 3 : 4);
+  const modeLabel = friendlyModeLabel(mode);
+
+  // Status bar
   process.stdout.write(
-    `${modeSpec?.name ?? friendlyModeLabel(mode)} — parameters available for this servo:\n\n`,
+    renderStatusBar({ connected: true, modelName: modelName, modeName: modeLabel }) + "\n",
   );
+
+  // Parameter table
   const maxName = Math.max(...applicable.map((p) => p.name.length), 20);
   for (const spec of applicable) {
     const v = spec.read(config, modelId);
@@ -175,17 +180,14 @@ function listAllParamsForMode(
     process.stdout.write(`  ${spec.name.padEnd(maxName)}  ${formatted}\n`);
   }
 
-  // Surface the not-yet-mapped params so users know they exist.
+  // Not-yet-mapped params
   const nym = loadNotYetMapped();
   const unmappedInMode = Object.values(nym).filter((e) => e.modes.includes(mode));
   if (unmappedInMode.length > 0 && !global.quiet) {
-    process.stdout.write("\nNot yet mapped (read-only via 'axon read --svo'):\n");
+    process.stdout.write("\nNot yet mapped:\n");
     for (const e of unmappedInMode) {
       process.stdout.write(`  ${e.name.padEnd(maxName)}  (${e.vendor_label})\n`);
     }
-  }
-  if (!global.quiet) {
-    process.stdout.write("\nRun 'axon get <param> --help' for a description of any parameter.\n");
   }
   return ExitCode.Ok;
 }

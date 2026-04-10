@@ -1,105 +1,105 @@
 /**
- * `axon monitor` — live presence polling.
+ * `axon monitor` — live presence TUI.
  *
- * Polls every 300 ms and prints one line per state transition.
+ * Shows a colored status bar that updates in place every 300 ms.
  * Ctrl-C to stop.
- *
- * Human output is clean: "no adapter", "adapter connected, no servo",
- * "servo connected". Debug detail (rx bytes, OS errors) is shown
- * only when AXON_DEBUG=1.
  */
 
 import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
-import { identify } from "../driver/protocol.ts";
+import { identify, type ServoMode } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { ExitCode } from "../errors.ts";
-
-type State = "no-adapter" | "adapter-only" | "servo-present";
+import { CLEAR_LINE, HIDE_CURSOR, renderStatusBar, SHOW_CURSOR } from "../util/tui.ts";
 
 const POLL_INTERVAL_MS = 300;
 
-function isDebug(): boolean {
-  return process.env.AXON_DEBUG === "1";
-}
-
-function stamp(): string {
-  return new Date().toTimeString().slice(0, 8);
-}
-
-/** Human-friendly state label. */
-function stateLabel(s: State): string {
-  if (s === "no-adapter") return "no adapter";
-  if (s === "adapter-only") return "adapter connected, no servo";
-  return "servo connected";
-}
-
-function logTransition(flags: GlobalFlags, from: State, to: State, detail?: string): void {
-  if (flags.json) {
-    process.stdout.write(
-      JSON.stringify({
-        t: new Date().toISOString(),
-        event: "transition",
-        from,
-        to,
-        detail: detail ?? null,
-      }) + "\n",
-    );
-  } else {
-    const debugSuffix = isDebug() && detail ? `  ${detail}` : "";
-    process.stdout.write(`[${stamp()}] ${stateLabel(to)}${debugSuffix}\n`);
-  }
+function modeLabel(mode: ServoMode): string | null {
+  if (mode === "servo_mode") return "Servo Mode";
+  if (mode === "cr_mode") return "CR Mode";
+  return null;
 }
 
 export async function runMonitor(flags: GlobalFlags): Promise<number> {
   let handle: DongleHandle | null = null;
-  let state: State = "no-adapter";
+  let lastLine = "";
+  const isTTY = process.stdout.isTTY === true;
 
-  if (!flags.json) {
-    process.stdout.write(`[${stamp()}] monitoring (Ctrl-C to stop)\n`);
-  }
+  if (isTTY && !flags.json) process.stdout.write(HIDE_CURSOR);
 
   let stopping = false;
-  process.on("SIGINT", () => {
+  const cleanup = () => {
     stopping = true;
-  });
+    if (isTTY && !flags.json) process.stdout.write(SHOW_CURSOR);
+  };
+  process.on("SIGINT", cleanup);
 
   while (!stopping) {
-    let newState: State = state;
-    let detail: string | undefined;
+    let connected = false;
+    let model: string | null = null;
+    let mode: string | null = null;
+    let detail: string | null = null;
 
     try {
       if (handle === null) {
-        if (!isDonglePresent()) {
-          newState = "no-adapter";
-        } else {
+        if (isDonglePresent()) {
           try {
             handle = await openDongle();
           } catch (e) {
-            newState = "no-adapter";
             detail = (e as Error).message;
           }
         }
       }
 
       if (handle !== null) {
-        const id = await identify(handle);
-        newState = id.present ? "servo-present" : "adapter-only";
+        connected = true;
+        try {
+          const id = await identify(handle);
+          if (id.present) {
+            mode = modeLabel(id.mode);
+            // We don't read the full config every tick (too slow).
+            // Model name shows after the first successful identify.
+            model = "servo connected";
+          }
+        } catch {
+          // identify failed — release and retry next tick
+          try {
+            await handle.release();
+          } catch {}
+          handle = null;
+          connected = false;
+        }
       }
-    } catch (e) {
+    } catch {
       if (handle !== null) {
         try {
           await handle.release();
         } catch {}
         handle = null;
       }
-      newState = "no-adapter";
-      detail = (e as Error).message;
     }
 
-    if (newState !== state) {
-      logTransition(flags, state, newState, detail);
-      state = newState;
+    if (flags.json) {
+      const obj = { connected, model, mode, detail };
+      const line = JSON.stringify(obj);
+      if (line !== lastLine) {
+        process.stdout.write(line + "\n");
+        lastLine = line;
+      }
+    } else {
+      const bar = renderStatusBar({
+        connected,
+        modelName: model,
+        modeName: mode,
+      });
+      const line = bar + (detail ? `  ${detail}` : "");
+      if (line !== lastLine) {
+        if (isTTY && lastLine) {
+          process.stdout.write(`\r${CLEAR_LINE}`);
+        }
+        process.stdout.write(isTTY ? `\r${line}` : `${line}\n`);
+        lastLine = line;
+      }
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -110,8 +110,8 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
       await handle.release();
     } catch {}
   }
-  if (!flags.json) {
-    process.stdout.write(`\n[${stamp()}] stopped\n`);
+  if (isTTY && !flags.json) {
+    process.stdout.write("\n");
   }
   return ExitCode.Ok;
 }

@@ -52,6 +52,7 @@ import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
 import { type DecryptedSfw, decryptSfw, sfwHashHex, verifySfwHash } from "../sfw.ts";
 import { EMBEDDED_FIRMWARE, type EmbeddedFirmware, findEmbeddedFirmware } from "../sfw-embedded.ts";
+import { renderProgressBar } from "../util/tui.ts";
 
 export type ModeSubcommand = "list" | "current" | "set";
 
@@ -355,9 +356,6 @@ async function runModeSet(
 
   // Flash.
   const cmdSleepOverride = Number.parseInt(process.env.AXON_FLASH_CMD_SLEEP_MS ?? "", 10);
-  if (!global.json && !global.quiet) {
-    process.stderr.write("Flashing");
-  }
   await flashFirmware(handle, decrypted, {
     expectedModelId: modelId,
     onProgress: makeProgressSink(global),
@@ -473,19 +471,20 @@ function readLine(): Promise<string> {
 function makeProgressSink(global: GlobalFlags): FlashProgressFn {
   if (global.json || global.quiet) return () => {};
 
-  let lastPct = -1;
+  const isTTY = process.stderr.isTTY === true;
+  let started = false;
   return (e: FlashProgressEvent) => {
     if (isDebug()) {
-      // Full per-record detail for debugging.
       process.stderr.write(`  [debug] ${e.phase}: ${e.message ?? ""}\n`);
       return;
     }
-    // Minimal progress: print a dot every 10%.
     if (e.bytesSent !== undefined && e.bytesTotal !== undefined && e.bytesTotal > 0) {
-      const pct = Math.floor((e.bytesSent / e.bytesTotal) * 10);
-      if (pct > lastPct) {
-        process.stderr.write(".");
-        lastPct = pct;
+      const bar = renderProgressBar("Flashing", e.bytesSent / e.bytesTotal);
+      if (isTTY) {
+        process.stderr.write(`\r${bar}`);
+      } else if (!started) {
+        process.stderr.write("Flashing...");
+        started = true;
       }
     }
   };

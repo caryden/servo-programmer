@@ -36,6 +36,7 @@ import {
 } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
+import { renderStatusBar } from "../util/tui.ts";
 
 type StatusCategory =
   | "no_adapter"
@@ -52,6 +53,7 @@ interface StatusObservation {
   category: StatusCategory;
   hint?: string;
   servo_status_byte?: string;
+  mode_label?: string;
   model?: {
     id: string;
     name: string | null;
@@ -160,10 +162,14 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
     const catalog = loadCatalog();
     const model = findModel(catalog, modelId);
 
+    const modeLabel =
+      id.mode === "servo_mode" ? "Servo Mode" : id.mode === "cr_mode" ? "CR Mode" : null;
+
     emit(flags, {
       adapter: "connected",
       servo: "present",
       category: model ? "servo_present" : "unknown_model",
+      mode_label: modeLabel ?? undefined,
       hint: model
         ? undefined
         : `Model id "${modelId}" is not in the bundled catalog. Please ` +
@@ -189,7 +195,6 @@ function emit(flags: GlobalFlags, result: StatusObservation): void {
     return;
   }
   if (flags.quiet) {
-    // quiet mode: just the most-useful single line
     if (result.category === "servo_present" && result.model) {
       process.stdout.write(
         `${result.model.id}${result.model.name ? ` (${result.model.name})` : ""}\n`,
@@ -199,31 +204,21 @@ function emit(flags: GlobalFlags, result: StatusObservation): void {
     }
     return;
   }
-  // pretty human output
-  process.stdout.write(`adapter  ${result.adapter}\n`);
-  process.stdout.write(`servo    ${result.servo}`);
-  if (result.servo_status_byte) {
-    process.stdout.write(` (status ${result.servo_status_byte})`);
-  }
-  process.stdout.write("\n");
-  process.stdout.write(`state    ${result.category}\n`);
-  if (result.model) {
-    process.stdout.write(`model    ${result.model.id}`);
-    if (result.model.name) {
-      process.stdout.write(` (${result.model.name})`);
-    }
-    if (!result.model.known) {
-      process.stdout.write("  [unknown to catalog]");
-    }
-    process.stdout.write("\n");
-    if (result.model.docs_url) {
-      process.stdout.write(`docs     ${result.model.docs_url}\n`);
-    }
+  // Pretty TUI output: colored status bar
+  process.stdout.write(
+    renderStatusBar({
+      connected: result.adapter === "connected",
+      modelName: result.model?.name ?? null,
+      modeName: result.mode_label ?? null,
+    }) + "\n",
+  );
+  if (result.model?.docs_url) {
+    process.stdout.write(`docs: ${result.model.docs_url}\n`);
   }
   if (result.error) {
-    process.stderr.write(`error:   ${result.error}\n`);
+    process.stderr.write(`error: ${result.error}\n`);
   }
   if (result.hint) {
-    process.stderr.write(`hint:    ${result.hint}\n`);
+    process.stderr.write(`hint: ${result.hint}\n`);
   }
 }

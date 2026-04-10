@@ -191,9 +191,7 @@ export function parseFlashRx(rx: Buffer, expectLength: number): Buffer {
     const hex = Array.from(rx.subarray(0, 16))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join(" ");
-    throw AxonError.servoIo(
-      `flash: unexpected reply. rx[0..15]: ${hex}`,
-    );
+    throw AxonError.servoIo(`flash: unexpected reply. rx[0..15]: ${hex}`);
   }
   return rx.subarray(5, 5 + expectLength);
 }
@@ -216,9 +214,15 @@ async function exchange(
   await handle.write(tx);
   const rx = await handle.read();
   if (process.env.AXON_DEBUG === "1") {
-    const txHex = Array.from(tx.subarray(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-    const rxHex = Array.from(rx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-    process.stderr.write(`  [wire] cmd=0x${cmd.toString(16)} tx[0..7]: ${txHex}  rx[0..15]: ${rxHex}\n`);
+    const txHex = Array.from(tx.subarray(0, 8))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    const rxHex = Array.from(rx.subarray(0, 16))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    process.stderr.write(
+      `  [wire] cmd=0x${cmd.toString(16)} tx[0..7]: ${txHex}  rx[0..15]: ${rxHex}\n`,
+    );
   }
   return parseFlashRx(rx, expectLength);
 }
@@ -386,7 +390,9 @@ export async function flashFirmware(
   }
   const bootRx = await handle.read();
   if (process.env.AXON_DEBUG === "1") {
-    const hex = Array.from(bootRx.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const hex = Array.from(bootRx.subarray(0, 16))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
     process.stderr.write(`  [wire] 0x80 boot rx[0..15]: ${hex}\n`);
   }
   const bootReply = parseFlashRx(bootRx, 6);
