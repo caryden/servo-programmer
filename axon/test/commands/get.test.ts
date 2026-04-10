@@ -113,7 +113,7 @@ describe("axon get (servo_mode)", () => {
     expect(typeof angle.value).toBe("number");
   });
 
-  test("get servo_angle: returns the human-readable value", async () => {
+  test("get servo_angle: returns the raw value", async () => {
     const mock = new MockDongle();
     const code = await runGetWithHandle(mock, GLOBALS, {
       param: "servo_angle",
@@ -121,7 +121,7 @@ describe("axon get (servo_mode)", () => {
       help: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(io.stdout).toContain("°");
+    expect(io.stdout).toContain("130");
   });
 
   test("get servo_angle --json: machine-readable", async () => {
@@ -134,7 +134,7 @@ describe("axon get (servo_mode)", () => {
     expect(code).toBe(ExitCode.Ok);
     const parsed = JSON.parse(io.stdout);
     expect(parsed.name).toBe("servo_angle");
-    expect(parsed.unit).toBe("deg");
+    expect(parsed.unit).toBe("raw");
     expect(typeof parsed.value).toBe("number");
   });
 
@@ -146,7 +146,7 @@ describe("axon get (servo_mode)", () => {
       help: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(io.stdout).toContain("0x50"); // fixture raw value
+    expect(io.stdout).toContain("0x82"); // fixture byte 0x04 = 130
   });
 
   test("get servo_neutral: 0 µs (fixture)", async () => {
@@ -182,7 +182,7 @@ describe("axon get (servo_mode)", () => {
     expect(io.stdout).toContain("reversed");
   });
 
-  test("get loose_pwm_protection: shows raw-bits annotation, no crash", async () => {
+  test("get loose_pwm_protection: shows the enum mode", async () => {
     const mock = new MockDongle();
     const code = await runGetWithHandle(mock, GLOBALS, {
       param: "loose_pwm_protection",
@@ -190,7 +190,7 @@ describe("axon get (servo_mode)", () => {
       help: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(io.stdout).toContain("raw_bits");
+    expect(io.stdout).toContain("neutral");
   });
 });
 
@@ -203,21 +203,16 @@ describe("axon get error paths", () => {
     io.restore();
   });
 
-  test("get dampening_factor: validation error (not yet mapped)", async () => {
+  test("get dampening_factor: returns the raw BE-u16 value", async () => {
     const mock = new MockDongle();
-    let caught: AxonError | undefined;
-    try {
-      await runGetWithHandle(mock, GLOBALS, {
-        param: "dampening_factor",
-        raw: false,
-        help: false,
-      });
-    } catch (e) {
-      caught = e as AxonError;
-    }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("not yet mapped");
+    const code = await runGetWithHandle(mock, GLOBALS, {
+      param: "dampening_factor",
+      raw: false,
+      help: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    // Fixture bytes 0x0A:0x0B = 0x00:0x50 = 80
+    expect(io.stdout).toContain("80");
   });
 
   test("get servo_angle in cr_mode: mode validation error", async () => {
@@ -277,7 +272,7 @@ describe("axon get error paths", () => {
     expect(io.stdout.toLowerCase()).toContain("sweep");
   });
 
-  test("get dampening_factor --help: shows 'not yet mapped' status", async () => {
+  test("get dampening_factor --help: shows parameter description", async () => {
     const mock = new MockDongle();
     const code = await runGetWithHandle(mock, GLOBALS, {
       param: "dampening_factor",
@@ -286,6 +281,6 @@ describe("axon get error paths", () => {
     });
     expect(code).toBe(ExitCode.Ok);
     expect(io.stdout).toContain("Dampening Factor");
-    expect(io.stdout).toContain("not yet mapped");
+    expect(io.stdout).toContain("damping");
   });
 });

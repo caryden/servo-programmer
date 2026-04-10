@@ -411,31 +411,7 @@
   },
 
   "_not_yet_mapped": {
-    "_note": "These are canonical V1.3 parameters (per the archive docs) that we cannot yet confidently map to specific bytes of the 95-byte config block. 'axon get <name>' and 'axon set <name>' will return 'not yet mapped' errors for these names and point users at docs/BYTE_MAPPING.md. They are still round-trippable via 'axon read --svo' / 'axon write --from cfg.svo'.",
-    "dampening_factor": {
-      "vendor_label": "Dampening Factor",
-      "description": "How aggressively the servo resists overshoot when moving to a target angle. NOT RECOMMENDED to change — it's tuned at the factory. Servo Mode only.",
-      "modes": ["servo_mode"],
-      "implementation": {
-        "reason_blocked": "Label string 'Damping Factor: ' exists at 0x007a734a and VCL symbol 'rztrDampingChange' at 0x007a98b4 confirm the UI widget exists, but we haven't found the widget's offset or the byte position in the current decomp. Likely lives in the 0x35..0x3A 'advanced mode' range or in FUN_00406248. Needs FUN_00404b28 (the load-side function) decompiled to confirm."
-      }
-    },
-    "soft_start": {
-      "vendor_label": "Soft Start",
-      "description": "Limits how fast the servo can accelerate when it first powers on. Prevents sudden jerks. Both modes.",
-      "modes": ["servo_mode", "cr_mode"],
-      "implementation": {
-        "reason_blocked": "Not referenced in any currently-decompiled function. Probably one of the unmapped widgets (p1+0x3dc, p1+0x3e0, p1+0x3e4 in FUN_00406248). Needs more decomp."
-      }
-    },
-    "overload_protection": {
-      "vendor_label": "Overload Protection",
-      "description": "Automatically reduces the servo's maximum power when it's been stalling for too long, to protect the motor from burnout. Three progressive stages. Servo Mode only (unavailable in CR Mode).",
-      "modes": ["servo_mode"],
-      "implementation": {
-        "reason_blocked": "Partially implicated in the PWM Power mirror pattern, but we can't distinguish 'main PWM Power' from 'stage-N overload reduction' without the load-side decomp. Bytes 0x14..0x18 (five monotonically-decreasing values 41, 33, 29, 25, 20 on the live Mini) and 0x19..0x1E (three BE-u16 values of 0x003C = 60) are strong candidates for 'per-stage power curve' and 'per-stage duration' respectively."
-      }
-    }
+    "_note": "All 9 canonical V1.3 parameters are now mapped. This section is empty."
   },
 
   "_mk2_only_parameters_omitted": {

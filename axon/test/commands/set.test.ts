@@ -88,17 +88,16 @@ describe("axon set (happy path)", () => {
 
   test("set servo_angle 180 in servo_mode updates the fixture config", async () => {
     const mock = new MockDongle();
-    const before = mock.config[0x0b];
+    const before = mock.config[0x04];
     const code = await runSetWithHandle(mock, GLOBALS, {
       positional: ["servo_angle", "180"],
       dryRun: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(mock.config[0x0b]).not.toBe(before);
-    // All four mirrors should have the same low byte.
-    expect(mock.config[0x28]).toBe(mock.config[0x0b]);
-    expect(mock.config[0x2a]).toBe(mock.config[0x0b]);
-    expect(mock.config[0x2c]).toBe(mock.config[0x0b]);
+    expect(mock.config[0x04]).toBe(180);
+    expect(mock.config[0x04]).not.toBe(before);
+    // Mirror at 0x05 should match.
+    expect(mock.config[0x05]).toBe(180);
     expect(io.stderr).toContain("servo_angle");
   });
 
@@ -338,36 +337,33 @@ describe("axon set (error paths)", () => {
     expect(caught!.message).toContain("not available");
   });
 
-  test("set loose_pwm_protection release is rejected with docs pointer", async () => {
+  test("set loose_pwm_protection release writes the correct bits", async () => {
     const mock = new MockDongle();
-    let caught: AxonError | undefined;
-    try {
-      await runSetWithHandle(mock, GLOBALS, {
-        positional: ["loose_pwm_protection", "release"],
-        dryRun: false,
-      });
-    } catch (e) {
-      caught = e as AxonError;
-    }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("BYTE_MAPPING.md");
+    // Fixture has bits 0x60 (neutral). Setting to release clears those bits.
+    const code = await runSetWithHandle(mock, GLOBALS, {
+      positional: ["loose_pwm_protection", "release"],
+      dryRun: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    expect(mock.config[0x25]! & 0x60).toBe(0x00);
   });
 
-  test("set dampening_factor 5 is rejected as 'not yet mapped'", async () => {
+  test("set dampening_factor 5 writes to all four mirror offsets", async () => {
     const mock = new MockDongle();
-    let caught: AxonError | undefined;
-    try {
-      await runSetWithHandle(mock, GLOBALS, {
-        positional: ["dampening_factor", "5"],
-        dryRun: false,
-      });
-    } catch (e) {
-      caught = e as AxonError;
-    }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("not yet mapped");
+    const code = await runSetWithHandle(mock, GLOBALS, {
+      positional: ["dampening_factor", "5"],
+      dryRun: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    // BE-u16 value 5 = 0x00 0x05 at each mirror pair
+    expect(mock.config[0x0a]).toBe(0x00);
+    expect(mock.config[0x0b]).toBe(0x05);
+    expect(mock.config[0x27]).toBe(0x00);
+    expect(mock.config[0x28]).toBe(0x05);
+    expect(mock.config[0x29]).toBe(0x00);
+    expect(mock.config[0x2a]).toBe(0x05);
+    expect(mock.config[0x2b]).toBe(0x00);
+    expect(mock.config[0x2c]).toBe(0x05);
   });
 
   test("set unknown_param 5 is a usage error", async () => {

@@ -31,13 +31,16 @@ describe("parameters registry", () => {
       expect.arrayContaining([
         "servo_angle",
         "servo_neutral",
+        "dampening_factor",
         "sensitivity",
         "inversion",
         "loose_pwm_protection",
         "pwm_power",
+        "soft_start",
+        "overload_protection",
       ]),
     );
-    expect(names.length).toBe(6);
+    expect(names.length).toBe(9);
   });
 
   test("findParameter returns undefined for unknown names", () => {
@@ -55,17 +58,17 @@ describe("parameters registry", () => {
 });
 
 describe("isParameterNotYetMapped", () => {
-  test("dampening_factor is flagged as not yet mapped", () => {
-    expect(isParameterNotYetMapped("dampening_factor")).toBe(true);
-    expect(notYetMappedReason("dampening_factor")).toBeDefined();
+  test("dampening_factor is NOT in the not-yet-mapped list", () => {
+    expect(isParameterNotYetMapped("dampening_factor")).toBe(false);
+    expect(notYetMappedReason("dampening_factor")).toBeUndefined();
   });
 
-  test("soft_start is flagged as not yet mapped", () => {
-    expect(isParameterNotYetMapped("soft_start")).toBe(true);
+  test("soft_start is NOT in the not-yet-mapped list", () => {
+    expect(isParameterNotYetMapped("soft_start")).toBe(false);
   });
 
-  test("overload_protection is flagged as not yet mapped", () => {
-    expect(isParameterNotYetMapped("overload_protection")).toBe(true);
+  test("overload_protection is NOT in the not-yet-mapped list", () => {
+    expect(isParameterNotYetMapped("overload_protection")).toBe(false);
   });
 
   test("servo_angle is NOT in the not-yet-mapped list", () => {
@@ -80,18 +83,16 @@ describe("isParameterNotYetMapped", () => {
 describe("servo_angle parameter", () => {
   const spec = findParameter("servo_angle")!;
 
-  test("reads the fixture as ~111° (raw 0x50)", () => {
+  test("reads the fixture as raw 130 (byte 0x04 = 0x82)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
-    expect(v.raw).toBe(0x50); // 80
-    // max_range_deg=355 → 80 * 355 / 255 ≈ 111
-    expect(v.physical).toBe(Math.round((80 * 355) / 255));
-    expect(v.unit).toBe("deg");
+    expect(v.raw).toBe(0x82); // 130
+    expect(v.physical).toBe(130);
+    expect(v.unit).toBe("raw");
   });
 
-  test("parseUserInput accepts plain numbers and deg suffix", () => {
+  test("parseUserInput accepts plain numbers", () => {
     expect(spec.parseUserInput("180", MODEL_ID)).toBe(180);
-    expect(spec.parseUserInput("180°", MODEL_ID)).toBe(180);
-    expect(spec.parseUserInput(" 180 deg ", MODEL_ID)).toBe(180);
+    expect(spec.parseUserInput(" 130 ", MODEL_ID)).toBe(130);
   });
 
   test("parseUserInput rejects garbage", () => {
@@ -104,21 +105,13 @@ describe("servo_angle parameter", () => {
     expect(spec.validate(180, MODEL_ID)).toBeNull();
   });
 
-  test("write updates all four mirror offsets to the same BE u16", () => {
+  test("write updates byte 0x04 and mirror 0x05", () => {
     const cfg = FIXTURE();
     const out = spec.write(cfg, 180, MODEL_ID);
-    // 180 * 255 / 355 ≈ 129
-    const expectedRaw = Math.round((180 * 255) / 355);
-    expect(out[0x0a]).toBe(0);
-    expect(out[0x0b]).toBe(expectedRaw);
-    expect(out[0x27]).toBe(0);
-    expect(out[0x28]).toBe(expectedRaw);
-    expect(out[0x29]).toBe(0);
-    expect(out[0x2a]).toBe(expectedRaw);
-    expect(out[0x2b]).toBe(0);
-    expect(out[0x2c]).toBe(expectedRaw);
+    expect(out[0x04]).toBe(180);
+    expect(out[0x05]).toBe(180); // mirror
     // Original buffer must be untouched.
-    expect(cfg[0x0b]).toBe(0x50);
+    expect(cfg[0x04]).toBe(0x82);
   });
 
   test("parseUserInput → write → read round-trip", () => {
@@ -126,8 +119,7 @@ describe("servo_angle parameter", () => {
     const parsed = spec.parseUserInput("200", MODEL_ID) as number;
     const next = spec.write(cfg, parsed, MODEL_ID);
     const after = spec.read(next, MODEL_ID);
-    // Round-trip tolerance: raw is 8-bit so 200°→raw→deg loses a bit of precision.
-    expect(Math.abs((after.physical as number) - 200)).toBeLessThanOrEqual(2);
+    expect(after.physical).toBe(200);
   });
 });
 
@@ -224,32 +216,27 @@ describe("inversion parameter", () => {
 describe("loose_pwm_protection parameter", () => {
   const spec = findParameter("loose_pwm_protection")!;
 
-  test("read returns raw-bits annotation", () => {
+  test("read returns the enum mode from the fixture (neutral)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
-    expect(String(v.physical)).toContain("raw_bits");
-    expect(v.notes).toBeDefined();
+    // Fixture byte 0x25 = 0xE3, bits 0x60 = 0x60 → neutral
+    expect(v.physical).toBe("neutral");
+    expect(v.unit).toBe("enum");
   });
 
-  test("parseUserInput throws with a pointer to docs", () => {
-    let err: unknown;
-    try {
-      spec.parseUserInput("release", MODEL_ID);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeDefined();
-    expect((err as Error).message).toContain("BYTE_MAPPING.md");
+  test("parseUserInput accepts all three enum values", () => {
+    expect(spec.parseUserInput("release", MODEL_ID)).toBe("release");
+    expect(spec.parseUserInput("hold", MODEL_ID)).toBe("hold");
+    expect(spec.parseUserInput("neutral", MODEL_ID)).toBe("neutral");
   });
 
-  test("write throws the same docs-pointer error", () => {
-    let err: unknown;
-    try {
-      spec.write(FIXTURE(), "release", MODEL_ID);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeDefined();
-    expect((err as Error).message).toContain("BYTE_MAPPING.md");
+  test("write sets correct bits for each mode", () => {
+    const cfg = FIXTURE();
+    const release = spec.write(cfg, "release", MODEL_ID);
+    expect(release[0x25]! & 0x60).toBe(0x00);
+    const hold = spec.write(cfg, "hold", MODEL_ID);
+    expect(hold[0x25]! & 0x60).toBe(0x40);
+    const neutral = spec.write(cfg, "neutral", MODEL_ID);
+    expect(neutral[0x25]! & 0x60).toBe(0x60);
   });
 });
 

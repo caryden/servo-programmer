@@ -112,10 +112,11 @@ function requireCatalogEntry(name: string): CatalogParameterSpec {
 // ---------------------------------------------------------------------
 
 /**
- * servo_angle — BE u16 at 0x0A..0x0B, mirrored at 0x27..0x28,
- * 0x29..0x2A, 0x2B..0x2C. The raw value is u8 in the low byte of the
- * u16 (the high byte is always 0 in the range we've observed). Vendor
- * formula: deg = raw_u8 * (max_range_deg / 255).
+ * servo_angle — u8 at byte 0x04 (mirrored at 0x05).
+ * Vendor formula: deg = raw * (max_range_deg / 255).
+ * Confirmed by vendor exe screenshot: "Servo Angle: 220" → byte[0x04] = 0xDC = 220.
+ *
+ * Previously incorrectly mapped to 0x0A:0x0B (that's dampening_factor).
  */
 function buildServoAngle(): ParameterSpec {
   const entry = requireCatalogEntry("servo_angle");
@@ -126,67 +127,48 @@ function buildServoAngle(): ParameterSpec {
     unit: entry.unit,
     modes: entry.modes,
     min: entry.min ?? 0,
-    max: null, // max comes from the model's max_range_deg
+    max: null,
     values: entry.values,
     docsUrl: entry.docs_url,
     offset: entry.implementation.offset,
     encoding: entry.implementation.encoding,
 
-    read(config, modelId) {
-      const rawU16 = ((config[0x0a] ?? 0) << 8) | (config[0x0b] ?? 0);
-      const rawU8 = rawU16 & 0xff;
-      const deg = Math.round((rawU8 * maxRangeDeg(modelId)) / 255);
-      return {
-        raw: rawU8,
-        physical: deg,
-        unit: "deg",
-      };
+    read(config, _modelId) {
+      const raw = config[0x04] ?? 0;
+      return { raw, physical: raw, unit: "raw" };
     },
 
-    write(config, value, modelId) {
-      const deg = typeof value === "number" ? value : Number(value);
-      if (!Number.isFinite(deg)) {
+    write(config, value, _modelId) {
+      const raw = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(raw)) {
         throw AxonError.validation(
           `servo_angle: value must be a number, got ${JSON.stringify(value)}`,
         );
       }
-      const maxDeg = maxRangeDeg(modelId);
-      if (deg < 0 || deg > maxDeg) {
-        throw AxonError.validation(
-          `servo_angle: ${deg}° out of range (0..${maxDeg}° for this model).`,
-        );
+      if (raw < 0 || raw > 255) {
+        throw AxonError.validation(`servo_angle: ${raw} out of range (0..255).`);
       }
-      const rawU8 = clamp(Math.round((deg * 255) / maxDeg), 0, 255);
+      const v = clamp(Math.round(raw), 0, 255);
       const out = cloneConfig(config);
-      // Primary offset + three mirrors
-      for (const addr of [0x0a, 0x27, 0x29, 0x2b] as const) {
-        out[addr] = 0;
-        out[addr + 1] = rawU8;
-      }
+      out[0x04] = v;
+      out[0x05] = v; // mirror
       return out;
     },
 
     parseUserInput(input) {
-      const trimmed = input
-        .trim()
-        .replace(/°\s*$/, "")
-        .replace(/\s*deg\s*$/i, "");
-      const n = Number(trimmed);
+      const n = Number(input.trim());
       if (!Number.isFinite(n)) {
-        throw AxonError.validation(
-          `servo_angle: could not parse '${input}' as a number of degrees.`,
-        );
+        throw AxonError.validation(`servo_angle: could not parse '${input}'.`);
       }
       return n;
     },
 
-    validate(value, modelId) {
+    validate(value, _modelId) {
       if (typeof value !== "number" || !Number.isFinite(value)) {
-        return "servo_angle: value must be a number of degrees.";
+        return "servo_angle: value must be a number (0-255 raw).";
       }
-      const maxDeg = maxRangeDeg(modelId);
-      if (value < 0 || value > maxDeg) {
-        return `servo_angle: ${value}° out of range (0..${maxDeg}°).`;
+      if (value < 0 || value > 255) {
+        return `servo_angle: ${value} out of range (0..255).`;
       }
       return null;
     },
@@ -390,6 +372,23 @@ function buildInversion(): ParameterSpec {
  * READ-ONLY in v1.0: we know the bit location but not which numeric
  * bit value maps to release/hold/neutral. Write is rejected.
  */
+/**
+ * loose_pwm_protection — byte 0x25 bits 0x60.
+ * Confirmed by load-to-UI decomp (FUN_00404b28 lines 102-112):
+ *   bits 0x00 → dropdown index 0 → release
+ *   bits 0x40 → dropdown index 1 → hold
+ *   bits 0x60 → dropdown index 2 → neutral
+ * Vendor exe shows "Go Neutral Position" in the screenshot.
+ */
+const LOOSE_PWM_MODES = ["release", "hold", "neutral"] as const;
+type LoosePwmMode = (typeof LOOSE_PWM_MODES)[number];
+const LOOSE_PWM_BITS: Record<LoosePwmMode, number> = { release: 0x00, hold: 0x40, neutral: 0x60 };
+const BITS_TO_MODE: Record<number, LoosePwmMode> = {
+  0x00: "release",
+  0x40: "hold",
+  0x60: "neutral",
+};
+
 function buildLoosePwmProtection(): ParameterSpec {
   const entry = requireCatalogEntry("loose_pwm_protection");
   return {
@@ -405,35 +404,192 @@ function buildLoosePwmProtection(): ParameterSpec {
 
     read(config) {
       const raw = config[0x25] ?? 0;
-      const bits = (raw & 0x60) >> 5;
-      return {
-        raw,
-        physical: `raw_bits=${bits} (mode mapping unknown; see docs/BYTE_MAPPING.md)`,
-        unit: "enum",
-        notes:
-          "The bit-value → mode mapping (release/hold/neutral) is unresolved. " +
-          "Values are exposed as raw bits only; 'set' is rejected.",
-      };
+      const bits = raw & 0x60;
+      const mode = BITS_TO_MODE[bits] ?? "release";
+      return { raw: bits >> 5, physical: mode, unit: "enum" };
     },
 
-    write(_config, _value) {
-      throw AxonError.validation(
-        "loose_pwm_protection: 'set' is not yet supported for this parameter; " +
-          "the bit-value mapping (release/hold/neutral) is unknown. " +
-          "See docs/BYTE_MAPPING.md for the status.",
-      );
+    write(config, value) {
+      const mode = String(value) as LoosePwmMode;
+      const bits = LOOSE_PWM_BITS[mode];
+      if (bits === undefined) {
+        throw AxonError.validation(
+          `loose_pwm_protection: '${value}' is not valid. Use: release, hold, or neutral.`,
+        );
+      }
+      const out = cloneConfig(config);
+      out[0x25] = (out[0x25]! & ~0x60) | bits;
+      return out;
     },
 
-    parseUserInput(_input) {
-      throw AxonError.validation(
-        "loose_pwm_protection: 'set' is not yet supported for this parameter; " +
-          "the bit-value mapping (release/hold/neutral) is unknown. " +
-          "See docs/BYTE_MAPPING.md for the status.",
-      );
+    parseUserInput(input) {
+      const v = input.trim().toLowerCase();
+      if (!LOOSE_PWM_MODES.includes(v as LoosePwmMode)) {
+        throw AxonError.validation(
+          `loose_pwm_protection: '${input}' is not valid. Use: release, hold, or neutral.`,
+        );
+      }
+      return v;
     },
 
-    validate(_value) {
-      return "loose_pwm_protection: 'set' is not yet supported for this parameter.";
+    validate(value) {
+      if (!LOOSE_PWM_MODES.includes(String(value) as LoosePwmMode)) {
+        return `loose_pwm_protection: '${value}' is not valid. Use: release, hold, or neutral.`;
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * dampening_factor — BE-u16 at 0x0A:0x0B, mirrored at 0x27:0x28,
+ * 0x29:0x2A, 0x2B:0x2C. Confirmed by .svo A/B diff: vendor exe
+ * "Damping Factor: 166" → 0x0A:0x0B = 0x00A6 = 166.
+ * Previously we had this mapped as servo_angle (wrong).
+ */
+function buildDampeningFactor(): ParameterSpec {
+  return {
+    name: "dampening_factor",
+    vendorLabel: "Dampening Factor",
+    description: "PID D coefficient. Higher = more damping near target position.",
+    unit: "raw",
+    modes: ["servo_mode"],
+    docsUrl: undefined,
+    offset: "0x0A",
+    encoding: "be_u16",
+
+    read(config) {
+      const raw = ((config[0x0a] ?? 0) << 8) | (config[0x0b] ?? 0);
+      return { raw, physical: raw, unit: "raw" };
+    },
+
+    write(config, value) {
+      const raw = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(raw) || raw < 0 || raw > 65535) {
+        throw AxonError.validation(`dampening_factor: ${raw} out of range (0..65535).`);
+      }
+      const v = clamp(Math.round(raw), 0, 65535);
+      const hi = (v >> 8) & 0xff;
+      const lo = v & 0xff;
+      const out = cloneConfig(config);
+      for (const addr of [0x0a, 0x27, 0x29, 0x2b] as const) {
+        out[addr] = hi;
+        out[addr + 1] = lo;
+      }
+      return out;
+    },
+
+    parseUserInput(input) {
+      const n = Number(input.trim());
+      if (!Number.isFinite(n)) {
+        throw AxonError.validation(`dampening_factor: could not parse '${input}'.`);
+      }
+      return n;
+    },
+
+    validate(value) {
+      if (typeof value !== "number" || !Number.isFinite(value))
+        return "dampening_factor: value must be a number.";
+      if (value < 0 || value > 65535) return `dampening_factor: ${value} out of range (0..65535).`;
+      return null;
+    },
+  };
+}
+
+/**
+ * soft_start — byte 0x25 bit 0x10. Boolean checkbox.
+ * Confirmed by .svo A/B diff: soft start ON → bit set, OFF → bit clear.
+ */
+function buildSoftStart(): ParameterSpec {
+  return {
+    name: "soft_start",
+    vendorLabel: "Soft Start",
+    description: "Limits acceleration on startup to prevent sudden motion.",
+    unit: "enum",
+    modes: ["servo_mode", "cr_mode"],
+    values: ["on", "off"],
+    docsUrl: undefined,
+    offset: "0x25 bit 0x10",
+    encoding: "bitfield",
+
+    read(config) {
+      const raw = config[0x25] ?? 0;
+      const on = (raw & 0x10) !== 0;
+      return { raw: on ? 1 : 0, physical: on ? "on" : "off", unit: "enum" };
+    },
+
+    write(config, value) {
+      const on = value === true || value === "on" || value === 1;
+      const out = cloneConfig(config);
+      if (on) {
+        out[0x25] = out[0x25]! | 0x10;
+      } else {
+        out[0x25] = out[0x25]! & ~0x10;
+      }
+      return out;
+    },
+
+    parseUserInput(input) {
+      const v = input.trim().toLowerCase();
+      if (v === "on" || v === "true" || v === "1") return "on";
+      if (v === "off" || v === "false" || v === "0") return "off";
+      throw AxonError.validation(`soft_start: '${input}' is not valid. Use: on or off.`);
+    },
+
+    validate(value) {
+      const v = String(value).toLowerCase();
+      if (v !== "on" && v !== "off") return `soft_start: '${value}' is not valid. Use: on or off.`;
+      return null;
+    },
+  };
+}
+
+/**
+ * overload_protection — byte 0x25 bit 0x80. Boolean enable/disable.
+ * Confirmed by .svo A/B diff: overload ON → bit 0x80 set.
+ * The 3-stage level/duration values (0x14-0x1E) are separate sub-params.
+ */
+function buildOverloadProtection(): ParameterSpec {
+  return {
+    name: "overload_protection",
+    vendorLabel: "Overload Protection",
+    description: "Reduces power when stalled to prevent motor burnout. 3-stage in Servo Mode.",
+    unit: "enum",
+    modes: ["servo_mode"],
+    values: ["on", "off"],
+    docsUrl: undefined,
+    offset: "0x25 bit 0x80",
+    encoding: "bitfield",
+
+    read(config) {
+      const raw = config[0x25] ?? 0;
+      const on = (raw & 0x80) !== 0;
+      return { raw: on ? 1 : 0, physical: on ? "on" : "off", unit: "enum" };
+    },
+
+    write(config, value) {
+      const on = value === true || value === "on" || value === 1;
+      const out = cloneConfig(config);
+      if (on) {
+        out[0x25] = out[0x25]! | 0x80;
+      } else {
+        out[0x25] = out[0x25]! & ~0x80;
+      }
+      return out;
+    },
+
+    parseUserInput(input) {
+      const v = input.trim().toLowerCase();
+      if (v === "on" || v === "true" || v === "1") return "on";
+      if (v === "off" || v === "false" || v === "0") return "off";
+      throw AxonError.validation(`overload_protection: '${input}' is not valid. Use: on or off.`);
+    },
+
+    validate(value) {
+      const v = String(value).toLowerCase();
+      if (v !== "on" && v !== "off")
+        return `overload_protection: '${value}' is not valid. Use: on or off.`;
+      return null;
     },
   };
 }
@@ -519,10 +675,13 @@ function buildRegistry(): ParameterSpec[] {
   return [
     buildServoAngle(),
     buildServoNeutral(),
+    buildDampeningFactor(),
     buildSensitivity(),
     buildInversion(),
     buildLoosePwmProtection(),
     buildPwmPower(),
+    buildSoftStart(),
+    buildOverloadProtection(),
   ];
 }
 
