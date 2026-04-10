@@ -1,0 +1,14 @@
+# Canonical PRESENT identify reply from a primed Axon dongle with one
+# servo attached, per docs/FINDINGS.md "HID reply format — the dongle
+# IS a transparent proxy when primed".
+#
+# rx[0]=0x04 report id, rx[1]=0x01 status_hi, rx[2]=0x00 status_lo,
+# rx[3]=0x01 addr echo (not meaningful on identify — 0x01 observed),
+# rx[4]=0x01 length echo, rx[5..8] = 03 21 01 00 the servo's four
+# wire-reply params. The remaining bytes are zero padding to the
+# 64-byte HID input report size. Protocol layer gates on rx[1]==0x01,
+# rx[2]==0x00, rx[5] in {0x03,0x04}, rx[7]==0x01.
+04 01 00 01 01 03 21 01 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

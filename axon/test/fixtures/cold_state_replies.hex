@@ -1,0 +1,30 @@
+# Replies observed from a de-primed ("cold") Axon dongle, per
+# docs/FINDINGS.md and the research/python-tests axon_libusb_test
+# status-output CSVs.
+#
+# Format: two 64-byte HID input reports, one per logical reply,
+# separated by a blank section header comment. Both are padded to
+# the full 64-byte HID report size.
+#
+# --- cold identify reply ---
+# rx[0]=0x04 report id, rx[1]=0x01, rx[2]=0xFA ("no servo" status
+# low byte). The remaining bytes are whatever stale data was in the
+# dongle's buffer — we zero them for determinism since the protocol
+# layer only inspects rx[1], rx[2], rx[5], rx[7].
+04 01 fa 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+# --- cold read NACK reply ---
+# rx[0]=0x04 report id, rx[1]=0xCD (the command byte echoed back
+# instead of 0x01), rx[2]=0x02 (the "command not executed" status
+# low byte we observed in axon_libusb_test2/test_status output).
+# rx[3]=0x00 addr echo, rx[4]=0x3B length echo. Data bytes are
+# stale/garbage from the dongle's last primed read — zeroed here
+# for determinism; the protocol layer must reject this reply on
+# the rx[1]/rx[2] gate before it ever reads the data payload.
+04 cd 02 00 3b 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
