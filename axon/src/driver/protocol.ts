@@ -9,8 +9,9 @@
  * rx[1]=status-hi (0x01=OK), rx[2]=status-lo (0x00=OK, 0xFA=no
  * servo, 0x02=nack), rx[3]=addr echo, rx[4]=length echo.
  *
- * See docs/FINDINGS.md "Wire protocol decoded" and "HID reply
- * format" sections for the full derivation, and
+ * See docs/wire-protocol.md for the full specification (the
+ * "Wire format" and "HID reply format" sections cover the
+ * derivation), and
  * research/static-analysis/ghidra_out/param_helper_READ_004047d0_FUN_004047d0.c
  * for the vendor exe's equivalent function. Notable constants taken
  * from that decomp:

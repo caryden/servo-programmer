@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   research-experiment framing, current status, and quick start.
 - `CHANGELOG.md` (this file) at repo root.
 - `CONTRIBUTING.md` at repo root with the contributor workflow.
+- `docs/wire-protocol.md` — polished public-audience reference for
+  the USB HID and on-wire protocols, derived from `docs/FINDINGS.md`.
+
+### Changed
+
+- `docs/FINDINGS.md` was polished into `docs/wire-protocol.md` (the
+  public-audience reference) and the original research diary was
+  moved to `research/session-notes/findings-raw.md` as source
+  material for the future blog post. All inbound links (in
+  `README.md`, `axon/src/driver/protocol.ts`, and this changelog)
+  now point to `docs/wire-protocol.md`.
 
 ### Documented
 
