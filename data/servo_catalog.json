@@ -200,15 +200,29 @@
     },
 
     "_Axon_Micro_placeholder": {
-      "_TODO": "Fill in once we can read a Micro servo. Model ID and firmware unknown.",
+      "_TODO": "Fill in model id and defaults once we can read a Micro servo. Firmware files are now bundled.",
       "name": "Axon Micro",
       "max_range_deg": null,
       "pulse_range_us": [500, 2500],
       "docs_url": "https://docs.axon-robotics.com/servos/micro",
+      "recommended_pwm_power_percent_4v8": null,
+      "recommended_pwm_power_percent_6v0": null,
       "implementation": {
-        "magic_bytes": null
+        "magic_bytes": null,
+        "notes": "Model id string at 0x40..0x47 unknown until we can physically read a Micro. The bundled firmware files below use space-separated names (from the vendor's download page), different from the Mini/Max underscore convention."
       },
-      "bundled_firmware": {}
+      "bundled_firmware": {
+        "standard": {
+          "file": "Axon Micro Servo Mode.sfw",
+          "sha256": "229bda41faff98029c0086a5e8356f05fbd563ba79b5a79502d486c0acad6b33",
+          "description": "Standard PWM position-control servo mode."
+        },
+        "continuous": {
+          "file": "Axon Micro Modified CR Mode.sfw",
+          "sha256": "a22cb4117c089f09d457b2bcb9b807a609d7f9abc2c5fcccde9248daca988847",
+          "description": "Modified continuous-rotation mode."
+        }
+      }
     }
   },
 
