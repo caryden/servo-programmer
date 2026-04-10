@@ -10,6 +10,7 @@
  * adding a dep for it would outweigh the benefit.
  */
 
+import pkg from "../package.json" with { type: "json" };
 import { printGetHelp, runGet } from "./commands/get.ts";
 import { type ModeSubcommand, runMode } from "./commands/mode.ts";
 import { runMonitor } from "./commands/monitor.ts";
@@ -18,6 +19,14 @@ import { runSet } from "./commands/set.ts";
 import { runStatus } from "./commands/status.ts";
 import { runWrite } from "./commands/write.ts";
 import { AxonError, ExitCode } from "./errors.ts";
+
+/**
+ * CLI version string, baked in at build time via the Bun JSON
+ * import of `../package.json`. When `bun build --compile` bundles
+ * this into a standalone binary, the version comes along inside
+ * the executable.
+ */
+export const VERSION: string = pkg.version;
 
 export interface GlobalFlags {
   json: boolean;
@@ -32,7 +41,7 @@ interface ParsedArgs {
   global: GlobalFlags;
 }
 
-const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h"]);
+const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h", "version", "v"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const global: GlobalFlags = { json: false, quiet: false, yes: false };
@@ -101,12 +110,14 @@ COMMANDS:
   get               Read a named parameter (or list them)
   set               Write a named parameter
   mode              List / show / flash bundled servo modes
+  version           Print the CLI version and exit
   help              Show this message
 
 GLOBAL FLAGS:
   --json            Machine-readable output
   --quiet           Suppress decoration
   --yes, -y         Skip confirmation prompts
+  --version, -v     Print the CLI version and exit
 
 Run 'axon <command> --help' for command-specific options.
 
@@ -117,6 +128,15 @@ See docs/CLI_DESIGN.md in the repo for the full spec.
 
 async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
+
+  // `axon --version` / `axon -v` / `axon version` prints the bundled
+  // version string and exits. Works before we attempt any tool
+  // dispatch so it's safe to call on a broken dongle / missing
+  // adapter / whatever.
+  if (parsed.flags.version || parsed.flags.v || parsed.command === "version") {
+    process.stdout.write(`axon ${VERSION}\n`);
+    return ExitCode.Ok;
+  }
 
   if (parsed.command === null || parsed.command === "help") {
     printTopLevelHelp();

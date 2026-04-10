@@ -70,9 +70,7 @@ describe("catalog", () => {
     // marker — getParameterDefault should return undefined for every
     // parameter on Max.
     expect(model?.defaults).toBeDefined();
-    const realDefaultKeys = Object.keys(model?.defaults ?? {}).filter(
-      (k) => !k.startsWith("_"),
-    );
+    const realDefaultKeys = Object.keys(model?.defaults ?? {}).filter((k) => !k.startsWith("_"));
     expect(realDefaultKeys).toEqual([]);
   });
 

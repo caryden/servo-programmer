@@ -74,18 +74,14 @@ class NodeHidDongle implements DongleHandle {
       throw hidWriteError("handle was released");
     }
     if (data.length > REPORT_SIZE) {
-      throw hidWriteError(
-        `buffer is ${data.length} bytes, max is ${REPORT_SIZE}`,
-      );
+      throw hidWriteError(`buffer is ${data.length} bytes, max is ${REPORT_SIZE}`);
     }
     const padded = Buffer.alloc(REPORT_SIZE);
     data.copy(padded, 0);
     try {
       const n = this.device.write(Array.from(padded));
       if (n <= 0) {
-        throw hidWriteError(
-          `node-hid write returned ${n} (expected ${REPORT_SIZE})`,
-        );
+        throw hidWriteError(`node-hid write returned ${n} (expected ${REPORT_SIZE})`);
       }
     } catch (e) {
       if (e instanceof AxonError) throw e;
@@ -100,9 +96,7 @@ class NodeHidDongle implements DongleHandle {
     try {
       const bytes = this.device.readTimeout(timeoutMs);
       if (!bytes || bytes.length === 0) {
-        throw hidReadError(
-          `read timed out after ${timeoutMs} ms (no bytes available)`,
-        );
+        throw hidReadError(`read timed out after ${timeoutMs} ms (no bytes available)`);
       }
       return Buffer.from(bytes);
     } catch (e) {
@@ -137,9 +131,7 @@ export async function openDongle(): Promise<DongleHandle> {
     throw AxonError.noAdapter("Axon dongle not found on USB.");
   }
   if (matches.length > 1) {
-    throw AxonError.noAdapter(
-      `Found ${matches.length} Axon dongles on USB — expected exactly 1.`,
-    );
+    throw AxonError.noAdapter(`Found ${matches.length} Axon dongles on USB — expected exactly 1.`);
   }
 
   const desc = matches[0]!;

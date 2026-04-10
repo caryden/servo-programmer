@@ -6,10 +6,23 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-progress runs for the same ref when a new commit lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
-    name: ci
-    runs-on: ubuntu-latest
+    name: ci (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest    # Linux x64
+          - macos-latest     # macOS arm64 (M-series)
+          - macos-13         # macOS x64 (Intel)
+          - windows-latest   # Windows x64
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,6 +31,13 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # node-hid is a native addon. On Linux it needs libudev-dev to
+      # build. macOS and Windows ship the required headers via Xcode
+      # CLI and MSVC which are pre-installed on the GitHub runners.
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
 
       - name: Install dependencies
         working-directory: axon

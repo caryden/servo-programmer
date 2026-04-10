@@ -28,7 +28,12 @@
 import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
-import { identify, type IdentifyReply, modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
+import {
+  type IdentifyReply,
+  identify,
+  modelIdFromConfig,
+  readFullConfig,
+} from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
 
