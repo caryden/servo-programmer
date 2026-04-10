@@ -477,7 +477,11 @@ export async function flashFirmware(
     const { buf, expectedReply } = buildHexRecordBuf(rec);
     xorInPlace(buf, key);
     const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs);
-    if (reply[0] !== expectedReply) {
+    // The EOF record (type=0x01) is the last thing sent. After
+    // receiving it the servo's MCU finishes the flash and reboots —
+    // the HID reply we read back is from the rebooted firmware, not
+    // a flash acknowledgment. Don't verify the reply for EOF.
+    if (rec.type !== 0x01 && reply[0] !== expectedReply) {
       throw AxonError.servoIo(
         `flash: hex record addr=0x${rec.address.toString(16).padStart(4, "0")} ` +
           `type=0x${rec.type.toString(16).padStart(2, "0")} write failed: ` +
