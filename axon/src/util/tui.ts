@@ -92,10 +92,11 @@ export function renderProgressBar(label: string, fraction: number, width = 30): 
   const pct = Math.min(1, Math.max(0, fraction));
   const filled = Math.round(pct * width);
   const empty = width - filled;
-  const bar = "█".repeat(filled) + "░".repeat(empty);
   const pctText = `${Math.floor(pct * 100)}%`.padStart(4);
   if (!isTTY()) return `${label} ${pctText}`;
-  return `${label} ${BG_GRAY}${FG_WHITE}${bar}${RESET} ${pctText}`;
+  const filledBar = `${BG_GREEN}${FG_BLACK}${" ".repeat(filled)}${RESET}`;
+  const emptyBar = `${BG_GRAY}${" ".repeat(empty)}${RESET}`;
+  return `${label} ${filledBar}${emptyBar} ${pctText}`;
 }
 
 // ---- parameter table --------------------------------------------------------
