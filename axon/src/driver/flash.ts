@@ -333,13 +333,11 @@ export async function flashFirmware(
   // the dongle's own check happens in phase 6.
   if (options.expectedModelId !== undefined) {
     const rawModel = firmware.header.modelId;
-    // Normalize by stripping trailing null/* padding before compare.
     const cleanFirmware = rawModel.replace(/[*\0\s]+$/, "");
     const cleanExpected = options.expectedModelId.replace(/[*\0\s]+$/, "");
-    if (!cleanExpected.startsWith(cleanFirmware) && !cleanFirmware.startsWith(cleanExpected)) {
+    if (cleanFirmware !== cleanExpected) {
       throw AxonError.validation(
-        `firmware is for model "${rawModel}" but connected servo is "${options.expectedModelId}". ` +
-          `Refusing to flash (would brick the servo).`,
+        `firmware is for model "${rawModel}" but connected servo is "${options.expectedModelId}".`,
       );
     }
   }
@@ -347,18 +345,33 @@ export async function flashFirmware(
 
   progress({ phase: "prepare", message: "Preparing flash session..." });
 
+  // Phase 1b: enter flash mode (0x90 param=0). The vendor exe sends
+  // this when the HID product name matches its whitelist — which our
+  // dongle ("USBBootloader V1.3") does. Without this command the
+  // dongle stays in normal mode and rejects the key exchange (0x81).
+  //
+  // The 0x90 write/read is done DIRECTLY to the HID handle (not via
+  // the exchange() helper) because the reply format may differ from
+  // the standard status/length/data layout — the vendor exe does the
+  // same (firmware_handler.c:164-172 bypasses FUN_004082f0).
+  {
+    const modeLockTx = buildFlashTx(CMD_MODE_LOCK, Uint8Array.from([0x00]));
+    await handle.write(modeLockTx);
+    await handle.read(); // drain reply (content ignored)
+  }
+
   // Phase 2: boot version query (0x80 + 4-byte payload 01 02 03 04).
-  // Reply[0] is ASCII 'V' (0x56). Reply[1], reply[3] are the two
-  // version digits; the vendor exe refuses to flash if reply[3]=='2'
-  // AND reply[1]=='0' (i.e. literal "V02"), treating that as too-old.
+  // The vendor exe has a Sleep(5) between write and read here
+  // (firmware_handler.c:182). We match that with a post-write delay
+  // to give the dongle time to prepare the boot version reply.
   progress({ phase: "boot_query", message: "Querying bootloader version..." });
-  const bootReply = await exchange(
-    handle,
-    CMD_BOOT_QUERY,
-    Uint8Array.from([0x01, 0x02, 0x03, 0x04]),
-    6,
-    sleepMs,
-  );
+  {
+    const bootTx = buildFlashTx(CMD_BOOT_QUERY, Uint8Array.from([0x01, 0x02, 0x03, 0x04]));
+    if (sleepMs > 0) await sleep(sleepMs);
+    await handle.write(bootTx);
+    await sleep(5); // vendor exe: Sleep(5) between write and read
+  }
+  const bootReply = parseFlashRx(await handle.read(), 6);
   if (bootReply[0] !== 0x56) {
     throw AxonError.servoIo(
       `flash: boot query reply[0]=0x${bootReply[0]!.toString(16)} (expected 0x56 'V')`,
@@ -369,9 +382,7 @@ export async function flashFirmware(
   // practice every servo we've seen ships with a newer bootloader,
   // but mirror the guard so an unexpected old device is rejected.
   if (bootReply[1] === 0x30 && bootReply[3] === 0x32) {
-    throw AxonError.servoIo(
-      "flash: bootloader is version V02 (too old). Vendor exe refuses to flash this unit.",
-    );
+    throw AxonError.servoIo("flash: bootloader reports version V02, which is too old to flash.");
   }
 
   // Cross-check the .sfw header's type bytes against the boot-query
@@ -479,6 +490,15 @@ export async function flashFirmware(
   finishBuf[2] = 0xaa;
   fillRandom(finishBuf, 3);
   await exchange(handle, CMD_FLASH_MARKER, finishBuf, 1, sleepMs);
+
+  // Phase 8: exit flash mode (0x90 param=1). Mirror of the enter
+  // in phase 1b. Direct HID write/read, same as the vendor exe
+  // (firmware_handler.c:717-723).
+  {
+    const modeUnlockTx = buildFlashTx(CMD_MODE_LOCK, Uint8Array.from([0x01]));
+    await handle.write(modeUnlockTx);
+    await handle.read(); // drain reply
+  }
 
   progress({
     phase: "done",

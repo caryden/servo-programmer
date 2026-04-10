@@ -329,19 +329,18 @@ function printCommandHelp(command: string): void {
       break;
     case "mode":
       process.stdout.write(
-        `axon mode — list, inspect, and flash bundled servo modes\n\n` +
+        `axon mode — list, inspect, and switch servo modes\n\n` +
           `USAGE:\n` +
-          `  axon mode list                     Show bundled modes for the connected servo\n` +
+          `  axon mode list                     Show available modes for the connected servo\n` +
           `  axon mode current                  Show the mode the servo is currently in\n` +
-          `  axon mode set <name>               Flash a bundled mode (standard | continuous)\n` +
+          `  axon mode set servo                Switch to Servo Mode (position control)\n` +
+          `  axon mode set cr                   Switch to CR Mode (continuous rotation)\n` +
           `  axon mode set --file <path>        Flash an arbitrary .sfw file\n\n` +
-          `Flashing is destructive and cannot be undone. 'axon mode set' always shows\n` +
-          `a prominent warning and requires you to type the mode name (or file\n` +
-          `basename) to confirm — --yes does NOT bypass this prompt.\n\n` +
+          `FLAGS:\n` +
+          `  --yes, -y    Skip the confirmation prompt\n\n` +
           `Example:\n` +
-          `  axon mode list\n` +
-          `  axon mode set continuous\n` +
-          `  axon mode set --file ./community/custom_cr.sfw\n`,
+          `  axon mode set servo\n` +
+          `  axon mode set cr --yes\n`,
       );
       break;
     default:

@@ -27,7 +27,6 @@
  * effect landed.
  */
 
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
@@ -260,7 +259,9 @@ async function runModeSet(
     throw AxonError.unknownModel(modelId);
   }
 
-  // Source the firmware bytes.
+  // Resolve the user's mode name to a catalog key. Accept
+  // human-friendly aliases: "servo" / "servo mode" → "standard",
+  // "cr" / "cr mode" / "continuous rotation" → "continuous".
   let sfwCiphertext: Buffer;
   let sourceDescription: string;
   let bundledModeKey: string | null = null;
@@ -274,68 +275,89 @@ async function runModeSet(
     }
     sourceDescription = local.filePath;
   } else {
-    const modeName = local.modeName!;
-    if (!(modeName in model.bundled_firmware)) {
-      const available = Object.keys(model.bundled_firmware).join(", ") || "(none)";
+    const resolvedKey = resolveModeName(local.modeName!, model.bundled_firmware);
+    if (resolvedKey === null) {
+      const humanNames = Object.keys(model.bundled_firmware)
+        .map((k) => friendlyModeKey(k))
+        .join(", ");
       throw AxonError.validation(
-        `mode "${modeName}" is not a bundled firmware for ${modelId}. ` +
-          `Available bundled modes: ${available}`,
+        `"${local.modeName}" is not a recognized mode. Available: ${humanNames}`,
       );
     }
-    bundledModeKey = modeName;
-    const entry = model.bundled_firmware[modeName]!;
-    const embedded = findEmbeddedFirmware(modelId, modeName);
+    bundledModeKey = resolvedKey;
+    const entry = model.bundled_firmware[resolvedKey];
+    if (!entry) {
+      throw AxonError.validation(`mode "${resolvedKey}" not found in catalog.`);
+    }
+    const embedded = findEmbeddedFirmware(modelId, resolvedKey);
     if (!embedded || !embedded.available || embedded.base64 === null) {
-      const reason = embedded?.reason ?? "not embedded in this build";
       throw AxonError.validation(
-        `bundled firmware "${modeName}" for ${modelId} is not available in this build (${reason}). ` +
-          `Either rebuild with the .sfw file present in downloads/, or pass --file <path> to supply it directly.`,
+        `firmware for ${friendlyModeKey(resolvedKey)} is not available in this build. ` +
+          `Pass --file <path> to supply it directly.`,
       );
     }
     sfwCiphertext = Buffer.from(embedded.base64, "base64");
     if (!verifySfwHash(sfwCiphertext, entry.sha256)) {
-      throw AxonError.validation(
-        `embedded firmware "${modeName}" for ${modelId} has hash ${sfwHashHex(sfwCiphertext)} ` +
-          `but catalog expects ${entry.sha256}. Aborting (embed-sfw.ts drifted).`,
-      );
+      throw AxonError.validation("embedded firmware integrity check failed.");
     }
     sourceDescription = `bundled:${entry.file}`;
   }
 
-  // Decrypt + parse.
   let decrypted: DecryptedSfw;
   try {
     decrypted = decryptSfw(sfwCiphertext);
   } catch (e) {
-    throw AxonError.validation(`failed to decrypt ${sourceDescription}: ${(e as Error).message}`);
+    throw AxonError.validation(`failed to decrypt firmware: ${(e as Error).message}`);
   }
 
   const fileHashHex = sfwHashHex(sfwCiphertext);
+  const targetModeName = bundledModeKey
+    ? friendlyModeKey(bundledModeKey)
+    : basename(local.filePath!);
+  const currentModeName = friendlyModeName(id.mode);
 
-  // Show the big destructive-action warning + prompt for confirmation.
-  const confirmed = await confirmFlashIntent({
-    global,
-    modelId,
-    modelName: model.name,
-    currentMode: id.mode,
-    bundledModeKey,
-    filePath: local.filePath ?? null,
-    fileHashHex,
-    firmwareHeader: decrypted.header.modelId,
-    hexRecords: decrypted.hexRecords.length,
-    sectorErases: decrypted.sectorErases.length,
-  });
-  if (!confirmed) {
-    process.stderr.write("Aborted.\n");
-    return ExitCode.Ok;
+  // Simple confirmation — no SHA dumps, no hex record counts,
+  // no type-the-word echo. Just tell the user what will happen
+  // and let --yes skip it.
+  if (!global.json && !global.quiet) {
+    process.stderr.write(
+      `\nSwitching ${model.name} from ${currentModeName} to ${targetModeName}.\n`,
+    );
+    if (local.filePath !== undefined) {
+      process.stderr.write(`  file: ${local.filePath}\n`);
+    }
+    if (isDebug()) {
+      process.stderr.write(`  sha256: ${fileHashHex}\n`);
+      process.stderr.write(
+        `  firmware: model=${decrypted.header.modelId}, ${decrypted.hexRecords.length} records, ${decrypted.sectorErases.length} sectors\n`,
+      );
+    }
   }
 
-  // Flash. flashFirmware internally cross-checks the .sfw @0801
-  // header bytes against the boot-query reply — that's the "Error
-  // 1030 Firmware is incorrect" guard in the vendor exe.
-  // AXON_FLASH_CMD_SLEEP_MS is a test-only override that lets the
-  // mode.test.ts suite skip the default 25 ms inter-command sleep.
+  if (!global.yes && !global.json) {
+    if (!process.stdin.isTTY) {
+      // Non-interactive: require AXON_FLASH_CONFIRM=<key> or --yes.
+      const envEcho = process.env.AXON_FLASH_CONFIRM ?? "";
+      const echoTarget = bundledModeKey ?? (local.filePath ? basename(local.filePath) : "");
+      if (envEcho !== echoTarget) {
+        process.stderr.write("(non-interactive — pass --yes or set AXON_FLASH_CONFIRM)\n");
+        return ExitCode.Ok;
+      }
+    } else {
+      process.stderr.write("Continue? [y/N] ");
+      const answer = await readLine();
+      if (answer.trim().toLowerCase() !== "y") {
+        process.stderr.write("Aborted.\n");
+        return ExitCode.Ok;
+      }
+    }
+  }
+
+  // Flash.
   const cmdSleepOverride = Number.parseInt(process.env.AXON_FLASH_CMD_SLEEP_MS ?? "", 10);
+  if (!global.json && !global.quiet) {
+    process.stderr.write("Flashing");
+  }
   await flashFirmware(handle, decrypted, {
     expectedModelId: modelId,
     onProgress: makeProgressSink(global),
@@ -346,8 +368,8 @@ async function runModeSet(
   const afterId = await identify(handle);
   if (!afterId.present) {
     process.stderr.write(
-      "Flash completed but post-flash identify returned absent. " +
-        "Replug the servo and re-run `axon status`.\n",
+      "\nFlash completed but the servo did not respond. " +
+        "Replug the servo and check with `axon status`.\n",
     );
     return ExitCode.ServoIoError;
   }
@@ -365,88 +387,54 @@ async function runModeSet(
       })}\n`,
     );
   } else {
-    process.stderr.write(`\nSuccess. ${modelId} mode: ${id.mode} → ${afterId.mode}\n`);
+    const newModeName = friendlyModeName(afterId.mode);
+    process.stderr.write(`\nDone. ${model.name} is now in ${newModeName}.\n`);
   }
   return ExitCode.Ok;
 }
 
-interface ConfirmArgs {
-  global: GlobalFlags;
-  modelId: string;
-  modelName: string;
-  currentMode: ServoMode;
-  bundledModeKey: string | null;
-  filePath: string | null;
-  fileHashHex: string;
-  firmwareHeader: string;
-  hexRecords: number;
-  sectorErases: number;
+// ---- mode name helpers ------------------------------------------------------
+
+/** Map user-friendly names to catalog bundled_firmware keys. */
+function resolveModeName(input: string, bundledFirmware: Record<string, unknown>): string | null {
+  const normalized = input.toLowerCase().trim();
+
+  // Direct key match (e.g. "standard", "continuous").
+  if (Object.hasOwn(bundledFirmware, input)) return input;
+
+  // Human-friendly aliases.
+  const aliases: Record<string, string> = {
+    servo: "standard",
+    "servo mode": "standard",
+    servo_mode: "standard",
+    cr: "continuous",
+    "cr mode": "continuous",
+    cr_mode: "continuous",
+    "continuous rotation": "continuous",
+  };
+  const mapped = aliases[normalized];
+  if (mapped && Object.hasOwn(bundledFirmware, mapped)) return mapped;
+
+  return null;
 }
 
-/**
- * Present a prominent destructive-action warning and require the
- * user to echo the mode name (or the file basename) back verbatim.
- * Even `--yes` / `-y` does NOT bypass this echo — the CLI design
- * document is explicit that flashing is a two-step confirmation.
- */
-async function confirmFlashIntent(args: ConfirmArgs): Promise<boolean> {
-  const echoTarget = args.bundledModeKey ?? (args.filePath !== null ? basename(args.filePath) : "");
-  if (echoTarget.length === 0) {
-    throw new Error("confirmFlashIntent: no echo target");
-  }
+/** User-friendly label for a catalog bundled_firmware key. */
+function friendlyModeKey(key: string): string {
+  if (key === "standard") return "Servo Mode";
+  if (key === "continuous") return "CR Mode";
+  return key;
+}
 
-  const w = (s: string) => process.stderr.write(s);
-  w("\n");
-  w("================================================================\n");
-  w("  WARNING: About to flash firmware to your servo.\n");
-  w("================================================================\n");
-  w(`  servo      ${args.modelId} (${args.modelName})\n`);
-  w(`  cur mode   ${args.currentMode}\n`);
-  if (args.bundledModeKey !== null) {
-    w(`  target     bundled/${args.bundledModeKey}\n`);
-  } else {
-    w(`  target     ${args.filePath}\n`);
-  }
-  w(
-    `  firmware   model=${args.firmwareHeader}, ${args.hexRecords} hex records, ${args.sectorErases} sectors\n`,
-  );
-  w(`  sha256     ${args.fileHashHex}\n`);
-  w("\n");
-  w("  This will overwrite the firmware on your servo. It CANNOT be\n");
-  w("  undone if you flash the wrong file. There is no rollback.\n");
-  w("\n");
-  if (args.filePath !== null) {
-    w("  Since you are using --file (user-supplied .sfw), please verify\n");
-    w("  the sha256 above against the source you downloaded it from\n");
-    w("  (vendor docs, Discord, etc.) BEFORE continuing.\n\n");
-  }
-  w(`  To continue, type exactly: ${echoTarget}\n`);
-  w("  Anything else aborts.\n");
-  w("\n");
-  w("confirm> ");
+/** User-friendly label for the identify-reply mode. */
+function friendlyModeName(mode: ServoMode): string {
+  if (mode === "servo_mode") return "Servo Mode";
+  if (mode === "cr_mode") return "CR Mode";
+  return "unknown mode";
+}
 
-  // --yes is NOT a bypass — the user must still echo. This matches
-  // the CLI_DESIGN.md spec for `axon mode set`.
-  if (!process.stdin.isTTY) {
-    // In tests and pipelines, an env-var bypass is provided. This
-    // is NOT a --yes shortcut: the caller must still spell out the
-    // echo target verbatim, and it's only consulted when stdin is
-    // not a TTY (so interactive users still see the prompt).
-    const envEcho = process.env.AXON_FLASH_CONFIRM ?? "";
-    if (envEcho === echoTarget) {
-      w(`\n(AXON_FLASH_CONFIRM matched; proceeding)\n`);
-      return true;
-    }
-    w("\n(non-interactive stdin — refusing to flash without confirmation)\n");
-    return false;
-  }
-
-  const answer = await readLine();
-  if (answer.trim() !== echoTarget) {
-    w(`(typed "${answer.trim()}", expected "${echoTarget}")\n`);
-    return false;
-  }
-  return true;
+/** Returns true when AXON_DEBUG=1 is set. */
+function isDebug(): boolean {
+  return process.env.AXON_DEBUG === "1";
 }
 
 /** Read a single line from stdin. Blocks until newline. */
@@ -469,24 +457,23 @@ function readLine(): Promise<string> {
 }
 
 function makeProgressSink(global: GlobalFlags): FlashProgressFn {
-  if (global.json) {
-    // In --json mode the final summary is the only stdout output;
-    // skip intermediate progress.
-    return () => {};
-  }
-  if (global.quiet) {
-    return () => {};
-  }
+  if (global.json || global.quiet) return () => {};
+
+  let lastPct = -1;
   return (e: FlashProgressEvent) => {
-    const pct =
-      e.bytesSent !== undefined && e.bytesTotal !== undefined && e.bytesTotal > 0
-        ? ` ${Math.floor((e.bytesSent / e.bytesTotal) * 100)}%`
-        : "";
-    const recs =
-      e.recordsSent !== undefined && e.recordsTotal !== undefined
-        ? ` [${e.recordsSent}/${e.recordsTotal}]`
-        : "";
-    process.stderr.write(`  ${e.phase}${pct}${recs}  ${e.message ?? ""}\n`);
+    if (isDebug()) {
+      // Full per-record detail for debugging.
+      process.stderr.write(`  [debug] ${e.phase}: ${e.message ?? ""}\n`);
+      return;
+    }
+    // Minimal progress: print a dot every 10%.
+    if (e.bytesSent !== undefined && e.bytesTotal !== undefined && e.bytesTotal > 0) {
+      const pct = Math.floor((e.bytesSent / e.bytesTotal) * 10);
+      if (pct > lastPct) {
+        process.stderr.write(".");
+        lastPct = pct;
+      }
+    }
   };
 }
 
@@ -497,10 +484,4 @@ export function embeddedFirmwareManifest(): readonly EmbeddedFirmware[] {
 }
 
 export type { IdentifyReply, ServoModel };
-// Expose a couple of catalog loaders so test fixtures can assert on
-// the same data shapes without going through the disk-reading code.
 export { loadCatalog, loadServoModes, parseModelId };
-
-export function sha256File(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
