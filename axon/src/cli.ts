@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * `axon` — cross-platform CLI for the Axon Robotics servo programmer.
  *
@@ -9,9 +10,9 @@
  * adding a dep for it would outweigh the benefit.
  */
 
-import { runStatus } from "./commands/status.ts";
 import { runMonitor } from "./commands/monitor.ts";
 import { runRead } from "./commands/read.ts";
+import { runStatus } from "./commands/status.ts";
 import { runWrite } from "./commands/write.ts";
 import { AxonError, ExitCode } from "./errors.ts";
 

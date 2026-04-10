@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: axon
+        run: bun install --frozen-lockfile
+
+      - name: Biome check
+        working-directory: axon
+        run: bun run check
+
+      - name: Typecheck
+        working-directory: axon
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: axon
+        run: bun test

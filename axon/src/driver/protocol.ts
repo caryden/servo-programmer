@@ -53,9 +53,7 @@ function buildTx(cmd: number, addr: number, length: number): Buffer {
 
 function buildWriteTx(addr: number, data: Uint8Array): Buffer {
   if (data.length > MAX_CHUNK) {
-    throw new Error(
-      `buildWriteTx: data is ${data.length} bytes, max chunk is ${MAX_CHUNK}`,
-    );
+    throw new Error(`buildWriteTx: data is ${data.length} bytes, max chunk is ${MAX_CHUNK}`);
   }
   const tx = Buffer.alloc(REPORT_SIZE);
   tx[0] = REPORT_ID;
@@ -78,9 +76,7 @@ function sleep(ms: number): Promise<void> {
  * when the servo reports absent — returns `present: false` so
  * callers like the monitor can handle transitions themselves.
  */
-export async function identify(
-  handle: DongleHandle,
-): Promise<IdentifyReply> {
+export async function identify(handle: DongleHandle): Promise<IdentifyReply> {
   const tx = buildTx(CMD_IDENTIFY, 0x00, 0x04);
   await handle.write(tx);
   const rx = await handle.read();
@@ -130,9 +126,7 @@ export async function readChunk(
  * Read the full 95-byte config block, transparently handling the
  * two-chunk (59 + 36) split the dongle requires.
  */
-export async function readFullConfig(
-  handle: DongleHandle,
-): Promise<Buffer> {
+export async function readFullConfig(handle: DongleHandle): Promise<Buffer> {
   const chunk0 = await readChunk(handle, 0x00, MAX_CHUNK);
   const chunk1 = await readChunk(handle, MAX_CHUNK, CONFIG_BLOCK_SIZE - MAX_CHUNK);
   const full = Buffer.alloc(CONFIG_BLOCK_SIZE);
@@ -154,9 +148,7 @@ export async function writeChunk(
 ): Promise<void> {
   if (data.length === 0) return;
   if (data.length > MAX_CHUNK) {
-    throw new Error(
-      `writeChunk: data is ${data.length} bytes, max chunk is ${MAX_CHUNK}`,
-    );
+    throw new Error(`writeChunk: data is ${data.length} bytes, max chunk is ${MAX_CHUNK}`);
   }
   await sleep(CHUNK_SLEEP_MS);
   const tx = buildWriteTx(addr, data);
@@ -174,21 +166,12 @@ export async function writeChunk(
  * Write the full 95-byte config block in two chunks matching the
  * vendor exe's pattern.
  */
-export async function writeFullConfig(
-  handle: DongleHandle,
-  config: Uint8Array,
-): Promise<void> {
+export async function writeFullConfig(handle: DongleHandle, config: Uint8Array): Promise<void> {
   if (config.length !== CONFIG_BLOCK_SIZE) {
-    throw new Error(
-      `writeFullConfig: expected ${CONFIG_BLOCK_SIZE} bytes, got ${config.length}`,
-    );
+    throw new Error(`writeFullConfig: expected ${CONFIG_BLOCK_SIZE} bytes, got ${config.length}`);
   }
   await writeChunk(handle, 0x00, config.subarray(0, MAX_CHUNK));
-  await writeChunk(
-    handle,
-    MAX_CHUNK,
-    config.subarray(MAX_CHUNK, CONFIG_BLOCK_SIZE),
-  );
+  await writeChunk(handle, MAX_CHUNK, config.subarray(MAX_CHUNK, CONFIG_BLOCK_SIZE));
 }
 
 /**

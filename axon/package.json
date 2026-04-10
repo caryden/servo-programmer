@@ -10,12 +10,17 @@
   "scripts": {
     "axon": "bun run src/cli.ts",
     "build": "bun build --compile --outfile=./bin/axon ./src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "bun x @biomejs/biome lint .",
+    "format": "bun x @biomejs/biome format --write .",
+    "check": "bun x @biomejs/biome check .",
+    "test": "bun test"
   },
   "dependencies": {
     "node-hid": "^3.3.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
     "@types/bun": "latest",
     "typescript": "^5"
   }

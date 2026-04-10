@@ -10,11 +10,11 @@
  *   servo-present — dongle present, servo reports present
  */
 
-import { identify } from "../driver/protocol.ts";
+import type { GlobalFlags } from "../cli.ts";
 import { isDonglePresent, openDongle } from "../driver/hid.ts";
+import { identify } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { ExitCode } from "../errors.ts";
-import type { GlobalFlags } from "../cli.ts";
 
 type State = "no-adapter" | "adapter-only" | "servo-present";
 
@@ -24,12 +24,7 @@ function stamp(): string {
   return new Date().toTimeString().slice(0, 8);
 }
 
-function logTransition(
-  flags: GlobalFlags,
-  from: State,
-  to: State,
-  detail?: string,
-): void {
+function logTransition(flags: GlobalFlags, from: State, to: State, detail?: string): void {
   if (flags.json) {
     process.stdout.write(
       JSON.stringify({

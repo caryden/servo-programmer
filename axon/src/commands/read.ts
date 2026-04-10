@@ -8,23 +8,17 @@
  *   --hex       annotated hex dump (debug)
  */
 
-import {
-  readFullConfig,
-  modelIdFromConfig,
-} from "../driver/protocol.ts";
-import { openDongle } from "../driver/hid.ts";
 import { findModel, loadCatalog } from "../catalog.ts";
-import { ExitCode } from "../errors.ts";
 import type { GlobalFlags } from "../cli.ts";
+import { openDongle } from "../driver/hid.ts";
+import { modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
+import { ExitCode } from "../errors.ts";
 
 export interface ReadFlags {
   format: "human" | "json" | "svo" | "hex";
 }
 
-export async function runRead(
-  global: GlobalFlags,
-  local: ReadFlags,
-): Promise<number> {
+export async function runRead(global: GlobalFlags, local: ReadFlags): Promise<number> {
   const handle = await openDongle();
   let config: Buffer;
   try {
@@ -72,8 +66,7 @@ function emitJson(config: Buffer): void {
     raw_bytes_hex: config.toString("hex"),
     byte_count: config.length,
     parameters: {
-      _note:
-        "Named parameters not yet implemented in v1 scaffold. See docs/BYTE_MAPPING.md.",
+      _note: "Named parameters not yet implemented in v1 scaffold. See docs/BYTE_MAPPING.md.",
     },
   };
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");

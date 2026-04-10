@@ -7,15 +7,11 @@
  *   model    (if servo present and we can read the config)
  */
 
-import {
-  identify,
-  readFullConfig,
-  modelIdFromConfig,
-} from "../driver/protocol.ts";
-import { isDonglePresent, openDongle } from "../driver/hid.ts";
 import { findModel, loadCatalog } from "../catalog.ts";
-import { AxonError, ExitCode } from "../errors.ts";
 import type { GlobalFlags } from "../cli.ts";
+import { isDonglePresent, openDongle } from "../driver/hid.ts";
+import { identify, modelIdFromConfig, readFullConfig } from "../driver/protocol.ts";
+import { AxonError, ExitCode } from "../errors.ts";
 
 export async function runStatus(flags: GlobalFlags): Promise<number> {
   // Phase 0: USB-level presence. Cheap, no claim needed.

@@ -16,26 +16,23 @@
  */
 
 import { readFileSync } from "node:fs";
+import type { GlobalFlags } from "../cli.ts";
+import { openDongle } from "../driver/hid.ts";
 import {
   CONFIG_BLOCK_SIZE,
+  modelIdFromConfig,
   readFullConfig,
   writeFullConfig,
-  modelIdFromConfig,
 } from "../driver/protocol.ts";
-import { openDongle } from "../driver/hid.ts";
 import { AxonError, ExitCode } from "../errors.ts";
 import { confirm } from "../util/prompt.ts";
-import type { GlobalFlags } from "../cli.ts";
 
 export interface WriteFlags {
   from: string;
   dryRun: boolean;
 }
 
-export async function runWrite(
-  global: GlobalFlags,
-  local: WriteFlags,
-): Promise<number> {
+export async function runWrite(global: GlobalFlags, local: WriteFlags): Promise<number> {
   // 1. Load the new config from disk
   const path = local.from;
   const lower = path.toLowerCase();
@@ -50,9 +47,7 @@ export async function runWrite(
   try {
     newBytes = readFileSync(path);
   } catch (e) {
-    throw AxonError.validation(
-      `could not read ${path}: ${(e as Error).message}`,
-    );
+    throw AxonError.validation(`could not read ${path}: ${(e as Error).message}`);
   }
   if (newBytes.length !== CONFIG_BLOCK_SIZE) {
     throw AxonError.validation(

@@ -65,10 +65,7 @@ export function parseModelId(bytes: Uint8Array): string {
  */
 export function loadCatalog(): Catalog {
   const models = new Map<string, ServoModel>();
-  for (const [key, value] of Object.entries(rawCatalog.models) as [
-    string,
-    any,
-  ][]) {
+  for (const [key, value] of Object.entries(rawCatalog.models) as [string, any][]) {
     if (key.startsWith("_")) continue;
     models.set(key, {
       id: key,
@@ -89,9 +86,6 @@ export function loadCatalog(): Catalog {
   };
 }
 
-export function findModel(
-  catalog: Catalog,
-  modelId: string,
-): ServoModel | undefined {
+export function findModel(catalog: Catalog, modelId: string): ServoModel | undefined {
   return catalog.models.get(modelId);
 }
