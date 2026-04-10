@@ -38,9 +38,13 @@ describe("parameters registry", () => {
         "pwm_power",
         "soft_start",
         "overload_protection",
+        "overload_level1",
+        "overload_level2",
+        "overload_level3",
+        "proptl",
       ]),
     );
-    expect(names.length).toBe(9);
+    expect(names.length).toBe(13);
   });
 
   test("findParameter returns undefined for unknown names", () => {

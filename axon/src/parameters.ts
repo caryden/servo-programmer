@@ -545,37 +545,61 @@ function buildSoftStart(): ParameterSpec {
 }
 
 /**
- * overload_protection — byte 0x25 bit 0x80. Boolean enable/disable.
- * Confirmed by .svo A/B diff: overload ON → bit 0x80 set.
- * The 3-stage level/duration values (0x14-0x1E) are separate sub-params.
+ * overload_protection — byte 0x25 bit 0x80 (enable) + bytes 0x35-0x3A
+ * (3 levels × (power_u8, time_u8)).
+ *
+ * Encoding confirmed by .svo A/B diff:
+ *   0x35 = Level 1 power (raw/255*100 = percent)
+ *   0x36 = Level 1 time  (raw*0.1 = seconds)
+ *   0x37 = Level 2 power
+ *   0x38 = Level 2 time
+ *   0x39 = Level 3 power
+ *   0x3A = Level 3 time
+ *
+ * Note: byte 0x36 is dual-use — ProPTL in CR mode, Level 1 time
+ * in Servo mode. Vendor enforces ~29% min on power (raw ~73).
  */
 function buildOverloadProtection(): ParameterSpec {
   return {
     name: "overload_protection",
     vendorLabel: "Overload Protection",
-    description: "Reduces power when stalled to prevent motor burnout. 3-stage in Servo Mode.",
+    description:
+      "Reduces power when stalled. 3 levels. Use 'on'/'off' to toggle, or 'overload_level1..3' to set individual levels.",
     unit: "enum",
     modes: ["servo_mode"],
     values: ["on", "off"],
     docsUrl: undefined,
-    offset: "0x25 bit 0x80",
-    encoding: "bitfield",
+    offset: "0x25 bit 0x80 + 0x35-0x3A",
+    encoding: "bitfield + 3×(u8,u8)",
 
     read(config) {
-      const raw = config[0x25] ?? 0;
-      const on = (raw & 0x80) !== 0;
-      return { raw: on ? 1 : 0, physical: on ? "on" : "off", unit: "enum" };
+      const enabled = ((config[0x25] ?? 0) & 0x80) !== 0;
+      const levels = [];
+      for (let i = 0; i < 3; i++) {
+        const pwr = config[0x35 + i * 2] ?? 0;
+        const time = config[0x36 + i * 2] ?? 0;
+        levels.push({
+          pct: Math.round(((pwr * 100) / 255) * 10) / 10,
+          sec: Math.round(time * 0.1 * 10) / 10,
+        });
+      }
+      const summary = enabled
+        ? `on  L1: ${levels[0]!.pct}%/${levels[0]!.sec}s  L2: ${levels[1]!.pct}%/${levels[1]!.sec}s  L3: ${levels[2]!.pct}%/${levels[2]!.sec}s`
+        : "off";
+      return { raw: enabled ? 1 : 0, physical: summary, unit: "enum" };
     },
 
     write(config, value) {
-      const on = value === true || value === "on" || value === 1;
-      const out = cloneConfig(config);
-      if (on) {
-        out[0x25] = out[0x25]! | 0x80;
-      } else {
-        out[0x25] = out[0x25]! & ~0x80;
+      const v = String(value).toLowerCase();
+      if (v === "on" || v === "off") {
+        const out = cloneConfig(config);
+        if (v === "on") out[0x25] = out[0x25]! | 0x80;
+        else out[0x25] = out[0x25]! & ~0x80;
+        return out;
       }
-      return out;
+      throw AxonError.validation(
+        "overload_protection: use 'on'/'off'. Set levels with overload_level1..3.",
+      );
     },
 
     parseUserInput(input) {
@@ -587,11 +611,76 @@ function buildOverloadProtection(): ParameterSpec {
 
     validate(value) {
       const v = String(value).toLowerCase();
-      if (v !== "on" && v !== "off")
-        return `overload_protection: '${value}' is not valid. Use: on or off.`;
+      if (v !== "on" && v !== "off") return `overload_protection: use 'on' or 'off'.`;
       return null;
     },
   };
+}
+
+/** Build an overload level parameter (power% + time at one stage). */
+function buildOverloadLevel(level: 1 | 2 | 3): ParameterSpec {
+  const pwrOffset = 0x35 + (level - 1) * 2;
+  const timeOffset = 0x36 + (level - 1) * 2;
+  const name = `overload_level${level}`;
+  return {
+    name,
+    vendorLabel: `Overload Level ${level}`,
+    description: `Overload stage ${level}. Format: <power%> <time_seconds>. Power min 10%, time max 25.5s.`,
+    unit: "compound",
+    modes: ["servo_mode"],
+    docsUrl: undefined,
+    offset: `0x${pwrOffset.toString(16)}+0x${timeOffset.toString(16)}`,
+    encoding: "u8 pair",
+
+    read(config) {
+      const pwr = config[pwrOffset] ?? 0;
+      const time = config[timeOffset] ?? 0;
+      const pct = Math.round(((pwr * 100) / 255) * 10) / 10;
+      const sec = Math.round(time * 0.1 * 10) / 10;
+      return { raw: pwr * 256 + time, physical: `${pct}% / ${sec}s`, unit: "compound" };
+    },
+
+    write(config, value) {
+      const { pct, sec } = parseOverloadLevel(name, value);
+      const rawPwr = clamp(Math.round((pct * 255) / 100), 0, 255);
+      const rawTime = clamp(Math.round(sec / 0.1), 0, 255);
+      const out = cloneConfig(config);
+      out[pwrOffset] = rawPwr;
+      out[timeOffset] = rawTime;
+      return out;
+    },
+
+    parseUserInput(input) {
+      parseOverloadLevel(name, input); // validate
+      return input.trim();
+    },
+
+    validate(value) {
+      try {
+        parseOverloadLevel(name, value);
+        return null;
+      } catch (e) {
+        return (e as Error).message;
+      }
+    },
+  };
+}
+
+function parseOverloadLevel(name: string, value: unknown): { pct: number; sec: number } {
+  const s = String(value).trim().replace(/%/g, "").replace(/s/gi, "");
+  const parts = s.split(/\s+/);
+  if (parts.length !== 2) {
+    throw AxonError.validation(`${name}: expected '<power%> <time_s>', e.g. '50 5.0'`);
+  }
+  const pct = Number(parts[0]);
+  const sec = Number(parts[1]);
+  if (!Number.isFinite(pct) || pct < 10 || pct > 100) {
+    throw AxonError.validation(`${name}: power ${pct}% out of range (10..100).`);
+  }
+  if (!Number.isFinite(sec) || sec < 0 || sec > 25.5) {
+    throw AxonError.validation(`${name}: time ${sec}s out of range (0..25.5).`);
+  }
+  return { pct, sec };
 }
 
 /**
@@ -665,6 +754,62 @@ function buildPwmPower(): ParameterSpec {
   };
 }
 
+/**
+ * proptl — byte 0x36, raw * 0.1 = seconds. CR Mode only.
+ * Overheat-prevention timeout that cuts servo output after continuous
+ * operation for this long. Max 25.5 s (raw 0xFF).
+ * Confirmed by vendor exe screenshot + Micro CR capture.
+ * Byte 0x36 is dual-use: overload/advanced in Servo Mode, ProPTL in CR Mode.
+ */
+function buildProptl(): ParameterSpec {
+  return {
+    name: "proptl",
+    vendorLabel: "ProPTL",
+    description:
+      "Overheat-prevention timeout in seconds. Cuts servo output after continuous operation for this long.",
+    unit: "s",
+    modes: ["cr_mode"],
+    min: 0,
+    max: 25.5,
+    docsUrl: undefined,
+    offset: "0x36",
+    encoding: "u8",
+
+    read(config) {
+      const raw = config[0x36] ?? 0;
+      const seconds = raw * 0.1;
+      return { raw, physical: Number(seconds.toFixed(1)), unit: "s" };
+    },
+
+    write(config, value) {
+      const seconds = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 25.5) {
+        throw AxonError.validation(`proptl: ${seconds} out of range (0..25.5 seconds).`);
+      }
+      const raw = clamp(Math.round(seconds / 0.1), 0, 255);
+      const out = cloneConfig(config);
+      out[0x36] = raw;
+      return out;
+    },
+
+    parseUserInput(input) {
+      const trimmed = input.trim().replace(/\s*s\s*$/i, "");
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) {
+        throw AxonError.validation(`proptl: could not parse '${input}' as seconds.`);
+      }
+      return n;
+    },
+
+    validate(value) {
+      if (typeof value !== "number" || !Number.isFinite(value))
+        return "proptl: value must be a number of seconds.";
+      if (value < 0 || value > 25.5) return `proptl: ${value}s out of range (0..25.5).`;
+      return null;
+    },
+  };
+}
+
 // ---------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------
@@ -682,6 +827,10 @@ function buildRegistry(): ParameterSpec[] {
     buildPwmPower(),
     buildSoftStart(),
     buildOverloadProtection(),
+    buildOverloadLevel(1),
+    buildOverloadLevel(2),
+    buildOverloadLevel(3),
+    buildProptl(),
   ];
 }
 
