@@ -1,73 +1,75 @@
 # servo-programmer
 
-> A cross-platform CLI replacement for the Axon Robotics Servo Programming
-> Software, built end-to-end from scratch by reverse-engineering a closed
-> HW/SW system using [Claude Code](https://claude.com/claude-code), a
-> Saleae Logic 8, and Ghidra.
+> Cross-platform CLI replacement for the Axon Robotics Servo Programming
+> Software, built from scratch by reverse-engineering a closed HW/SW
+> system with [Claude Code](https://claude.com/claude-code), a Saleae
+> Logic 8, and Ghidra.
 >
-> **This is a research experiment** as much as it is a tool. The point was
-> to see how far an agent could take a single developer through a hardware
-> reverse-engineering project against a closed system. The full first-person
-> story will live in [docs/the-adventure.md](docs/the-adventure.md) (in
-> progress — see [issue #10](https://github.com/caryden/servo-programmer/issues/10)).
-
-> [!NOTE]
-> This README is a baseline stub. The polished version with screenshots,
-> a feature matrix, and the supported-servos table lands as part of the
-> v1.0 release plan in [issue #13](https://github.com/caryden/servo-programmer/issues/13).
-> The current state of the project is **v0.1 — working CLI for read /
-> write of the full 95-byte config block**, no named parameters yet.
-
-## Status
+> This started as a research experiment — *"how far can a single
+> developer get with a coding agent on a reverse-engineering project
+> against a closed system?"* — and ended with a working CLI. The full
+> story is in [docs/the-adventure.md](docs/the-adventure.md).
 
 [![CI](https://github.com/caryden/servo-programmer/actions/workflows/ci.yml/badge.svg)](https://github.com/caryden/servo-programmer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Working today (`bun run src/cli.ts <command>` from `axon/`, no sudo on any platform):
+## What this is
 
-- `axon status` — adapter + servo presence, model id, firmware mode
-- `axon monitor` — live presence polling at 300 ms cadence (Ctrl-C to stop)
-- `axon read` — pretty / `--json` / `--svo` / `--hex`
-- `axon write --from cfg.svo` — diff, confirm, write, verify
+Axon Robotics sells smart servos (Mini, Max, Micro) used by a lot of
+FTC robotics teams. You configure them — range, center, direction,
+deadband, PWM power — with a small USB dongle that clips onto the
+servo's signal wire. The dongle is the only way to touch the servo's
+settings, and the vendor's configuration software is a 32-bit
+Windows-only `.exe`. If you run macOS or Linux, you're out of luck.
 
-Coming in v1.0 (see the [milestones](https://github.com/caryden/servo-programmer/milestones)):
+`axon` is a cross-platform replacement: a single TypeScript CLI on
+[Bun](https://bun.sh) that talks to the same dongle, reads and writes
+the same 95-byte config block, and flashes the same vendor firmware.
+Same hardware, same results, no Windows VM.
 
-- `axon get <param>` / `axon set <param> <value>` with named parameters
-  and unit conversion (degrees, microseconds, percentage, raw)
-- `axon mode set <name>` — flash bundled firmware modes (standard,
-  continuous rotation), or a user-supplied `.sfw`
-- An [agent skill](.claude/skills/) so coding agents can drive the CLI
-  on their own
-- Cross-compiled standalone binaries for Mac (Intel + Apple Silicon),
-  Linux (x64 + ARM64), and Windows
+## Features
 
-## What is this?
+Shipping in v1.0:
 
-The Axon Robotics servo programmer is a USB dongle that connects to Axon
-servos (Mini, Max, Micro) and lets you read and write the servo's
-configuration block (range, center, direction, deadband, etc.) and flash
-different firmware modes (standard PWM vs continuous rotation). The
-vendor's official software is Windows-only, which is awkward for FTC
-robotics teams running Mac or Linux.
+- **Presence and diagnostics** — `axon status` (one-shot) and
+  `axon monitor` (live 300 ms polling).
+- **Full config round-trip** — `axon read` (human / `--json` / `--svo`
+  / `--hex`) and `axon write --from cfg.svo` with diff, confirm, and
+  read-back verify. Vendor `.svo` files work unmodified.
+- **Named parameters with unit conversion** — `axon get <param>` and
+  `axon set <param> <value>` accept degrees, microseconds, percent, or
+  raw, and validate against per-model limits. `axon set default`
+  resets to bundled defaults.
+- **Firmware mode flashing** — `axon mode set standard`,
+  `axon mode set continuous`, or `axon mode set --file custom.sfw`.
+  `.sfw` files are decrypted internally; you never see the AES layer.
+- **`--json` everywhere** — every command has a machine-readable mode
+  for scripting and [coding-agent use](#using-this-with-a-coding-agent).
+- **Cross-platform, no sudo** — Mac (Intel + Apple Silicon), Linux
+  (x64 + ARM64), Windows, via
+  [node-hid](https://github.com/node-hid/node-hid) on top of the OS
+  HID framework.
+- **Embedded servo catalog** — per-model defaults, parameter metadata,
+  and vendor firmware SHA-256s live in
+  [`data/servo_catalog.json`](data/servo_catalog.json) and ship inside
+  the binary.
 
-This project reverse-engineers the dongle's USB protocol and the on-wire
-servo protocol from scratch and replaces the vendor exe with a small
-cross-platform CLI written in TypeScript on Bun.
+Full command surface: [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md).
 
 ## Quick start
 
 ```bash
-# Install Bun if you don't have it
+# 1. Install Bun if you don't have it
 curl -fsSL https://bun.sh/install | bash
 
-# Clone, install dependencies, run the CLI
+# 2. Clone, install dependencies, run
 git clone https://github.com/caryden/servo-programmer
 cd servo-programmer/axon
 bun install
 bun run src/cli.ts status
 ```
 
-Expected output (with the dongle plugged in and an Axon Mini connected):
+With the dongle plugged in and an Axon Mini connected you should see:
 
 ```
 adapter  connected
@@ -76,37 +78,113 @@ model    SA33**** (Axon Mini)
 docs     https://docs.axon-robotics.com/servos/mini
 ```
 
-## Documentation
+No `sudo` required on any platform.
 
-- [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md) — the v1 command surface
-- [docs/wire-protocol.md](docs/wire-protocol.md) — USB HID and on-wire protocol specification
-- [docs/BYTE_MAPPING.md](docs/BYTE_MAPPING.md) — byte offset → parameter mapping
-- [research/](research/) — all the captures, scripts, and decompiled exe artifacts used during the reverse-engineering session
-- [vendor/](vendor/) — vendor-supplied assets (not part of the MIT-licensed source tree)
-- The plan to v1.0 lives in the [v0.2-clean-baseline](https://github.com/caryden/servo-programmer/milestone/1) and [v1.0](https://github.com/caryden/servo-programmer/milestone/2) milestones
+## Supported servos
+
+| Model ID   | Name       | Status |
+|------------|------------|--------|
+| `SA33****` | Axon Mini  | Confirmed working — full parameter defaults in the catalog |
+| *unknown*  | Axon Max   | Firmware bundled (SHA-256 recorded); model ID and defaults pending a physical read |
+| *unknown*  | Axon Micro | Firmware bundled (SHA-256 recorded); model ID and defaults pending a physical read |
+
+**Got a Max or Micro?** Please help fill out the catalog. Plug it in,
+run `bun run src/cli.ts read --svo > my-model.svo`, and
+[open an issue](https://github.com/caryden/servo-programmer/issues/new)
+with the file attached and the model ID string from `axon status`.
+I'll add your model's defaults to
+[`data/servo_catalog.json`](data/servo_catalog.json) and credit you in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## How it was built
 
-This whole project was built in a small number of sessions with Claude
-Code — me describing what I wanted, the agent driving Ghidra, libusb,
-hidapi, the Saleae logic analyzer's automation API, ETW captures from a
-Parallels Windows VM, and writing the final TypeScript CLI. The full
-write-up is the in-progress [docs/the-adventure.md](docs/the-adventure.md).
+The whole thing is a research experiment: a single developer plus a
+coding agent (Claude Code), pointed at a closed vendor stack, to see
+how far the pair could get. The agent drove the tools — Ghidra,
+libusb, hidapi, the Saleae automation API, ETW captures in a Parallels
+Windows VM — and I supplied hardware, architectural choices, and the
+occasional "wait, that's wrong."
+
+The path:
+
+1. **Static analysis in Ghidra** recovered the `.sfw` firmware format:
+   a Brian Gladman AES-128 reference implementation with a hardcoded
+   16-byte key of `"TTTTTTTTTTTTTTTT"`, found by walking backwards
+   from the `Error 1030: Firmware is incorrect.` string.
+2. **A Saleae Logic 8 on the servo signal wire** recovered the on-wire
+   framing: 9600-baud 8N1 Dynamixel v1, with the standard
+   `FF FF <id> <len> ...` header and a one-byte checksum.
+3. **Dual capture** (libusb and the Saleae sampling simultaneously)
+   proved the dongle is a transparent HID-to-wire proxy — every byte
+   written to HID interface 1 shows up unchanged on the serial line.
+4. **A libusb detour** chasing what looked like a transport bug turned
+   out to be a misdiagnosed protocol bug. We pivoted back to plain
+   hidapi, which is simpler, has no sudo requirements, and worked on
+   the first try.
+5. **A clean v1.0 CLI** on Bun + node-hid, with the catalog embedded
+   at build time and `.sfw` files decrypted internally.
+
+Most of the hands-on work — Ghidra scripting, protocol decoding,
+TypeScript scaffolding, tests — was driven by the agent. The full
+first-person write-up, including every dead end, is in
+[docs/the-adventure.md](docs/the-adventure.md).
+
+## Documentation
+
+- [docs/the-adventure.md](docs/the-adventure.md) — first-person story of how this was built (long-form)
+- [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md) — the v1 command surface
+- [docs/wire-protocol.md](docs/wire-protocol.md) — USB HID and on-wire protocol reference
+- [docs/BYTE_MAPPING.md](docs/BYTE_MAPPING.md) — byte offset → parameter mapping
+- [docs/licenses.md](docs/licenses.md) — dependency license audit
+- [research/](research/) — captures, decompiled exe output, Python test scripts used during reverse engineering
+- [vendor/](vendor/) — vendor-supplied assets (not part of the MIT-licensed source tree)
+- [CHANGELOG.md](CHANGELOG.md) — release notes
+
+## Using this with a coding agent
+
+Every `axon` command has a `--json` mode and a stable exit-code
+contract, so agents (Claude Code, Cursor, etc.) can drive it without
+screen scraping. Start with [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md)
+for the command surface and exit codes, and
+[docs/wire-protocol.md](docs/wire-protocol.md) if you need transport
+details. A dedicated bundled agent skill is tracked in
+[issue #16](https://github.com/caryden/servo-programmer/issues/16).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The most useful contribution
+right now is **physical hardware testing on Axon Max and Axon Micro
+servos** to fill in their catalog entries (see above). Bug reports
+and protocol-edge-case `.sal` captures also very welcome.
+
+## Acknowledgments
+
+- **Axon Robotics** for making genuinely cool hardware. This project
+  is a workaround for a Windows-only exe, not a complaint about the
+  servos.
+- **The FTC robotics community** for the use case.
+- **[Saleae](https://www.saleae.com/)** for a logic analyzer with an
+  automation API that made the dual-capture experiment cheap enough
+  to try.
+- **[Ghidra](https://ghidra-sre.org/)** for making the static-analysis
+  phase possible at all.
+- **The [libusb](https://libusb.info/),
+  [hidapi](https://github.com/libusb/hidapi),
+  [node-hid](https://github.com/node-hid/node-hid), and
+  [Bun](https://bun.sh) maintainers** for the open infrastructure
+  this sits on top of.
+- **Anthropic** and **[Claude Code](https://claude.com/claude-code)**
+  for the agent that drove most of the hands-on work. This project
+  would not exist in its current form without it.
 
 ## License
 
 [MIT](LICENSE).
 
 The Axon Robotics vendor binaries (`.sfw` firmware files, the Windows
-exe) are NOT redistributed with this project. They're available from
+`.exe`) are **not** redistributed with this project. They're
+downloadable from
 [docs.axon-robotics.com](https://docs.axon-robotics.com/archive/programmer)
-— you obtain them yourself.
-
-## Acknowledgments
-
-- **Axon Robotics** for making cool hardware
-- **The FTC robotics community** for the use case
-- **Saleae** for an automation API that made the dual-capture experiment cheap
-- **Ghidra** for the decompiler
-- **The libusb, hidapi, node-hid, and Bun maintainers** for the open infrastructure
-- **Anthropic / Claude Code** for the agent that drove most of the work
+— you obtain them yourself and place them where the build looks for
+them. See [vendor/README.md](vendor/README.md) for the expected
+layout.
