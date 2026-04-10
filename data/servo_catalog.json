@@ -1,5 +1,5 @@
 {
-  "$schema_version": 1,
+  "$schema_version": 2,
   "catalog_version": "2026.04.10",
   "source_docs": "https://docs.axon-robotics.com/archive/programmer",
   "target_bootloader": "V1.3",
@@ -9,6 +9,18 @@
     "the single source of truth for servo-model metadata, parameter",
     "defaults, and bundled firmware file references.",
     "",
+    "AUDIENCE SEPARATION:",
+    "Each parameter entry has two layers. User-facing fields",
+    "(vendor_label, description, unit, modes, min, max, values,",
+    "docs_url) are what the end user sees via 'axon get <param>",
+    "--help', tooltips in a GUI, or 'axon read' output. Keep these",
+    "plain-language and action-oriented. All the maintainer / agent",
+    "detail (byte offset, encoding, widget offset, source file",
+    "references, confidence levels, TBD formulas, etc.) lives inside",
+    "the nested 'implementation' object and is NEVER shown to end",
+    "users. The CLI's help renderer MUST NOT read from the",
+    "implementation object.",
+    "",
     "TARGET BOOTLOADER: V1.3 (iProduct = 'USBBootloader V1.3').",
     "The MK2 programmer (bootloader V1.4) adds parameters that are NOT",
     "in the V1.3 set — specifically Left/Right Limit (distinct from",
@@ -17,47 +29,44 @@
     "out of scope for v1.0 and tracked as a post-v1.0 epic.",
     "",
     "SERVO MODES: Axon V1.3 servos operate in one of two firmware",
-    "modes. The mode is determined by which .sfw firmware is",
-    "flashed, and different parameters are valid in each mode. The",
-    "CLI must respect this — 'axon set <param>' should reject",
-    "attempts to set a parameter that is not valid in the current",
-    "mode. See the top-level 'servo_modes' object below for the",
-    "mode identification protocol and the per-parameter 'modes'",
-    "field below for which parameters apply in which mode.",
+    "modes (Servo Mode or CR Mode). Different parameters are valid",
+    "in each mode — 'axon set <param>' must reject attempts to set",
+    "a parameter that does not apply in the current mode. See the",
+    "top-level 'servo_modes' object and the per-parameter 'modes'",
+    "field.",
     "",
     "The canonical V1.3 parameter list is sourced from the vendor's",
-    "archive docs (see source_docs above) and enumerates exactly nine",
-    "parameters: Servo Angle, Servo Neutral, Dampening Factor,",
-    "Sensitivity, PWM Power, Soft Start, Inversion, Loose PWM",
-    "Protection, and Overload Protection. This catalog implements as",
-    "many as we currently have a confident byte mapping for; the",
-    "remaining ones (Dampening Factor, Soft Start, Overload",
-    "Protection) error out with a clear message in the CLI and point",
-    "the user at docs/BYTE_MAPPING.md.",
+    "archive docs and enumerates exactly nine parameters: Servo",
+    "Angle, Servo Neutral, Dampening Factor, Sensitivity, PWM Power,",
+    "Soft Start, Inversion, Loose PWM Protection, and Overload",
+    "Protection. This catalog implements the ones we currently have",
+    "a confident byte mapping for; the rest (Dampening Factor, Soft",
+    "Start, Overload Protection) are listed under '_not_yet_mapped'",
+    "and error out cleanly in the CLI.",
     "",
-    "Model IDs (the `id` field) are the ASCII bytes at config offset",
-    "0x40..0x47 with trailing '*' as padding. Only the Axon Mini has",
-    "been confirmed empirically so far (SA33****); Max and Micro are",
-    "placeholders pending a physical read from those models.",
+    "Model IDs (the `id` key in 'models') are the ASCII bytes at",
+    "config offset 0x40..0x47 with trailing '*' as padding. Only the",
+    "Axon Mini has been confirmed empirically so far (SA33****); Max",
+    "and Micro are placeholders pending a physical read from those",
+    "models.",
     "",
     "IMPORTANT TERMINOLOGY: 'Sensitivity' (vendor name) is the PWM",
-    "dead-band (the microsecond window around neutral where the servo",
-    "doesn't move). 'Dampening Factor' (vendor name) is the D",
-    "coefficient in the internal position-control PID loop. They are",
-    "two DIFFERENT things and live at different config-block offsets.",
-    "Earlier revisions of this file incorrectly conflated them — that",
-    "has been corrected."
+    "dead-band. 'Dampening Factor' (vendor name) is the D coefficient",
+    "in the internal position-control PID loop. They are two",
+    "DIFFERENT things and live at different config-block offsets."
   ],
 
   "servo_modes": {
-    "_note": "Axon V1.3 servos operate in one of two firmware modes. The mode determines which parameters are meaningful and editable. Mode detection is done via the 'identify' command (0x8A): the servo replies with FF FF 01 06 00 <MODE_ID> 02 01 08 <chksum>, where MODE_ID is either 0x03 (Servo Mode) or 0x04 (CR Mode). The CLI's is_present() check already accepts both; the protocol layer should additionally expose the mode byte so that command-layer code can branch on it.",
     "servo_mode": {
       "id_byte": 3,
-      "id_byte_hex": "0x03",
       "name": "Servo Mode",
-      "description": "Standard PWM position-control servo mode. The servo tracks a target angle commanded by the PWM pulse width, holds position, and reports servo-style parameters. This is the default mode for a factory-fresh servo and the mode used by most FTC applications.",
+      "description": "The default mode. Your PWM pulse width commands a target angle and the servo holds that position. Use this for arms, grippers, aimers, and anything else where you want the servo to go to a specific place and stay there.",
       "sfw_pattern": "Axon_*_Servo_Mode.sfw",
-      "decomp_ui_panel": "FUN_00405518 (primary overlay — ~25 writes, the full parameter set)",
+      "implementation": {
+        "id_byte_hex": "0x03",
+        "decomp_ui_panel": "FUN_00405518 (primary overlay — ~25 writes, the full parameter set)",
+        "notes": "Detected at runtime from the identify reply: rx[5] == 0x03. Axon's identify reply format is 'FF FF 01 06 00 <MODE_ID> 02 01 08 <chksum>' on the wire; over HID the equivalent bytes appear at rx[5]."
+      },
       "available_parameters": [
         "servo_angle",
         "servo_neutral",
@@ -72,11 +81,14 @@
     },
     "cr_mode": {
       "id_byte": 4,
-      "id_byte_hex": "0x04",
-      "name": "CR Mode",
-      "description": "Modified Continuous Rotation mode. The servo is re-purposed to act like a variable-speed gearmotor: the PWM pulse width commands a rotation speed (and direction) instead of a target angle. In this mode most position-control parameters (angle, deadband, PID damping, overload protection) are not meaningful and are either ignored by the firmware or clamped to defaults. The CR-mode UI panel in the vendor exe is significantly smaller than the Servo-Mode panel for exactly this reason.",
+      "name": "CR Mode (Continuous Rotation)",
+      "description": "The servo is re-purposed as a variable-speed gearmotor: PWM pulse width commands a rotation speed (and direction) instead of a target angle. Use this when you want continuous spinning — flywheels, conveyor wheels, drum rollers.",
       "sfw_pattern": "Axon_*_Modified_CR_Mode.sfw",
-      "decomp_ui_panel": "FUN_00406248 (secondary overlay — only 3 byte writes: 0x12, bits in 0x25, and 0x36)",
+      "implementation": {
+        "id_byte_hex": "0x04",
+        "decomp_ui_panel": "FUN_00406248 (secondary overlay — only 3 byte writes: 0x12, bits in 0x25, and 0x36)",
+        "notes": "Detected at runtime from the identify reply: rx[5] == 0x04. In this mode most position-control parameters (angle, deadband, PID damping, overload protection) are ignored by the firmware."
+      },
       "available_parameters": [
         "servo_neutral",
         "inversion",
@@ -85,10 +97,10 @@
         "soft_start"
       ],
       "unavailable_parameters": {
-        "servo_angle": "CR mode rotates continuously; there is no fixed angular range",
-        "sensitivity": "Dead-band around neutral only makes sense for a servo that is trying to hold a position",
-        "dampening_factor": "The PID D coefficient is for position control; CR mode is speed control",
-        "overload_protection": "Vendor docs explicitly state '3-stage in Servo Mode; unavailable in CR Mode'"
+        "servo_angle": "Continuous rotation has no fixed range",
+        "sensitivity": "Dead-band around neutral is only meaningful when holding a position",
+        "dampening_factor": "The PID D coefficient controls position tracking, not speed",
+        "overload_protection": "Vendor docs: '3-stage in Servo Mode; unavailable in CR Mode'"
       }
     }
   },
@@ -99,16 +111,53 @@
       "max_range_deg": 355,
       "pulse_range_us": [500, 2500],
       "docs_url": "https://docs.axon-robotics.com/servos/mini",
-      "magic_bytes": "3b d0 0b f6",
       "recommended_pwm_power_percent_4v8": 75,
       "recommended_pwm_power_percent_6v0": 85,
+      "implementation": {
+        "magic_bytes": "3b d0 0b f6",
+        "notes": "First 4 bytes of the 95-byte config block identify which servo variant the block is for. A Mini's block starts with '3b d0 0b f6'."
+      },
       "defaults": {
-        "servo_angle":          { "raw": 80,  "deg_approx": 111, "_approx": true, "_comment": "BE u16 at 0x0A..0x0B = 0x0050 mirrored at 0x27..0x2C. Vendor docs say raw 0-255 maps to 0-355 deg, so raw 80 ≈ 111°. Unverified; needs A/B .svo diff." },
-        "servo_neutral":        { "raw": 128, "us": 0,           "_comment": "byte 0x06 = 0x80; encoding stored = user_us + 0x80, so raw 128 → 0 µs offset (centered at 1500 µs)." },
-        "sensitivity":          { "raw": 80,  "user_step": 4,    "_comment": "byte 0x0C = 0x50; encoding stored = (user_step + 1) * 16. Step 0 = 'ultra high' (1 µs deadband); step 4 is a mid-range deadband." },
-        "inversion":            "normal",
-        "loose_pwm_protection": { "raw_bits": 96, "raw_bits_hex": "0x60", "mode": null, "_unknown_mapping": true, "_comment": "Bits 0x60 of byte 0x25 set to 0x60 on the live Mini. Three modes exist (Release / Hold / Neutral); which numeric bit value maps to which mode is still unknown — needs a three-way .svo A/B diff to confirm." },
-        "pwm_power":            { "raw": 220, "percent_approx": 86, "_approx": true, "_comment": "byte 0x11 = 0xDC mirrored at 0x12, 0x13, and 0x0F (= primary − 0x14). 220/255 ≈ 86%, which matches vendor's recommended default of 85% @ 6.0v. Verified by cross-reference to vendor docs; degree-of-fit is high but not yet A/B-diff-confirmed." }
+        "servo_angle": {
+          "raw": 80,
+          "deg_approx": 111,
+          "implementation": {
+            "_approx": true,
+            "notes": "BE u16 at 0x0A..0x0B = 0x0050, mirrored at 0x27..0x28, 0x29..0x2A, 0x2B..0x2C. Vendor docs say raw 0-255 maps to 0-355 deg, so raw 80 ≈ 111°. Unverified; needs A/B .svo diff."
+          }
+        },
+        "servo_neutral": {
+          "raw": 128,
+          "us": 0,
+          "implementation": {
+            "notes": "byte 0x06 = 0x80; encoding 'stored = user_us + 0x80', so raw 128 → 0 µs offset (centered at 1500 µs)."
+          }
+        },
+        "sensitivity": {
+          "raw": 80,
+          "user_step": 4,
+          "implementation": {
+            "notes": "byte 0x0C = 0x50; encoding 'stored = (user_step + 1) * 16'. Step 0 = 'ultra high' (1 µs deadband); step 4 is a mid-range deadband."
+          }
+        },
+        "inversion": "normal",
+        "loose_pwm_protection": {
+          "mode": null,
+          "implementation": {
+            "raw_bits": 96,
+            "raw_bits_hex": "0x60",
+            "_unknown_mapping": true,
+            "notes": "Bits 0x60 of byte 0x25 set to 0x60 on the live Mini. Three modes exist (Release / Hold / Neutral); which numeric bit value maps to which mode is still unknown — needs a three-way .svo A/B diff to confirm."
+          }
+        },
+        "pwm_power": {
+          "raw": 220,
+          "percent_approx": 86,
+          "implementation": {
+            "_approx": true,
+            "notes": "byte 0x11 = 0xDC mirrored at 0x12, 0x13, and 0x0F (= primary − 0x14). 220/255 ≈ 86%, which matches vendor's recommended default of 85% @ 6.0v."
+          }
+        }
       },
       "bundled_firmware": {
         "standard": {
@@ -130,9 +179,12 @@
       "max_range_deg": null,
       "pulse_range_us": [500, 2500],
       "docs_url": "https://docs.axon-robotics.com/servos/max",
-      "magic_bytes": null,
       "recommended_pwm_power_percent_4v8": 66,
       "recommended_pwm_power_percent_6v0": null,
+      "implementation": {
+        "magic_bytes": null,
+        "notes": "Unknown until we get a physical Max to read."
+      },
       "bundled_firmware": {
         "standard": {
           "file": "Axon_Max_Servo_Mode.sfw",
@@ -153,7 +205,9 @@
       "max_range_deg": null,
       "pulse_range_us": [500, 2500],
       "docs_url": "https://docs.axon-robotics.com/servos/micro",
-      "magic_bytes": null,
+      "implementation": {
+        "magic_bytes": null
+      },
       "bundled_firmware": {}
     }
   },
@@ -161,131 +215,159 @@
   "parameters": {
     "servo_angle": {
       "vendor_label": "Servo Angle",
-      "unit": "raw",
-      "physical_unit": "deg",
+      "description": "How far the servo sweeps from end to end. Servo Mode only — in CR Mode the servo rotates continuously and this setting has no effect.",
+      "unit": "deg",
       "modes": ["servo_mode"],
-      "description": "Operating travel of the servo. The vendor docs describe this as 'scaled from 0→255 to 0→355' — the raw value is a byte in 0..255 that maps proportionally to the servo's full documented angular range. Stored as a big-endian u16 at config offset 0x0A..0x0B and mirrored (same widget, same value) at 0x27..0x28, 0x29..0x2A, and 0x2B..0x2C; each mirror is an internal rate-limit register initialized from the user's Servo Angle setting. Not meaningful in CR Mode (which has no fixed angular range).",
-      "offset": "0x0A..0x0B",
-      "mirrors": ["0x27..0x28", "0x29..0x2A", "0x2B..0x2C"],
-      "encoding": "be_u16",
-      "widget": "p1+0x374",
-      "confidence": "high",
-      "min_raw": 0,
-      "max_raw": 255,
-      "deg_formula": "deg = raw * (model.max_range_deg / 255)",
-      "deg_formula_confidence": "medium",
-      "deg_formula_note": "Per vendor docs but not verified by A/B .svo diff yet. The catalog-level max_range_deg is per-model (355 for Mini). Needs confirmation that raw 255 really maps to 355°.",
-      "source": "decomp_slider_overlay_0x352_00405518.c lines 211-230 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "min": 0,
+      "max_from_model": "max_range_deg",
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x0A..0x0B",
+        "mirrors": ["0x27..0x28", "0x29..0x2A", "0x2B..0x2C"],
+        "encoding": "be_u16",
+        "widget": "p1+0x374",
+        "confidence": "high",
+        "min_raw": 0,
+        "max_raw": 255,
+        "deg_formula": "deg = raw * (model.max_range_deg / 255)",
+        "deg_formula_confidence": "medium",
+        "deg_formula_note": "Per vendor docs but not verified by A/B .svo diff yet.",
+        "source": "decomp_slider_overlay_0x352_00405518.c lines 211-230 + archive docs",
+        "notes": "The widget writes the BE u16 to bytes 0x0A..0x0B and replicates it to three mirror slots. Each mirror is an internal rate-limit register initialized from the user's Servo Angle setting."
+      }
     },
     "servo_neutral": {
       "vendor_label": "Servo Neutral",
+      "description": "Adjusts the PWM pulse width at which the servo is centered (Servo Mode) or stopped (CR Mode). Measured in microseconds, offset from the default 1500 µs. Keep adjustments small — large changes can cause unexpected behavior.",
       "unit": "us",
-      "physical_unit": "us",
       "modes": ["servo_mode", "cr_mode"],
-      "description": "Offsets the neutral position of the servo, measured in microseconds. In Servo Mode this is the PWM pulse width at which the servo holds its center angle. In CR Mode it is the PWM pulse width at which the servo is stopped (the 'dead center' of the speed command range). Both modes use it. The vendor UI calls this 'Neutral' (VCL event-handler symbol 'rztrNeutralChange' at 0x007a9888). Stored as a single byte at config offset 0x06 with encoding 'stored = user_us + 0x80', so raw 0x80 (128) is the factory-default 0 µs offset (i.e., the servo's neutral PWM is exactly 1500 µs). Significant adjustments can cause unintended side effects; use small changes only.",
-      "offset": "0x06",
-      "encoding": "u8_signed_offset_from_0x80",
-      "widget": "p1+0x380",
-      "confidence": "high",
-      "min_raw": 1,
-      "max_raw": 255,
-      "us_formula": "us = raw - 128",
-      "source": "decomp_slider_overlay_0x352_00405518.c line 193 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "min": -127,
+      "max": 127,
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x06",
+        "encoding": "u8_signed_offset_from_0x80",
+        "widget": "p1+0x380",
+        "confidence": "high",
+        "min_raw": 1,
+        "max_raw": 255,
+        "us_formula": "us = raw - 128",
+        "source": "decomp_slider_overlay_0x352_00405518.c line 193 + archive docs",
+        "notes": "Widget label confirmed via VCL event-handler symbol 'rztrNeutralChange' at 0x007a9888. Vendor docs specify the unit is microseconds."
+      }
     },
     "sensitivity": {
       "vendor_label": "Sensitivity",
+      "description": "The size of the 'dead zone' around the centered position where the servo ignores small PWM changes. Higher sensitivity = smaller dead zone = more responsive to tiny commands (but can jitter on noisy signals). Servo Mode only.",
       "unit": "step",
-      "physical_unit": "us",
       "modes": ["servo_mode"],
-      "description": "The PWM dead-band — the microsecond window around the neutral pulse where the servo doesn't move. Smaller dead-band = more sensitive to small command changes. The vendor docs specify 'Ultra high = 1us'. Stored as a single byte at config offset 0x0C with encoding 'stored = (user_step + 1) × 16', giving 15 discrete user-visible steps (user_step = 0..14). Step 0 is 'ultra high' (1 µs dead-band); higher steps give progressively larger dead-bands. Only meaningful in Servo Mode — CR Mode has no concept of 'holding a position', so a dead-band around neutral is not applicable.",
-      "offset": "0x0C",
-      "encoding": "nibble_times_16",
-      "widget": "p1+0x378",
-      "confidence": "high",
-      "label_confidence": "medium",
-      "min_raw": 16,
-      "max_raw": 240,
-      "min_user_step": 0,
-      "max_user_step": 14,
-      "user_step_formula": "user_step = (raw / 16) - 1",
-      "us_at_step_0": 1,
-      "us_per_step_approx": null,
-      "us_per_step_confidence": "unknown",
-      "_note": "The mapping from user_step to microseconds beyond step 0 is unknown. The vendor docs only give the 'ultra high = 1us' anchor point. A .svo A/B diff with different Sensitivity settings would fill in the scale.",
-      "source": "decomp_slider_overlay_0x352_00405518.c line 194 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "min": 0,
+      "max": 14,
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x0C",
+        "encoding": "nibble_times_16",
+        "widget": "p1+0x378",
+        "confidence": "high",
+        "label_confidence": "medium",
+        "min_raw": 16,
+        "max_raw": 240,
+        "user_step_formula": "user_step = (raw / 16) - 1",
+        "us_at_step_0": 1,
+        "us_per_step_approx": null,
+        "us_per_step_confidence": "unknown",
+        "source": "decomp_slider_overlay_0x352_00405518.c line 194 + archive docs",
+        "notes": "Vendor docs specify 'Ultra high = 1us' so step 0 (raw 0x10) gives a 1 µs dead-band. Mapping from higher steps to microseconds is unknown; would be filled in by a .svo A/B diff with different Sensitivity settings."
+      }
     },
     "inversion": {
       "vendor_label": "Inversion",
+      "description": "Reverses the servo's direction. Default is CCW (normal). Use 'reversed' if you mounted the servo upside-down or backwards relative to how you want it to move.",
       "unit": "enum",
       "values": ["normal", "reversed"],
       "modes": ["servo_mode", "cr_mode"],
-      "description": "Reverses the direction of the servo. CCW (normal) is the factory default. In Servo Mode this flips the mapping of PWM pulse width to target angle; in CR Mode it flips the mapping of PWM pulse width to rotation direction. Both modes use it. Stored as bit 0x02 of the flags byte at config offset 0x25. A secondary 'dirty' bit at 0x01 is toggled each time the user changes the checkbox, but only bit 0x02 is the persistent setting.",
-      "offset": "0x25",
-      "encoding": "bit",
-      "bit_mask": "0x02",
-      "widget": "p1+0x360",
-      "confidence": "medium",
-      "confidence_note": "Byte/bit location derived from the checkbox-toggle→persistent-bit pattern in FUN_00405518 lines 88-108. No literal 'Inversion' label string was found in data_printable_runs.txt; a .svo A/B diff of the vendor UI's Inversion checkbox would promote this to high confidence.",
-      "source": "decomp_slider_overlay_0x352_00405518.c lines 88-108 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x25",
+        "encoding": "bit",
+        "bit_mask": "0x02",
+        "widget": "p1+0x360",
+        "confidence": "medium",
+        "confidence_note": "Byte/bit location derived from the checkbox-toggle→persistent-bit pattern in FUN_00405518 lines 88-108. No literal 'Inversion' label string in data_printable_runs.txt; a .svo A/B diff would promote this to high confidence.",
+        "source": "decomp_slider_overlay_0x352_00405518.c lines 88-108 + archive docs",
+        "notes": "A secondary 'dirty' bit at mask 0x01 is toggled each time the user changes the checkbox, but only bit 0x02 is the persistent setting."
+      }
     },
     "loose_pwm_protection": {
       "vendor_label": "Loose PWM Protection",
+      "description": "What the servo does when it loses the PWM signal but still has power. 'release' goes limp (no torque). 'hold' holds the last commanded position. 'neutral' returns to the center / zero-speed position.",
       "unit": "enum",
       "values": ["release", "hold", "neutral"],
       "modes": ["servo_mode", "cr_mode"],
-      "description": "Servo behavior when the PWM signal is lost but power remains. Both modes have signal-loss behavior (in Servo Mode, what angle to hold or release; in CR Mode, whether to stop or coast). The vendor docs describe three modes: 'Release: acts as if the servo wasn't powered', 'Hold: holds the last position it was set to', and 'Neutral: goes to the middle position'. Stored as two bits of the flags byte at config offset 0x25 (bits 0x60) — a 3-way enum. The specific numeric-value → mode mapping is not yet confirmed from the decomp alone and requires a three-way .svo A/B diff.",
-      "offset": "0x25",
-      "encoding": "bits",
-      "bit_mask": "0x60",
-      "widget": "p1+0x37c",
-      "confidence": "high",
-      "value_mapping_confidence": "low",
-      "value_mapping_note": "Byte/bit location is certain from FUN_00405518 lines 179-192. Which specific bit value (0x00, 0x40, or 0x60) corresponds to which vendor mode name is unknown. CLI should expose 'get' as a raw-bit annotation until A/B .svo diff resolves the mapping, and should reject 'set' attempts with a clear message.",
-      "source": "decomp_slider_overlay_0x352_00405518.c lines 179-192 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x25",
+        "encoding": "bits",
+        "bit_mask": "0x60",
+        "widget": "p1+0x37c",
+        "confidence": "high",
+        "value_mapping_confidence": "low",
+        "value_mapping_note": "Byte/bit location is certain from FUN_00405518 lines 179-192. Which specific bit value (0x00, 0x40, or 0x60) corresponds to which vendor mode name is unknown. CLI should expose 'get' as a raw-bit annotation until an A/B .svo diff resolves the mapping, and should reject 'set' attempts with a clear message.",
+        "source": "decomp_slider_overlay_0x352_00405518.c lines 179-192 + archive docs",
+        "notes": "Two bits of the flags byte at 0x25 encode a 3-way enum. Mapping bit values to vendor mode names needs a three-way .svo A/B diff."
+      }
     },
     "pwm_power": {
       "vendor_label": "PWM Power",
-      "unit": "raw",
-      "physical_unit": "percent",
+      "description": "Caps the maximum power the servo will draw, as a percentage. Lower values help on current-limited power supplies. Recommended defaults: 75% at 4.8 V, 85% at 6.0 V (for the Mini). Applies in both modes.",
+      "unit": "percent",
       "modes": ["servo_mode", "cr_mode"],
-      "description": "Caps the maximum power output of the servo. Useful for use on current-limited devices. 0% = no power, 100% = max power. Applies to both Servo Mode and CR Mode (both need a motor-power limit). In CR Mode the FUN_00406248 overlay writes this to byte 0x12 (one of the mirrors of the primary byte 0x11). Stored as a single byte at config offset 0x11 and mirrored to 0x12, 0x13, and 0x0F (where 0x0F = primary − 0x14); the widget behind it (p1+0x370) writes all four in one pass. The 4-byte mirror pattern likely corresponds to the main cap plus the three progressive reductions used by the Overload Protection state machine — precise per-stage mapping requires the load-side decomp.",
-      "offset": "0x11",
-      "mirrors": ["0x12", "0x13", "0x0F"],
-      "mirror_0x0F_offset": -20,
-      "encoding": "u8",
-      "widget": "p1+0x370",
-      "confidence": "medium",
-      "min_raw": 0,
-      "max_raw": 255,
-      "percent_formula": "percent = raw * (100.0 / 255)",
-      "percent_formula_confidence": "medium",
-      "percent_formula_note": "The live raw 0xDC (220) maps via this formula to ~86%, which matches the vendor's recommended default PWM Power of 85% for the Mini @ 6.0v — a good cross-check but not an A/B confirmation.",
-      "source": "decomp_slider_overlay_0x352_00405518.c lines 203-210 + archive docs",
-      "docs_url": "https://docs.axon-robotics.com/archive/programmer"
+      "min": 0,
+      "max": 100,
+      "docs_url": "https://docs.axon-robotics.com/archive/programmer",
+      "implementation": {
+        "offset": "0x11",
+        "mirrors": ["0x12", "0x13", "0x0F"],
+        "mirror_0x0F_offset": -20,
+        "encoding": "u8",
+        "widget": "p1+0x370",
+        "confidence": "medium",
+        "min_raw": 0,
+        "max_raw": 255,
+        "percent_formula": "percent = raw * (100.0 / 255)",
+        "percent_formula_confidence": "medium",
+        "percent_formula_note": "The live raw 0xDC (220) maps via this formula to ~86%, matching the vendor's recommended 85% @ 6.0V Mini default — a good cross-check but not an A/B confirmation.",
+        "source": "decomp_slider_overlay_0x352_00405518.c lines 203-210 + archive docs",
+        "notes": "The 4-byte mirror pattern (0x11, 0x12, 0x13, 0x0F = primary - 20) is likely the main cap plus three progressive reductions for the Overload Protection state machine. In CR Mode the FUN_00406248 overlay writes the same value to byte 0x12 (one of the mirrors). Precise per-stage mapping requires the load-side decomp."
+      }
     }
   },
 
   "_not_yet_mapped": {
-    "_note": "These are canonical V1.3 parameters (per the archive docs) that we cannot yet confidently map to specific bytes of the 95-byte config block. The CLI's 'axon get <name>' and 'axon set <name>' will return 'not yet mapped' errors for these names until the byte offsets are confirmed, and will point users at docs/BYTE_MAPPING.md. All parameters listed here are still round-trippable via 'axon read --svo' / 'axon write --from cfg.svo' since that operates on the whole 95-byte block.",
+    "_note": "These are canonical V1.3 parameters (per the archive docs) that we cannot yet confidently map to specific bytes of the 95-byte config block. 'axon get <name>' and 'axon set <name>' will return 'not yet mapped' errors for these names and point users at docs/BYTE_MAPPING.md. They are still round-trippable via 'axon read --svo' / 'axon write --from cfg.svo'.",
     "dampening_factor": {
       "vendor_label": "Dampening Factor",
-      "reason_blocked": "Label string 'Damping Factor: ' exists at 0x007a734a and VCL symbol 'rztrDampingChange' at 0x007a98b4 confirm the UI widget exists, but we haven't found the widget's offset or the byte position in the current decomp. Likely lives in the 0x35..0x3A 'advanced mode' range or in FUN_00406248 (the secondary overlay). Needs FUN_00404b28 (the load-side function) decompiled to confirm.",
-      "docs_description": "Adjusts the D coefficient in the servo PID loop. NOT RECOMMENDED to adjust — it is tuned to work out of the box."
+      "description": "How aggressively the servo resists overshoot when moving to a target angle. NOT RECOMMENDED to change — it's tuned at the factory. Servo Mode only.",
+      "modes": ["servo_mode"],
+      "implementation": {
+        "reason_blocked": "Label string 'Damping Factor: ' exists at 0x007a734a and VCL symbol 'rztrDampingChange' at 0x007a98b4 confirm the UI widget exists, but we haven't found the widget's offset or the byte position in the current decomp. Likely lives in the 0x35..0x3A 'advanced mode' range or in FUN_00406248. Needs FUN_00404b28 (the load-side function) decompiled to confirm."
+      }
     },
     "soft_start": {
       "vendor_label": "Soft Start",
-      "reason_blocked": "Not referenced in any currently-decompiled function. Probably one of the unmapped widgets (p1+0x3dc, p1+0x3e0, p1+0x3e4 in FUN_00406248). Needs more decomp.",
-      "docs_description": "Limits acceleration on startup; prevents sudden movement."
+      "description": "Limits how fast the servo can accelerate when it first powers on. Prevents sudden jerks. Both modes.",
+      "modes": ["servo_mode", "cr_mode"],
+      "implementation": {
+        "reason_blocked": "Not referenced in any currently-decompiled function. Probably one of the unmapped widgets (p1+0x3dc, p1+0x3e0, p1+0x3e4 in FUN_00406248). Needs more decomp."
+      }
     },
     "overload_protection": {
       "vendor_label": "Overload Protection",
-      "reason_blocked": "Partially implicated in the PWM Power mirror pattern, but we can't distinguish 'main PWM Power' from 'stage-N overload reduction' without the load-side decomp. Bytes 0x14..0x18 (five monotonically-decreasing values 41, 33, 29, 25, 20 on the live Mini) and 0x19..0x1E (three BE-u16 values of 0x003C = 60) are strong candidates for 'per-stage power curve' and 'per-stage duration' respectively.",
-      "docs_description": "Reduces the power output of the servo when stalled (to avoid burning out the motor). 3-stage progressive power reduction in Servo Mode; unavailable in CR Mode."
+      "description": "Automatically reduces the servo's maximum power when it's been stalling for too long, to protect the motor from burnout. Three progressive stages. Servo Mode only (unavailable in CR Mode).",
+      "modes": ["servo_mode"],
+      "implementation": {
+        "reason_blocked": "Partially implicated in the PWM Power mirror pattern, but we can't distinguish 'main PWM Power' from 'stage-N overload reduction' without the load-side decomp. Bytes 0x14..0x18 (five monotonically-decreasing values 41, 33, 29, 25, 20 on the live Mini) and 0x19..0x1E (three BE-u16 values of 0x003C = 60) are strong candidates for 'per-stage power curve' and 'per-stage duration' respectively."
+      }
     }
   },
 
