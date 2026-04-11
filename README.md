@@ -35,8 +35,9 @@ separate so this project can be adapted if hardware becomes available.
 
 Current source supports:
 
-- **Presence and diagnostics** — `axon status` (one-shot) and
-  `axon monitor` (live 300 ms polling).
+- **Presence and diagnostics** — `axon status` (one-shot),
+  `axon monitor` (live 300 ms polling), and `axon doctor` for a
+  non-destructive runtime/catalog/USB/HID/servo diagnostic report.
 - **Config round-trip** — `axon read` (human / `--json` / `--svo` /
   `--hex`) and `axon write --from cfg.svo` with diff, confirm,
   model-id checks, and read-back verify. Vendor `.svo` files work
@@ -203,7 +204,9 @@ screen-scraping human text. Start with
 [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md) for the command surface and
 exit codes, and
 [docs/wire-protocol.md](docs/wire-protocol.md) if you need transport
-details. A dedicated bundled agent skill is tracked in
+details. When setup or USB ownership is unclear, start with
+`axon --json doctor`; it reports stable per-check IDs and categories.
+A dedicated bundled agent skill is tracked in
 [issue #16](https://github.com/caryden/servo-programmer/issues/16).
 
 ## Contributing

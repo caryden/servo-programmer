@@ -55,6 +55,7 @@ multiple programmers on the same host.
 
 ```
 axon status                  # one-shot check
+axon doctor                  # staged runtime/catalog/USB/HID/servo diagnostics
 axon monitor                 # live presence polling, Ctrl-C to stop
 ```
 
@@ -74,6 +75,37 @@ axon monitor                 # live presence polling, Ctrl-C to stop
   }
 }
 ```
+
+`axon doctor` runs a longer, non-destructive check sequence:
+
+1. CLI/runtime version and platform
+2. Servo catalog and external firmware manifest
+3. USB/HID adapter visibility at VID `0x0471` PID `0x13aa`
+4. HID openability, including likely VM/vendor-app ownership failures
+5. Safe identify probe
+6. Safe config read probe for model ID and catalog match
+
+Default output is a concise check report. `axon doctor --json` emits:
+
+```json
+{
+  "ok": true,
+  "category": "ok",
+  "checks": [
+    {"id": "runtime", "status": "pass", "category": "runtime"},
+    {"id": "catalog", "status": "pass", "category": "catalog"},
+    {"id": "usb_hid", "status": "pass", "category": "ok"},
+    {"id": "hid_open", "status": "pass", "category": "ok"},
+    {"id": "identify", "status": "pass", "category": "ok"},
+    {"id": "config_read", "status": "pass", "category": "ok"}
+  ]
+}
+```
+
+Use `axon doctor --debug` to include raw identify and first config-read
+HID reply prefixes for hardware/protocol debugging. The command always
+exits 0 when it can produce a report; consumers should branch on the
+top-level `category` and per-check `status`.
 
 ### Read
 

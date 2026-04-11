@@ -11,6 +11,7 @@
  */
 
 import pkg from "../package.json" with { type: "json" };
+import { runDoctor } from "./commands/doctor.ts";
 import { printGetHelp, runGet } from "./commands/get.ts";
 import { type ModeSubcommand, runMode } from "./commands/mode.ts";
 import { runMonitor } from "./commands/monitor.ts";
@@ -41,7 +42,18 @@ export interface ParsedArgs {
   global: GlobalFlags;
 }
 
-const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h", "version", "v", "recover"]);
+const GLOBAL_BOOLS = new Set([
+  "json",
+  "quiet",
+  "yes",
+  "y",
+  "help",
+  "h",
+  "version",
+  "v",
+  "recover",
+  "debug",
+]);
 
 function isNegativeNumberToken(arg: string): boolean {
   return /^-(?:\d|\.\d)/.test(arg);
@@ -114,6 +126,7 @@ USAGE:
 
 COMMANDS:
   status            Check adapter + servo presence (one shot)
+  doctor            Run non-destructive diagnostics
   monitor           Live presence polling (Ctrl-C to stop)
   read              Read config from servo
   write             Write config to servo
@@ -169,6 +182,11 @@ export async function main(argv: string[]): Promise<number> {
     switch (parsed.command) {
       case "status":
         return await runStatus(parsed.global);
+
+      case "doctor": {
+        const debug = parsed.flags.debug === true;
+        return await runDoctor(parsed.global, { debug });
+      }
 
       case "monitor":
         return await runMonitor(parsed.global);
@@ -297,6 +315,17 @@ function printCommandHelp(command: string): void {
           `FLAGS:\n` +
           `  --json      Emit transitions as newline-delimited JSON\n\n` +
           `Ctrl-C to stop.\n`,
+      );
+      break;
+    case "doctor":
+      process.stdout.write(
+        `axon doctor — run non-destructive diagnostics\n\n` +
+          `Checks runtime, catalog, USB/HID visibility, HID openability,\n` +
+          `safe identify, and safe config read.\n\n` +
+          `FLAGS:\n` +
+          `  --json      Machine-readable diagnostic report\n` +
+          `  --quiet     Print only the final category\n` +
+          `  --debug     Include raw identify/config HID reply prefixes\n`,
       );
       break;
     case "read":
