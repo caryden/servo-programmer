@@ -1,13 +1,13 @@
 /**
  * Tests for `axon status`. The command talks to node-hid via
- * `isDonglePresent` and `openDongle`, which we `mock.module` to
+ * `listDongles` and `openDongle`, which we `mock.module` to
  * exercise the phase state machine without a physical adapter.
  *
  * Covers the three "sad" phases explicitly because they were all
  * touched during the adapter_stale → adapter_io rename and the
  * dongle → adapter user-facing-text sweep:
  *
- *   - no_adapter:  isDonglePresent() returns false
+ *   - no_adapter:  listDongles() returns []
  *   - adapter_busy: openDongle() throws AxonError.adapterBusy
  *   - adapter_io:  identify() throws AxonError.adapterIo
  *
@@ -54,6 +54,15 @@ function captureIO(): CapturedIO {
 }
 
 const JSON_FLAGS = { json: true, quiet: false, yes: true };
+const DONGLE = {
+  vendorId: 0x0471,
+  productId: 0x13aa,
+  path: "mock-path",
+  product: "USBBootloader V1.3",
+  manufacturer: "Stone Laboratories inc.",
+  release: 1,
+  interface: 0,
+};
 
 describe("axon status", () => {
   let io: CapturedIO;
@@ -65,11 +74,12 @@ describe("axon status", () => {
     mock.restore();
   });
 
-  test("no_adapter phase: category + hint are observation-only", async () => {
+  test("no_adapter phase: category + VM-aware hint", async () => {
     await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [],
       isDonglePresent: () => false,
       openDongle: async () => {
-        throw new Error("should not be called when isDonglePresent is false");
+        throw new Error("should not be called when listDongles returns no adapters");
       },
       VID: 0x0471,
       PID: 0x13aa,
@@ -81,12 +91,10 @@ describe("axon status", () => {
     const result = JSON.parse(io.stdout.trim());
     expect(result.category).toBe("no_adapter");
     expect(result.adapter).toBe("disconnected");
-    // Hint must not name a vendor tool, VM, OS detail, or analyzer.
     expect(result.hint).toBeDefined();
-    expect(result.hint).not.toMatch(/parallels|saleae|iokit|macos|vendor exe/i);
-    // Hint must still name the concrete action.
     expect(result.hint).toMatch(/plug in/i);
     expect(result.hint).toMatch(/adapter/i);
+    expect(result.hint).toMatch(/parallels|vm|windows/i);
   });
 
   test("adapter_busy phase: openDongle throw is surfaced verbatim", async () => {
@@ -95,6 +103,7 @@ describe("axon status", () => {
       // hasn't been frozen by the previous test.
       const { AxonError } = require("../../src/errors.ts");
       return {
+        listDongles: () => [DONGLE],
         isDonglePresent: () => true,
         openDongle: async () => {
           throw AxonError.adapterBusy("device or resource busy (errno=EACCES)");
@@ -109,10 +118,10 @@ describe("axon status", () => {
     expect(code).toBe(ExitCode.Ok);
     const result = JSON.parse(io.stdout.trim());
     expect(result.category).toBe("adapter_busy");
+    expect(result.adapter).toBe("busy");
     expect(result.error).toContain("device or resource busy");
     expect(result.error).toContain("EACCES");
-    // Hint stays observation-only.
-    expect(result.hint).not.toMatch(/parallels|saleae|iokit|vendor exe/i);
+    expect(result.hint).toMatch(/app|vm|parallels|windows/i);
   });
 
   test("adapter_io phase: identify failure on open handle maps to adapter_io", async () => {
@@ -134,6 +143,7 @@ describe("axon status", () => {
     };
 
     await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
       isDonglePresent: () => true,
       openDongle: async () => mockDongle,
       VID: 0x0471,
@@ -174,6 +184,7 @@ describe("axon status", () => {
     mockDongle.read = async (timeoutMs?: number) => origRead(timeoutMs);
 
     await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
       isDonglePresent: () => true,
       openDongle: async () => mockDongle,
       VID: 0x0471,
@@ -194,6 +205,7 @@ describe("axon status", () => {
   test("servo_present phase: full pipeline succeeds on MockDongle", async () => {
     const mockDongle = new MockDongle();
     await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
       isDonglePresent: () => true,
       openDongle: async () => mockDongle,
       VID: 0x0471,
@@ -209,6 +221,35 @@ describe("axon status", () => {
     expect(result.servo).toBe("present");
     expect(result.model?.known).toBe(true);
     // Mini fixture's model id byte string.
+    expect(result.model?.id).toBe("SA33****");
+  });
+
+  test("servo_present phase tolerates a new identify mode byte", async () => {
+    const mockDongle = new MockDongle();
+    const origRead = mockDongle.read.bind(mockDongle);
+    let readCount = 0;
+    mockDongle.read = async (timeoutMs?: number) => {
+      const rx = await origRead(timeoutMs);
+      readCount++;
+      if (readCount === 1) rx[5] = 0x09;
+      return rx;
+    };
+
+    await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
+      isDonglePresent: () => true,
+      openDongle: async () => mockDongle,
+      VID: 0x0471,
+      PID: 0x13aa,
+      REPORT_SIZE: 64,
+    }));
+    const { runStatus } = await import("../../src/commands/status.ts");
+    const code = await runStatus(JSON_FLAGS);
+    expect(code).toBe(ExitCode.Ok);
+    const result = JSON.parse(io.stdout.trim());
+    expect(result.category).toBe("servo_present");
+    expect(result.mode_byte).toBe("0x09");
+    expect(result.mode_label).toBeUndefined();
     expect(result.model?.id).toBe("SA33****");
   });
 });

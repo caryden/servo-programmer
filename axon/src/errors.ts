@@ -61,7 +61,7 @@ export class AxonError extends Error {
     return new AxonError(
       ExitCode.DongleNotFound,
       detail,
-      "Plug in the Axon servo programmer adapter.",
+      "Plug in the Axon servo programmer adapter. If it is already plugged in, release it from Parallels/Windows or close any app using it, then retry.",
       "no_adapter",
     );
   }
@@ -75,7 +75,7 @@ export class AxonError extends Error {
     return new AxonError(
       ExitCode.DongleNotFound,
       `Could not open the Axon adapter: ${detail}`,
-      "Unplug and replug the adapter, then retry.",
+      "Close any app or VM using the adapter, or release it from Parallels/Windows, then retry.",
       "adapter_busy",
     );
   }

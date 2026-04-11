@@ -42,6 +42,8 @@ function pill(text: string, bg: string, fg: string): string {
 export interface StatusBarInfo {
   /** Adapter is plugged in and the HID handle opened. */
   adapter: boolean;
+  /** Override for the first pill when the adapter is not openable. */
+  adapterLabel?: string | null;
   /** Servo model name (e.g. "Axon Mini"), or null if no servo. */
   servoName?: string | null;
   /** Human mode label (e.g. "Servo Mode"), or null if unknown. */
@@ -61,7 +63,10 @@ export function renderStatusBar(info: StatusBarInfo): string {
   if (info.adapter) {
     parts.push(pill("Adapter", BG_GREEN, FG_BLACK));
   } else {
-    parts.push(pill("No Adapter", BG_RED, FG_WHITE));
+    const label = info.adapterLabel ?? "No Adapter";
+    const bg = label === "Adapter Busy" ? BG_YELLOW : BG_RED;
+    const fg = label === "Adapter Busy" ? FG_BLACK : FG_WHITE;
+    parts.push(pill(label, bg, fg));
     return parts.join("");
   }
 

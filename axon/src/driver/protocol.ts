@@ -41,7 +41,9 @@ export type ServoMode = "servo_mode" | "cr_mode" | "unknown";
 export interface IdentifyReply {
   present: boolean;
   rawRx: Buffer;
+  statusHi: number; // rx[1]: 0x01 ok, other values are command/NACK echoes
   statusLo: number; // rx[2]: 0x00 ok, 0xFA no servo, etc.
+  modeByte: number | null; // rx[5] when present
   mode: ServoMode; // from rx[5]: 0x03 → servo_mode, 0x04 → cr_mode
 }
 
@@ -66,7 +68,7 @@ function buildWriteTx(addr: number, data: Uint8Array): Buffer {
   tx[3] = addr & 0xff;
   tx[4] = data.length;
   for (let i = 0; i < data.length; i++) {
-    tx[5 + i] = data[i]!;
+    tx[5 + i] = data[i] ?? 0;
   }
   return tx;
 }
@@ -84,20 +86,46 @@ export async function identify(handle: DongleHandle): Promise<IdentifyReply> {
   const tx = buildTx(CMD_IDENTIFY, 0x00, 0x04);
   await handle.write(tx);
   const rx = await handle.read();
-  // Well-known PRESENT fingerprint: rx[1]=0x01, rx[2]=0x00, rx[5] is
-  // either 0x03 or 0x04 (we've seen 0x03 from the Mini), rx[7]=0x01.
-  const present =
-    rx.length >= 8 &&
-    rx[1] === 0x01 &&
-    rx[2] === 0x00 &&
-    (rx[5] === 0x03 || rx[5] === 0x04) &&
-    rx[7] === 0x01;
-  let mode: ServoMode = "unknown";
-  if (present) {
-    if (rx[5] === 0x03) mode = "servo_mode";
-    else if (rx[5] === 0x04) mode = "cr_mode";
+
+  if (rx.length < 3) {
+    throw AxonError.servoIo(`identify reply is ${rx.length} bytes, need at least 3`);
   }
-  return { present, rawRx: rx, statusLo: rx[2] ?? 0xff, mode };
+  const statusHi = rx[1] ?? 0x00;
+  const statusLo = rx[2] ?? 0xff;
+
+  // rx[2]=0xFA is the canonical "no servo" response. Do not
+  // collapse every malformed reply into this state; callers need to
+  // distinguish an absent servo from transport/protocol weirdness.
+  if (statusLo === 0xfa) {
+    return {
+      present: false,
+      rawRx: rx,
+      statusHi,
+      statusLo,
+      modeByte: null,
+      mode: "unknown",
+    };
+  }
+
+  if (statusHi !== 0x01 || statusLo !== 0x00) {
+    throw AxonError.servoIo(`identify nack: rx[0..15]: ${hexPrefix(rx, 16)}`);
+  }
+  if (rx.length < 6) {
+    throw AxonError.servoIo(`identify success reply is ${rx.length} bytes, need at least 6`);
+  }
+
+  let mode: ServoMode = "unknown";
+  const modeByte = rx[5] ?? null;
+  if (modeByte === 0x03) mode = "servo_mode";
+  else if (modeByte === 0x04) mode = "cr_mode";
+
+  return { present: true, rawRx: rx, statusHi, statusLo, modeByte, mode };
+}
+
+function hexPrefix(buf: Buffer, count: number): string {
+  return Array.from(buf.subarray(0, count))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join(" ");
 }
 
 /**
@@ -124,8 +152,10 @@ export async function readChunk(
     // Distinguish "no servo" from other failures so the user gets a
     // useful recovery hint.
     if (rx[2] === 0xfa) throw AxonError.notPrimed();
+    const statusHi = rx[1] ?? 0;
+    const statusLo = rx[2] ?? 0;
     throw AxonError.servoIo(
-      `read nack: rx[1]=0x${rx[1]!.toString(16).padStart(2, "0")} rx[2]=0x${rx[2]!.toString(16).padStart(2, "0")}`,
+      `read nack: rx[1]=0x${statusHi.toString(16).padStart(2, "0")} rx[2]=0x${statusLo.toString(16).padStart(2, "0")}`,
     );
   }
   return rx.subarray(5, 5 + length);
@@ -165,8 +195,9 @@ export async function writeChunk(
   await sleep(WIRE_REPLY_SETTLE_MS);
   const rx = await handle.read();
   if (rx[1] === 0) {
+    const statusLo = rx[2] ?? 0;
     throw AxonError.servoIo(
-      `write nack: rx[1]=0 (expected non-zero). rx[2]=0x${rx[2]!.toString(16).padStart(2, "0")}`,
+      `write nack: rx[1]=0 (expected non-zero). rx[2]=0x${statusLo.toString(16).padStart(2, "0")}`,
     );
   }
 }

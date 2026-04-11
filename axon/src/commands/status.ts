@@ -10,7 +10,7 @@
  *
  * States this command can report:
  *
- *   no_adapter      — nothing on USB with the right VID/PID
+ *   no_adapter      — nothing visible through this OS's HID layer
  *   adapter_busy    — USB device found but `HID.HID(path)` threw
  *                     (positive observation that the open failed)
  *   adapter_io      — open succeeded but the first HID write/read
@@ -27,7 +27,7 @@
 
 import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
-import { isDonglePresent, openDongle } from "../driver/hid.ts";
+import { listDongles, openDongle } from "../driver/hid.ts";
 import {
   type IdentifyReply,
   identify,
@@ -48,11 +48,12 @@ type StatusCategory =
   | "servo_present";
 
 interface StatusObservation {
-  adapter: "connected" | "disconnected";
+  adapter: "connected" | "disconnected" | "busy";
   servo: "present" | "absent" | "unknown";
   category: StatusCategory;
   hint?: string;
   servo_status_byte?: string;
+  mode_byte?: string;
   mode_label?: string;
   model?: {
     id: string;
@@ -64,13 +65,42 @@ interface StatusObservation {
 }
 
 export async function runStatus(flags: GlobalFlags): Promise<number> {
-  // ---- Phase 0: USB enumeration (cheap, no claim) --------------------------
-  if (!isDonglePresent()) {
+  // ---- Phase 0: HID enumeration (cheap, no claim) --------------------------
+  let dongles: ReturnType<typeof listDongles>;
+  try {
+    dongles = listDongles();
+  } catch (e) {
+    if (e instanceof AxonError) {
+      emit(flags, {
+        adapter: "disconnected",
+        servo: "unknown",
+        category: "adapter_io",
+        hint: e.hint,
+        error: e.message,
+      });
+      return ExitCode.Ok;
+    }
+    throw e;
+  }
+
+  if (dongles.length === 0) {
     emit(flags, {
       adapter: "disconnected",
       servo: "unknown",
       category: "no_adapter",
-      hint: "Plug in the Axon servo programmer adapter.",
+      hint:
+        "Plug in the Axon servo programmer adapter. If it is already plugged in, " +
+        "release it from Parallels/Windows or close any app using it, then retry.",
+    });
+    return ExitCode.Ok;
+  }
+  if (dongles.length > 1) {
+    emit(flags, {
+      adapter: "disconnected",
+      servo: "unknown",
+      category: "no_adapter",
+      hint: "Connect exactly one Axon servo programmer adapter, then retry.",
+      error: `Found ${dongles.length} Axon adapters on HID — expected exactly 1.`,
     });
     return ExitCode.Ok;
   }
@@ -78,7 +108,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
   // ---- Phase 1: open and claim the HID handle -------------------------------
   let handle: DongleHandle;
   try {
-    handle = await openDongle();
+    handle = await openDongle(dongles[0]);
   } catch (e) {
     // openDongle throws AxonError with a specific category
     // ("adapter_busy" if something else claimed the device, "no_adapter"
@@ -86,7 +116,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
     if (e instanceof AxonError) {
       const cat = e.category;
       emit(flags, {
-        adapter: "disconnected",
+        adapter: cat === "adapter_busy" ? "busy" : "disconnected",
         servo: "unknown",
         category: (cat === "adapter_busy" ? "adapter_busy" : "no_adapter") as StatusCategory,
         hint: e.hint,
@@ -169,6 +199,8 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
       adapter: "connected",
       servo: "present",
       category: model ? "servo_present" : "unknown_model",
+      mode_byte:
+        id.modeByte === null ? undefined : `0x${id.modeByte.toString(16).padStart(2, "0")}`,
       mode_label: modeLabel ?? undefined,
       hint: model
         ? undefined
@@ -191,7 +223,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
 
 function emit(flags: GlobalFlags, result: StatusObservation): void {
   if (flags.json) {
-    process.stdout.write(JSON.stringify(result) + "\n");
+    process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
   if (flags.quiet) {
@@ -206,11 +238,12 @@ function emit(flags: GlobalFlags, result: StatusObservation): void {
   }
   // Pretty TUI output: colored status bar
   process.stdout.write(
-    renderStatusBar({
+    `${renderStatusBar({
       adapter: result.adapter === "connected",
+      adapterLabel: result.adapter === "busy" ? "Adapter Busy" : null,
       servoName: result.model?.name ?? (result.servo === "present" ? "servo" : null),
       modeName: result.mode_label ?? null,
-    }) + "\n",
+    })}\n`,
   );
   if (result.model?.docs_url) {
     process.stdout.write(`docs: ${result.model.docs_url}\n`);

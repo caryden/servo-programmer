@@ -158,12 +158,12 @@ export async function runSetWithHandle(
         const currentText = formatForDiff(spec, current.physical);
         if (global.json) {
           process.stdout.write(
-            JSON.stringify({
+            `${JSON.stringify({
               changed: false,
               reason: "no_default",
               param: paramName,
               current: currentText,
-            }) + "\n",
+            })}\n`,
           );
         } else if (!global.quiet) {
           process.stderr.write(
@@ -198,7 +198,7 @@ export async function runSetWithHandle(
   // 3. diff. If empty, exit cleanly.
   if (bufsEqual(currentConfig, newConfig)) {
     if (global.json) {
-      process.stdout.write(JSON.stringify({ changed: false }) + "\n");
+      process.stdout.write(`${JSON.stringify({ changed: false })}\n`);
     } else if (!global.quiet) {
       process.stderr.write("No change — value already set.\n");
     }
@@ -241,14 +241,14 @@ export async function runSetWithHandle(
 
   if (global.json) {
     process.stdout.write(
-      JSON.stringify({
+      `${JSON.stringify({
         changed: true,
         changes: changes.map((c) => ({
           name: c.name,
           before: c.beforeText,
           after: c.afterText,
         })),
-      }) + "\n",
+      })}\n`,
     );
   } else if (!global.quiet) {
     process.stderr.write(`Wrote ${changes.length} change(s), verified.\n`);
@@ -297,14 +297,14 @@ function showNamedDiff(changes: ParamChange[], global: GlobalFlags): void {
     // callers that are piping stdout still see the diff, but machine
     // parsers don't have to deal with it.
     process.stderr.write(
-      JSON.stringify({
+      `${JSON.stringify({
         preview: changes.map((c) => ({
           name: c.name,
           vendor_label: c.vendorLabel,
           before: c.beforeText,
           after: c.afterText,
         })),
-      }) + "\n",
+      })}\n`,
     );
     return;
   }

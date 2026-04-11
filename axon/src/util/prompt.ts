@@ -19,7 +19,7 @@ export async function confirm(question: string): Promise<boolean> {
     chunks.push(chunk as Uint8Array);
     const combined = Buffer.concat(chunks).toString("utf8");
     if (combined.includes("\n")) {
-      const answer = combined.split("\n")[0]!.trim().toLowerCase();
+      const answer = (combined.split("\n")[0] ?? "").trim().toLowerCase();
       return answer === "y" || answer === "yes";
     }
   }

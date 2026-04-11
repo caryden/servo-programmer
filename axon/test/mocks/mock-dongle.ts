@@ -127,22 +127,23 @@ export class MockDongle implements DongleHandle {
     this.txHistory.push(recorded);
 
     if (recorded[0] !== REPORT_ID) {
+      const reportId = recorded[0] ?? 0;
       return Promise.reject(
         new Error(
-          `mock-dongle: expected tx[0]=0x04 (report id), got 0x${recorded[0]!
+          `mock-dongle: expected tx[0]=0x04 (report id), got 0x${reportId
             .toString(16)
             .padStart(2, "0")}`,
         ),
       );
     }
 
-    const cmd = recorded[1]!;
+    const cmd = recorded[1] ?? 0;
     // Address is 16-bit (hi at tx[2], lo at tx[3]); the real dongle
     // drops the high byte before forwarding to the wire, but we
     // honor it here so off-by-one bugs that set the wrong byte
     // still show up as a wrong address.
-    const addr = ((recorded[2]! << 8) | recorded[3]!) & 0xffff;
-    const length = recorded[4]!;
+    const addr = (((recorded[2] ?? 0) << 8) | (recorded[3] ?? 0)) & 0xffff;
+    const length = recorded[4] ?? 0;
 
     switch (cmd) {
       case CMD_IDENTIFY:

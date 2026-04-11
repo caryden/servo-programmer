@@ -22,28 +22,26 @@
  *
  * State machine (per firmware_handler.c):
  *
- *   1. (optional) write 0x90 with param[2]=0  -- "enter flash mode"
- *      lock (only sent when vendor recognizes certain HID product
- *      names; we always send it to be safe).
+ *   1. (vendor optional) write 0x90 with param[2]=0 -- "enter flash
+ *      mode" lock. The CLI intentionally omits this command because
+ *      hardware testing showed it can leave the dongle wedged until
+ *      physically replugged.
  *   2. write 0x80  payload = { 0x01, 0x02, 0x03, 0x04 }
  *      read reply (6 bytes); reply[0] must be 0x56 ('V'). reply[1,3]
- *      encode the boot version (`V0x2y`); we treat anything other
- *      than `V02` as too-old and refuse to flash.
- *   3. write 0x83  payload = { 0xFF, 0x55, 0xAA, <19 random bytes> }
- *      read 1 byte (discarded) -- "cancel any previous flash".
- *   4. decrypt .sfw -> plaintext (see `sfw.ts`).
- *   5. generate 22 random bytes `challenge[0..21]`.
+ *      encode the boot version (`V0x2y`); we reject `V02` as too old.
+ *   3. decrypt .sfw -> plaintext (see `sfw.ts`).
+ *   4. generate 22 random bytes `challenge[0..21]`.
  *      write 0x81  payload = challenge.
  *      read 22 bytes `response`.
  *      compute `key[i] = challenge[i] ^ response[i]` for i=0..21.
  *      This XOR key is mixed into every subsequent 0x82 payload.
- *   6. verify `sfw.header.typeBytes` match the identify reply bytes
- *      (rx[4],rx[5] of the identify response — `abStack_1b4[4,5]`).
+ *   5. verify `sfw.header.typeBytes` match the boot-query reply bytes
+ *      (reply[4],reply[5]).
  *      The vendor exe shows "Error 1030" if they don't match.
- *   7. verify `sfw.header.modelId` equals the servo's current model id
+ *   6. verify `sfw.header.modelId` equals the servo's current model id
  *      (from the `@0801SA33` line vs the config-block model id). The
  *      vendor exe shows "Error 1031" if they don't match.
- *   8. for each sector-erase line in order:
+ *   7. for each sector-erase line in order:
  *        buf[0] = 0x0A
  *        buf[1] = sector.bytes[0]
  *        buf[2] = sector.bytes[1]
@@ -51,7 +49,7 @@
  *        buf[i] ^= key[i] for i in 0..21
  *        write 0x82 + 22-byte buf
  *        read 1 byte; must equal 0x55 or the erase failed.
- *   9. for each Intel HEX record in order:
+ *   8. for each Intel HEX record in order:
  *        buf[0] = 0x3A                    (the `:` char)
  *        buf[1] = record.count
  *        buf[2] = (record.address >> 8) & 0xff
@@ -65,12 +63,12 @@
  *        buf[i] ^= key[i] for i in 0..21
  *        write 0x82 + 22-byte buf
  *        read 1 byte; must equal `expectedReply`.
- *  10. after the `:00000001FF` EOF record has been sent successfully:
+ *   9. after the `:00000001FF` EOF record has been sent successfully:
  *        write 0x83 payload = { 0xFF, 0x55, 0xAA, <19 bytes> } again
  *        read 1 byte (discarded) -- "flash complete; re-enter normal
  *        operation".
- *  11. (optional) write 0x90 with param[2]=1 -- "exit flash mode"
- *        (the mirror of step 1; only when vendor code path is active).
+ *  10. (vendor optional) write 0x90 with param[2]=1 -- "exit flash
+ *        mode". The CLI omits this for the same reason as step 1.
  *
  * Chunk transfer rate: the parameter-write helper at FUN_00404900
  * caps chunks at 59 bytes with a 25 ms inter-chunk sleep. The flash
@@ -88,9 +86,7 @@ import type { DongleHandle } from "./transport.ts";
 
 // ---- flash command bytes --------------------------------------------------
 
-/** "Enter/exit flash mode" — only sent when the dongle's HID product
- * name matches the vendor's hard-coded whitelist. We always send it
- * defensively; the dongle ignores it in the non-whitelist path. */
+/** "Enter/exit flash mode" — documented for the vendor path but not sent by the CLI. */
 export const CMD_MODE_LOCK = 0x90;
 /** Query bootloader version. */
 export const CMD_BOOT_QUERY = 0x80;
@@ -109,6 +105,8 @@ export const DATA_PREFIX_HEX_RECORD = 0x3a;
 
 /** Size of every 0x82 payload (and the 0x81 challenge). */
 export const FLASH_PAYLOAD_SIZE = 22; // 0x16
+/** Max Intel HEX data bytes that fit in one 0x82 payload. */
+export const MAX_HEX_RECORD_DATA_BYTES = FLASH_PAYLOAD_SIZE - 6;
 
 /** Inter-command sleep. Matches Sleep(0x19) = 25 ms in the decomp. */
 export const FLASH_CMD_SLEEP_MS = 25;
@@ -167,7 +165,7 @@ export function buildFlashTx(cmd: number, payload: Uint8Array): Buffer {
   tx[1] = cmd;
   tx[2] = payload.length;
   for (let i = 0; i < payload.length; i++) {
-    tx[3 + i] = payload[i]!;
+    tx[3 + i] = payload[i] ?? 0;
   }
   return tx;
 }
@@ -244,7 +242,7 @@ function xorInPlace(buf: Buffer, key: Uint8Array): void {
   if (buf.length !== key.length) {
     throw new Error(`flash: xor buffer/key length mismatch (${buf.length} vs ${key.length})`);
   }
-  for (let i = 0; i < buf.length; i++) buf[i] = buf[i]! ^ key[i]!;
+  for (let i = 0; i < buf.length; i++) buf[i] = (buf[i] ?? 0) ^ (key[i] ?? 0);
 }
 
 // ---- the three payload shapes ---------------------------------------------
@@ -253,8 +251,8 @@ function xorInPlace(buf: Buffer, key: Uint8Array): void {
 export function buildSectorEraseBuf(sectorBytes: [number, number]): Buffer {
   const buf = Buffer.alloc(FLASH_PAYLOAD_SIZE);
   buf[0] = DATA_PREFIX_SECTOR_ERASE;
-  buf[1] = sectorBytes[0]! & 0xff;
-  buf[2] = sectorBytes[1]! & 0xff;
+  buf[1] = sectorBytes[0] & 0xff;
+  buf[2] = sectorBytes[1] & 0xff;
   fillRandom(buf, 3);
   return buf;
 }
@@ -276,8 +274,8 @@ export function buildHexRecordBuf(record: IntelHexRecord): {
   // including the prefix, so count + 5 + 1 <= 22 → count <= 16.
   const total = record.count + 5 + 1; // +1 for the ':' prefix byte
   if (total > FLASH_PAYLOAD_SIZE) {
-    throw new Error(
-      `flash: hex record has count=${record.count} (total ${total}) exceeds ${FLASH_PAYLOAD_SIZE}-byte payload`,
+    throw AxonError.validation(
+      `flash: hex record has count=${record.count}, max is ${MAX_HEX_RECORD_DATA_BYTES} bytes`,
     );
   }
   const buf = Buffer.alloc(FLASH_PAYLOAD_SIZE);
@@ -287,7 +285,7 @@ export function buildHexRecordBuf(record: IntelHexRecord): {
   buf[3] = record.address & 0xff;
   buf[4] = record.type & 0xff;
   for (let i = 0; i < record.count; i++) {
-    buf[5 + i] = record.data[i]!;
+    buf[5 + i] = record.data[i] ?? 0;
   }
   buf[5 + record.count] = record.checksum & 0xff;
   fillRandom(buf, 5 + record.count + 1);
@@ -320,6 +318,59 @@ export interface FlashOptions {
 }
 
 /**
+ * Validate everything about the decrypted firmware that can be known
+ * before the first HID write. This keeps malformed custom .sfw files
+ * from failing after sector erases or partial record writes.
+ */
+export function validateFlashFirmware(firmware: DecryptedSfw): void {
+  if (firmware.header.modelId.trim().length === 0) {
+    throw AxonError.validation("flash: firmware header has an empty model id.");
+  }
+  if (firmware.sectorErases.length === 0) {
+    throw AxonError.validation("flash: firmware contains no sector-erase records.");
+  }
+  if (firmware.hexRecords.length === 0) {
+    throw AxonError.validation("flash: firmware contains no Intel HEX records.");
+  }
+
+  let eofCount = 0;
+  for (const [index, rec] of firmware.hexRecords.entries()) {
+    if (rec.count !== rec.data.length) {
+      throw AxonError.validation(
+        `flash: hex record addr=0x${rec.address.toString(16).padStart(4, "0")} ` +
+          `declares count=${rec.count} but has ${rec.data.length} data bytes`,
+      );
+    }
+    if (rec.type !== 0x00 && rec.type !== 0x01) {
+      throw AxonError.validation(
+        `flash: hex record addr=0x${rec.address.toString(16).padStart(4, "0")} ` +
+          `has unsupported type=0x${rec.type.toString(16).padStart(2, "0")}`,
+      );
+    }
+    if (rec.count > MAX_HEX_RECORD_DATA_BYTES) {
+      throw AxonError.validation(
+        `flash: hex record addr=0x${rec.address.toString(16).padStart(4, "0")} ` +
+          `has count=${rec.count}, max is ${MAX_HEX_RECORD_DATA_BYTES} bytes`,
+      );
+    }
+    if (rec.type === 0x01) {
+      eofCount += 1;
+      if (index !== firmware.hexRecords.length - 1) {
+        throw AxonError.validation(
+          "flash: firmware Intel HEX EOF record must be the final record.",
+        );
+      }
+    }
+  }
+
+  if (eofCount !== 1) {
+    throw AxonError.validation(
+      `flash: firmware Intel HEX stream must contain exactly one EOF record; found ${eofCount}.`,
+    );
+  }
+}
+
+/**
  * Flash the given decrypted firmware to the dongle/servo. The
  * happy-path return is `void`; on any failure an `AxonError` is
  * thrown describing the phase that failed. Progress events are
@@ -337,6 +388,7 @@ export async function flashFirmware(
   options: FlashOptions = {},
 ): Promise<void> {
   const progress = options.onProgress ?? (() => {});
+  validateFlashFirmware(firmware);
 
   // Phase 1: model-id pre-check. Purely a client-side sanity check;
   // the dongle's own check happens in phase 6.
@@ -397,8 +449,9 @@ export async function flashFirmware(
   }
   const bootReply = parseFlashRx(bootRx, 6);
   if (bootReply[0] !== 0x56) {
+    const replyByte = bootReply[0] ?? 0;
     throw AxonError.servoIo(
-      `flash: boot query reply[0]=0x${bootReply[0]!.toString(16)} (expected 0x56 'V')`,
+      `flash: boot query reply[0]=0x${replyByte.toString(16)} (expected 0x56 'V')`,
     );
   }
   // The vendor exe refuses when (reply[3]=='2' && reply[1]=='0'): ASCII
@@ -417,8 +470,8 @@ export async function flashFirmware(
   // 1030 Firmware is incorrect" guard at lines 403-404, and it's the
   // ONLY wire-level "is this firmware for this servo family" check.
   const [fa, fb] = firmware.header.typeBytes;
-  const ra = bootReply[4]!;
-  const rb = bootReply[5]!;
+  const ra = bootReply[4] ?? 0;
+  const rb = bootReply[5] ?? 0;
   if (!options.skipTypeCheck && (fa !== ra || fb !== rb)) {
     throw AxonError.validation(
       `flash: firmware type bytes are [0x${fa.toString(16).padStart(2, "0")}, ` +
@@ -441,7 +494,7 @@ export async function flashFirmware(
   const response = await exchange(handle, CMD_KEY_EXCHANGE, challenge, FLASH_PAYLOAD_SIZE, sleepMs);
   const key = Buffer.alloc(FLASH_PAYLOAD_SIZE);
   for (let i = 0; i < FLASH_PAYLOAD_SIZE; i++) {
-    key[i] = challenge[i]! ^ response[i]!;
+    key[i] = (challenge[i] ?? 0) ^ (response[i] ?? 0);
   }
 
   progress({ phase: "verify_model", message: "Verifying firmware matches servo..." });
@@ -463,8 +516,9 @@ export async function flashFirmware(
     xorInPlace(buf, key);
     const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs);
     if (reply[0] !== 0x55) {
+      const replyByte = reply[0] ?? 0;
       throw AxonError.servoIo(
-        `flash: sector erase $${sector.raw} failed: reply byte 0x${reply[0]!.toString(16)} (expected 0x55)`,
+        `flash: sector erase $${sector.raw} failed: reply byte 0x${replyByte.toString(16)} (expected 0x55)`,
       );
     }
     doneRecords += 1;
@@ -488,10 +542,11 @@ export async function flashFirmware(
     // the HID reply we read back is from the rebooted firmware, not
     // a flash acknowledgment. Don't verify the reply for EOF.
     if (rec.type !== 0x01 && reply[0] !== expectedReply) {
+      const replyByte = reply[0] ?? 0;
       throw AxonError.servoIo(
         `flash: hex record addr=0x${rec.address.toString(16).padStart(4, "0")} ` +
           `type=0x${rec.type.toString(16).padStart(2, "0")} write failed: ` +
-          `reply 0x${reply[0]!.toString(16)} != expected 0x${expectedReply.toString(16)}`,
+          `reply 0x${replyByte.toString(16)} != expected 0x${expectedReply.toString(16)}`,
       );
     }
     doneRecords += 1;

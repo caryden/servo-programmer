@@ -39,10 +39,12 @@ Shipping in v1.0:
 - **Named parameters with unit conversion** — `axon get <param>` and
   `axon set <param> <value>` accept degrees, microseconds, percent, or
   raw, and validate against per-model limits. `axon set default`
-  resets to bundled defaults.
+  resets to catalog defaults.
 - **Firmware mode flashing** — `axon mode set standard`,
   `axon mode set continuous`, or `axon mode set --file custom.sfw`.
-  `.sfw` files are decrypted internally; you never see the AES layer.
+  Vendor `.sfw` files stay external; `axon` finds them in configured
+  search paths, verifies their SHA-256 when known, and decrypts them
+  internally.
 - **`--json` everywhere** — every command has a machine-readable mode
   for scripting and [coding-agent use](#using-this-with-a-coding-agent).
 - **Cross-platform, no sudo** — Mac (Intel + Apple Silicon), Linux
@@ -85,8 +87,8 @@ No `sudo` required on any platform.
 | Model ID   | Name       | Status |
 |------------|------------|--------|
 | `SA33****` | Axon Mini  | Confirmed working — full parameter defaults in the catalog |
-| *unknown*  | Axon Max   | Firmware bundled (SHA-256 recorded); model ID and defaults pending a physical read |
-| *unknown*  | Axon Micro | Firmware bundled (SHA-256 recorded); model ID and defaults pending a physical read |
+| *unknown*  | Axon Max   | Firmware files known (SHA-256 recorded); model ID and defaults pending a physical read |
+| *unknown*  | Axon Micro | Firmware files known (SHA-256 recorded); model ID and defaults pending a physical read |
 
 **Got a Max or Micro?** Please help fill out the catalog. Plug it in,
 run `bun run src/cli.ts read --svo > my-model.svo`, and
@@ -122,7 +124,8 @@ The path:
    hidapi, which is simpler, has no sudo requirements, and worked on
    the first try.
 5. **A clean v1.0 CLI** on Bun + node-hid, with the catalog embedded
-   at build time and `.sfw` files decrypted internally.
+   at build time and externally supplied `.sfw` files decrypted
+   internally.
 
 Most of the hands-on work — Ghidra scripting, protocol decoding,
 TypeScript scaffolding, tests — was driven by the agent. The full

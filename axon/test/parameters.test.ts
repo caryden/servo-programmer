@@ -17,12 +17,25 @@ import {
   isParameterNotYetMapped,
   listParameters,
   notYetMappedReason,
+  type ParameterSpec,
 } from "../src/parameters.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dirname, "fixtures/dual_test7_config.svo");
 const FIXTURE = () => Buffer.from(readFileSync(FIXTURE_PATH));
 const MODEL_ID = "SA33****";
+
+function mustFindParameter(name: string): ParameterSpec {
+  const spec = findParameter(name);
+  if (spec === undefined) {
+    throw new Error(`expected parameter ${name}`);
+  }
+  return spec;
+}
+
+function byteAt(bytes: Uint8Array, index: number): number {
+  return bytes[index] ?? 0;
+}
 
 describe("parameters registry", () => {
   test("listParameters returns the v1.0 core set", () => {
@@ -85,7 +98,7 @@ describe("isParameterNotYetMapped", () => {
 });
 
 describe("servo_angle parameter", () => {
-  const spec = findParameter("servo_angle")!;
+  const spec = mustFindParameter("servo_angle");
 
   test("reads the fixture as raw 130 (byte 0x04 = 0x82)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
@@ -128,7 +141,7 @@ describe("servo_angle parameter", () => {
 });
 
 describe("servo_neutral parameter", () => {
-  const spec = findParameter("servo_neutral")!;
+  const spec = mustFindParameter("servo_neutral");
 
   test("reads the fixture as 0 µs (raw 0x80)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
@@ -160,7 +173,7 @@ describe("servo_neutral parameter", () => {
 });
 
 describe("sensitivity parameter", () => {
-  const spec = findParameter("sensitivity")!;
+  const spec = mustFindParameter("sensitivity");
 
   test("reads the fixture as step 0 (raw 0x10)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
@@ -189,7 +202,7 @@ describe("sensitivity parameter", () => {
 });
 
 describe("inversion parameter", () => {
-  const spec = findParameter("inversion")!;
+  const spec = mustFindParameter("inversion");
 
   test("reads the fixture — bit 0x02 of 0x25 (fixture=0xE3) is set → 'reversed'", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
@@ -207,18 +220,18 @@ describe("inversion parameter", () => {
 
   test("write clears and sets bit 0x02 without touching other bits", () => {
     const cfg = FIXTURE();
-    const beforeOther = cfg[0x25]! & ~0x02;
+    const beforeOther = byteAt(cfg, 0x25) & ~0x02;
     const normal = spec.write(cfg, "normal", MODEL_ID);
-    expect(normal[0x25]! & 0x02).toBe(0);
-    expect(normal[0x25]! & ~0x02).toBe(beforeOther);
+    expect(byteAt(normal, 0x25) & 0x02).toBe(0);
+    expect(byteAt(normal, 0x25) & ~0x02).toBe(beforeOther);
     const reversed = spec.write(normal, "reversed", MODEL_ID);
-    expect(reversed[0x25]! & 0x02).toBe(0x02);
-    expect(reversed[0x25]! & ~0x02).toBe(beforeOther);
+    expect(byteAt(reversed, 0x25) & 0x02).toBe(0x02);
+    expect(byteAt(reversed, 0x25) & ~0x02).toBe(beforeOther);
   });
 });
 
 describe("loose_pwm_protection parameter", () => {
-  const spec = findParameter("loose_pwm_protection")!;
+  const spec = mustFindParameter("loose_pwm_protection");
 
   test("read returns the enum mode from the fixture (neutral)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);
@@ -236,16 +249,16 @@ describe("loose_pwm_protection parameter", () => {
   test("write sets correct bits for each mode", () => {
     const cfg = FIXTURE();
     const release = spec.write(cfg, "release", MODEL_ID);
-    expect(release[0x25]! & 0x60).toBe(0x00);
+    expect(byteAt(release, 0x25) & 0x60).toBe(0x00);
     const hold = spec.write(cfg, "hold", MODEL_ID);
-    expect(hold[0x25]! & 0x60).toBe(0x40);
+    expect(byteAt(hold, 0x25) & 0x60).toBe(0x40);
     const neutral = spec.write(cfg, "neutral", MODEL_ID);
-    expect(neutral[0x25]! & 0x60).toBe(0x60);
+    expect(byteAt(neutral, 0x25) & 0x60).toBe(0x60);
   });
 });
 
 describe("pwm_power parameter", () => {
-  const spec = findParameter("pwm_power")!;
+  const spec = mustFindParameter("pwm_power");
 
   test("reads the fixture as ~86% (raw 0xDC)", () => {
     const v = spec.read(FIXTURE(), MODEL_ID);

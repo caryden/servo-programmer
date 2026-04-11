@@ -1,8 +1,10 @@
 # research/saleae-captures/
 
 Wire captures from a Saleae Logic 8 on the Axon servo signal line. The
-9600 baud Async Serial analyzer in Logic 2 decodes the bytes; we then
-export each capture's analyzer table as CSV and parse it back with
+normal config/read/write protocol decodes with a 9600 baud Async Serial
+analyzer in Logic 2; the firmware bootloader flash path decodes at
+115200 baud. For runtime captures, we export the analyzer table as CSV
+and parse it back with
 [`../static-analysis/decode_saleae_csv.py`](../static-analysis/decode_saleae_csv.py),
 which reconstructs the `FF FF | ID | LEN | INSTR/ERR | PARAMS | CHKSUM`
 frames and validates the bitwise-NOT checksums.
@@ -14,6 +16,7 @@ frames and validates the bitwise-NOT checksums.
 | `0xcd-data.csv` | The vendor exe's "Read" button click — three identify keepalives followed by two `0xCD` read frames `(addr=0x00, len=0x3B)` and `(addr=0x3B, len=0x24)`, with the corresponding 65-byte and 42-byte servo replies | Decoded the read flow and the chunked 59 + 36 = 95-byte transfer pattern. First definitive proof of the wire-side framing. |
 | `0xcb-data.csv` | The vendor exe's "Write" button click — first the read pair from above, then two `0xCB` write frames carrying 59 and 36 bytes back to the servo | Decoded the write flow. Confirmed writes are fire-and-forget on the wire (no servo ACK). Showed the exe does a read-then-write cycle even when the user only clicks Write. |
 | `dual_test7_623.csv` | The dual-capture experiment from `axon_libusb_test7.py` — Python drove libusb while Saleae recorded the wire, capturing identify-x3 + read-chunk0 + read-chunk1 + identify-x2 | Proved end-to-end that our libusb `0xCD` reaches the wire as the exact same byte sequence the vendor exe emits, AND that the HID reply contains the raw wire data verbatim at `rx[5..]`. The "click" capture. |
+| [`axon-recover-micro-2026-04-11-summary.md`](axon-recover-micro-2026-04-11-summary.md) plus `.sal`, `*-async-115200.csv`, `*-async.csv`, and raw D0 CSV | A real `axon mode set servo --recover micro --yes` flash of an Axon Micro with `Axon Micro Servo Mode.sfw` | Confirmed recovery flash skips normal identity/config reads, enters the bootloader path, and uses 115200 8N1 on the servo signal wire. Boot query `01 02 03 04` replied `56 30 2E 33 08 01` (`V0.3`, type bytes `08 01`). After EOF/reboot, the servo returned to normal 9600 identify traffic and mode byte `0x03`. |
 | `digital.csv` | Raw digital edges from Channel 0 (the signal wire) for one of the captures | Useful only as a sanity check that the analyzer settings (9600 baud, 8N1, non-inverted) are right. The decoded CSVs above contain everything actionable. |
 | `dual_capture_read_probe_20260409_180018.csv` + `.sal` | A small auxiliary capture from an earlier dual-capture attempt | Kept for completeness, not load-bearing. |
 | `Session 0.sal` (gitignored) | The 160 MB binary Saleae session file containing all the raw samples for the captures above | Too large for GitHub. If you need to re-run the analyzer with different settings, re-capture from hardware. The Async Serial CSV exports here contain everything we used. |
@@ -39,9 +42,13 @@ t= +3.639274s  len= 65  ff ff 01 3d 00 3b d0 0b f6 82 82 80 ...
 ## Capturing your own
 
 1. Connect the Saleae probe to the servo signal wire (Channel 0)
-2. Open Logic 2, set sample rate to 4 MS/s
-3. Add an Async Serial analyzer on Channel 0 with: 9600 baud, 8 bits, 1 stop bit, no parity, LSB-first, non-inverted
-4. Click capture, run your experiment, click stop
-5. Export the analyzer table as CSV (gear icon next to "Async Serial" → Export Table)
-6. Save to `research/saleae-captures/<your-capture>.csv`
-7. Decode with `decode_saleae_csv.py` as above
+2. Open Logic 2, set sample rate to 4 MS/s or higher
+3. For runtime config/read/write captures, add an Async Serial analyzer
+   on Channel 0 with: 9600 baud, 8 bits, 1 stop bit, no parity,
+   LSB-first, non-inverted
+4. For firmware recovery/flash captures, add a second Async Serial
+   analyzer on Channel 0 at 115200 baud with the same 8N1 settings
+5. Click capture, run your experiment, click stop
+6. Export the analyzer table as CSV (gear icon next to "Async Serial" → Export Table)
+7. Save to `research/saleae-captures/<your-capture>.csv`
+8. Decode runtime frames with `decode_saleae_csv.py` as above

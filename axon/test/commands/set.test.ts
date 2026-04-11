@@ -52,6 +52,18 @@ function captureIO(): CapturedIO {
 const GLOBALS = { json: false, quiet: false, yes: true };
 const GLOBALS_JSON = { json: true, quiet: false, yes: true };
 
+function byteAt(bytes: Uint8Array, index: number): number {
+  return bytes[index] ?? 0;
+}
+
+function expectAxonError(error: AxonError | undefined): AxonError {
+  expect(error).toBeInstanceOf(AxonError);
+  if (!(error instanceof AxonError)) {
+    throw new Error("expected AxonError");
+  }
+  return error;
+}
+
 function crModeHandle(inner: MockDongle): DongleHandle {
   return {
     async write(data, timeoutMs) {
@@ -128,13 +140,13 @@ describe("axon set (happy path)", () => {
   test("set inversion normal clears bit 0x02 at 0x25", async () => {
     const mock = new MockDongle();
     // Fixture has the bit SET (inversion=reversed). Set it to normal.
-    expect(mock.config[0x25]! & 0x02).toBe(0x02);
+    expect(byteAt(mock.config, 0x25) & 0x02).toBe(0x02);
     const code = await runSetWithHandle(mock, GLOBALS, {
       positional: ["inversion", "normal"],
       dryRun: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(mock.config[0x25]! & 0x02).toBe(0);
+    expect(byteAt(mock.config, 0x25) & 0x02).toBe(0);
   });
 
   test("set sensitivity 7 writes raw 0x80", async () => {
@@ -229,7 +241,7 @@ describe("axon set (default restoration)", () => {
     // servo_angle back to ~80 (raw)
     expect(mock.config[0x0b]).toBe(80);
     // pwm_power back to ~86% → raw 0xDC (219 or 220 depending on rounding)
-    expect(Math.abs(mock.config[0x11]! - 219)).toBeLessThanOrEqual(1);
+    expect(Math.abs(byteAt(mock.config, 0x11) - 219)).toBeLessThanOrEqual(1);
   });
 
   test("set <param> default with no catalog default leaves value unchanged", async () => {
@@ -271,7 +283,7 @@ describe("axon set (default restoration)", () => {
       dryRun: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    const line = io.stdout.trim().split("\n").pop()!;
+    const line = io.stdout.trim().split("\n").pop() ?? "";
     const parsed = JSON.parse(line);
     expect(parsed.changed).toBe(false);
     expect(parsed.reason).toBe("no_default");
@@ -332,9 +344,9 @@ describe("axon set (error paths)", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("not available");
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.ValidationError);
+    expect(error.message).toContain("not available");
   });
 
   test("set loose_pwm_protection release writes the correct bits", async () => {
@@ -345,7 +357,7 @@ describe("axon set (error paths)", () => {
       dryRun: false,
     });
     expect(code).toBe(ExitCode.Ok);
-    expect(mock.config[0x25]! & 0x60).toBe(0x00);
+    expect(byteAt(mock.config, 0x25) & 0x60).toBe(0x00);
   });
 
   test("set dampening_factor 5 writes to all four mirror offsets", async () => {
@@ -377,8 +389,8 @@ describe("axon set (error paths)", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.UsageError);
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.UsageError);
   });
 
   test("set servo_angle 400 is rejected as out-of-range", async () => {
@@ -392,9 +404,9 @@ describe("axon set (error paths)", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("out of range");
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.ValidationError);
+    expect(error.message).toContain("out of range");
   });
 
   test("set with no positional args is a usage error", async () => {
@@ -408,7 +420,7 @@ describe("axon set (error paths)", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.UsageError);
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.UsageError);
   });
 });

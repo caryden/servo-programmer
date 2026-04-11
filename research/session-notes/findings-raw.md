@@ -1166,3 +1166,61 @@ independent confirmation that:
 - the byte at offset `0x0C` is a *settable parameter* (not a
   live telemetry reading), since it survived a write and the
   subsequent read returned the new value.
+
+---
+
+## Firmware recovery flash wire capture (2026-04-11)
+
+Captured a real CLI recovery flash against an Axon Micro:
+
+```bash
+cd /Users/caryden/github/servo-programmer/axon
+bun run src/cli.ts mode set servo --recover micro --yes
+```
+
+Artifacts:
+
+- Summary:
+  `research/saleae-captures/axon-recover-micro-2026-04-11-summary.md`
+- Logic2 capture:
+  `research/saleae-captures/axon-recover-micro-2026-04-11.sal`
+- Clean flash decode:
+  `research/saleae-captures/axon-recover-micro-2026-04-11-async-115200.csv`
+- Post-reboot 9600 decode:
+  `research/saleae-captures/axon-recover-micro-2026-04-11-async.csv`
+- Raw D0 transitions:
+  `research/saleae-captures/axon-recover-micro-2026-04-11-raw/digital.csv`
+
+Key result: the firmware bootloader / recovery path is **115200 baud,
+8N1, non-inverted** on the servo signal wire. It is not the normal
+9600-baud `FF FF ... CHKSUM` runtime protocol.
+
+Initial bootloader exchange:
+
+```text
+host:  01 02 03 04
+servo: 56 30 2E 33 08 01
+```
+
+`56 30 2E 33` is ASCII `V0.3`; `08 01` are the bootloader type bytes
+that match the `.sfw` header `@0801...`.
+
+Observed successful flash outline:
+
+- 22-byte `0x81` key-exchange TX and 22-byte RX.
+- 13 encrypted sector-erase payloads, each ACKed with `55`.
+- 398 encrypted Intel HEX payloads, including EOF.
+- After EOF/reboot, the next clean wire exchange is back at 9600 baud:
+
+```text
+host:  FF FF 01 04 8A 00 04 6C
+servo: FF FF 01 06 00 03 21 01 08 CB
+```
+
+The post-flash reply has mode byte `0x03`, confirming Servo Mode.
+
+This validates the `axon mode set --recover` model: skip normal
+identify/config reads, rely on the `.sfw` header plus bootloader
+type-byte check, then flash through the protected bootloader. A future
+vendor-app recovery capture from a genuinely failed servo should be
+compared against this trace.
