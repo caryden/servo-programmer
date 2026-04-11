@@ -1,29 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { main, parseArgs } from "../src/cli.ts";
 import { ExitCode } from "../src/errors.ts";
-
-interface CapturedIO {
-  stderr: string;
-  restore: () => void;
-}
-
-function captureStderr(): CapturedIO {
-  const chunks: Uint8Array[] = [];
-  const origErr = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error override
-  process.stderr.write = (chunk: string | Uint8Array): boolean => {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    return true;
-  };
-  return {
-    get stderr() {
-      return Buffer.concat(chunks).toString("utf8");
-    },
-    restore() {
-      process.stderr.write = origErr;
-    },
-  };
-}
+import { captureIO } from "./helpers/capture-io.ts";
 
 describe("parseArgs", () => {
   test("keeps negative numeric values as positional arguments", () => {
@@ -45,7 +23,7 @@ describe("parseArgs", () => {
 
 describe("main error envelope", () => {
   test("--json AxonError output includes category", async () => {
-    const cap = captureStderr();
+    const cap = captureIO();
     let code: number;
     try {
       code = await main(["--json", "write"]);

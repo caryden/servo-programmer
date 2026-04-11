@@ -4,32 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWriteWithHandle } from "../../src/commands/write.ts";
 import { AxonError, ExitCode } from "../../src/errors.ts";
+import { captureIO } from "../helpers/capture-io.ts";
 import { MockDongle } from "../mocks/mock-dongle.ts";
 
 const GLOBALS = { json: false, quiet: false, yes: true };
-
-interface CapturedIO {
-  stderr: string;
-  restore: () => void;
-}
-
-function captureStderr(): CapturedIO {
-  const chunks: Uint8Array[] = [];
-  const origErr = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error override
-  process.stderr.write = (chunk: string | Uint8Array): boolean => {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    return true;
-  };
-  return {
-    get stderr() {
-      return Buffer.concat(chunks).toString("utf8");
-    },
-    restore() {
-      process.stderr.write = origErr;
-    },
-  };
-}
 
 function expectAxonError(error: AxonError | undefined): AxonError {
   expect(error).toBeInstanceOf(AxonError);
@@ -54,7 +32,7 @@ describe("axon write model-id safety", () => {
     bytes[0x04] = 0xff;
 
     await withTempSvo(bytes, async (path) => {
-      const cap = captureStderr();
+      const cap = captureIO();
       let caught: AxonError | undefined;
       try {
         await runWriteWithHandle(mock, GLOBALS, { from: path, dryRun: false });
@@ -79,7 +57,7 @@ describe("axon write model-id safety", () => {
     Buffer.from("SA81BHMW", "ascii").copy(bytes, 0x40);
 
     await withTempSvo(bytes, async (path) => {
-      const cap = captureStderr();
+      const cap = captureIO();
       let caught: AxonError | undefined;
       try {
         await runWriteWithHandle(mock, GLOBALS, { from: path, dryRun: false });
@@ -104,7 +82,7 @@ describe("axon write model-id safety", () => {
     bytes[0x04] = 0xfd;
 
     await withTempSvo(bytes, async (path) => {
-      const cap = captureStderr();
+      const cap = captureIO();
       let code: number;
       try {
         code = await runWriteWithHandle(mock, GLOBALS, { from: path, dryRun: true });

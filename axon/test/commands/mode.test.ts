@@ -38,12 +38,14 @@ import {
 import type { DongleHandle } from "../../src/driver/transport.ts";
 import { ExitCode } from "../../src/errors.ts";
 import { decryptSfw } from "../../src/sfw.ts";
+import { captureIO } from "../helpers/capture-io.ts";
 import { loadFixtureConfig, MockDongle } from "../mocks/mock-dongle.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "../../..");
 const DOWNLOADS_DIR = join(REPO_ROOT, "downloads");
 const MINI_SERVO_SFW = join(DOWNLOADS_DIR, "Axon_Mini_Servo_Mode.sfw");
+const MINI_CR_SFW = MINI_SERVO_SFW.replace("Servo_Mode", "Modified_CR_Mode");
 
 // --- FlashMockDongle --------------------------------------------------------
 
@@ -295,35 +297,6 @@ function buildTinySfw(): Buffer {
   return Buffer.concat([encryptEcb16(header), encryptCbc(body)]);
 }
 
-function captureIO(): {
-  stdout: () => string;
-  stderr: () => string;
-  restore: () => void;
-} {
-  const out: Buffer[] = [];
-  const err: Buffer[] = [];
-  const origOut = process.stdout.write.bind(process.stdout);
-  const origErr = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error override
-  process.stdout.write = (c: string | Uint8Array): boolean => {
-    out.push(typeof c === "string" ? Buffer.from(c) : Buffer.from(c));
-    return true;
-  };
-  // @ts-expect-error override
-  process.stderr.write = (c: string | Uint8Array): boolean => {
-    err.push(typeof c === "string" ? Buffer.from(c) : Buffer.from(c));
-    return true;
-  };
-  return {
-    stdout: () => Buffer.concat(out).toString("utf8"),
-    stderr: () => Buffer.concat(err).toString("utf8"),
-    restore: () => {
-      process.stdout.write = origOut;
-      process.stderr.write = origErr;
-    },
-  };
-}
-
 describe("mode list", () => {
   test("prints the known modes for SA33**** (Mini)", async () => {
     const mock = new MockDongle();
@@ -339,7 +312,7 @@ describe("mode list", () => {
       cap.restore();
     }
     expect(code).toBe(ExitCode.Ok);
-    const out = cap.stdout();
+    const out = cap.stdout;
     expect(out).toContain("SA33****");
     expect(out).toContain("Axon Mini");
     expect(out).toContain("standard");
@@ -362,7 +335,7 @@ describe("mode list", () => {
       cap.restore();
     }
     expect(code).toBe(ExitCode.Ok);
-    const parsed = JSON.parse(cap.stdout());
+    const parsed = JSON.parse(cap.stdout);
     expect(parsed.model.id).toBe("SA33****");
     expect(parsed.model.name).toBe("Axon Mini");
     expect(Array.isArray(parsed.modes)).toBe(true);
@@ -389,7 +362,7 @@ describe("mode current", () => {
       cap.restore();
     }
     expect(code).toBe(ExitCode.Ok);
-    const out = cap.stdout();
+    const out = cap.stdout;
     expect(out).toContain("Servo Mode");
     expect(out).toContain("servo_mode");
     expect(out).toContain("catalog  standard");
@@ -410,7 +383,7 @@ describe("mode current", () => {
       cap.restore();
     }
     expect(code).toBe(ExitCode.Ok);
-    const out = cap.stdout();
+    const out = cap.stdout;
     expect(out).toContain("CR Mode");
     expect(out).toContain("cr_mode");
     expect(out).toContain("catalog  continuous");
@@ -467,7 +440,7 @@ describe("mode set (flash round-trip)", () => {
     expect(mock.txHistory.some((tx) => tx[1] === CMD_READ)).toBe(false);
     expect(mock.finishedFlashes).toBe(1);
 
-    const summary = JSON.parse(cap.stdout());
+    const summary = JSON.parse(cap.stdout);
     expect(summary.recovery).toBe(true);
     expect(summary.model.id).toBe("SA33");
     expect(summary.model.name).toBe("Axon Mini");
@@ -475,65 +448,67 @@ describe("mode set (flash round-trip)", () => {
     expect(summary.new_mode).toBe("cr_mode");
   });
 
-  test("--file flashes cleanly against FlashMockDongle", async () => {
-    // Use the Mini Modified CR Mode .sfw directly off disk. If
-    // downloads/ isn't present (fresh
-    // clone / CI), skip gracefully.
-    const sfwPath = MINI_SERVO_SFW.replace("Servo_Mode", "Modified_CR_Mode");
-    if (!existsSync(sfwPath)) return;
+  test.skipIf(!existsSync(MINI_CR_SFW))(
+    "--file flashes cleanly against FlashMockDongle",
+    async () => {
+      // Use the Mini Modified CR Mode .sfw directly off disk. If
+      // downloads/ isn't present (fresh
+      // clone / CI), skip gracefully.
+      const sfwPath = MINI_CR_SFW;
 
-    // The fresh MockDongle's config-block model id will be SA33****
-    // (from the dual_test7_config.svo fixture). That matches the
-    // @0801SA33 header in the Mini CR firmware, so the model check
-    // passes. FlashMockDongle is seeded to start in servo_mode (0x03)
-    // and to flip to cr_mode (0x04) after the 0x83 finalize.
-    const mock = new FlashMockDongle(0x03, 0x04);
-    // Provide the echo bypass and zero-sleep for non-interactive tests.
-    const prevConfirm = process.env.AXON_FLASH_CONFIRM;
-    const prevSleep = process.env.AXON_FLASH_CMD_SLEEP_MS;
-    process.env.AXON_FLASH_CONFIRM = basename(sfwPath);
-    process.env.AXON_FLASH_CMD_SLEEP_MS = "0";
-    const cap = captureIO();
-    let code: number;
-    try {
-      code = await runModeWithHandle(
-        mock,
-        { json: true, quiet: true, yes: true },
-        { subcommand: "set", filePath: sfwPath },
-      );
-    } finally {
-      cap.restore();
-      if (prevConfirm === undefined) delete process.env.AXON_FLASH_CONFIRM;
-      else process.env.AXON_FLASH_CONFIRM = prevConfirm;
-      if (prevSleep === undefined) delete process.env.AXON_FLASH_CMD_SLEEP_MS;
-      else process.env.AXON_FLASH_CMD_SLEEP_MS = prevSleep;
-    }
-    expect(code).toBe(ExitCode.Ok);
-    const summary = JSON.parse(cap.stdout());
-    expect(summary.ok).toBe(true);
-    expect(summary.model.id).toBe("SA33****");
-    expect(summary.old_mode).toBe("servo_mode");
-    expect(summary.new_mode).toBe("cr_mode");
+      // The fresh MockDongle's config-block model id will be SA33****
+      // (from the dual_test7_config.svo fixture). That matches the
+      // @0801SA33 header in the Mini CR firmware, so the model check
+      // passes. FlashMockDongle is seeded to start in servo_mode (0x03)
+      // and to flip to cr_mode (0x04) after the 0x83 finalize.
+      const mock = new FlashMockDongle(0x03, 0x04);
+      // Provide the echo bypass and zero-sleep for non-interactive tests.
+      const prevConfirm = process.env.AXON_FLASH_CONFIRM;
+      const prevSleep = process.env.AXON_FLASH_CMD_SLEEP_MS;
+      process.env.AXON_FLASH_CONFIRM = basename(sfwPath);
+      process.env.AXON_FLASH_CMD_SLEEP_MS = "0";
+      const cap = captureIO();
+      let code: number;
+      try {
+        code = await runModeWithHandle(
+          mock,
+          { json: true, quiet: true, yes: true },
+          { subcommand: "set", filePath: sfwPath },
+        );
+      } finally {
+        cap.restore();
+        if (prevConfirm === undefined) delete process.env.AXON_FLASH_CONFIRM;
+        else process.env.AXON_FLASH_CONFIRM = prevConfirm;
+        if (prevSleep === undefined) delete process.env.AXON_FLASH_CMD_SLEEP_MS;
+        else process.env.AXON_FLASH_CMD_SLEEP_MS = prevSleep;
+      }
+      expect(code).toBe(ExitCode.Ok);
+      const summary = JSON.parse(cap.stdout);
+      expect(summary.ok).toBe(true);
+      expect(summary.model.id).toBe("SA33****");
+      expect(summary.old_mode).toBe("servo_mode");
+      expect(summary.new_mode).toBe("cr_mode");
 
-    // Cross-check that the mock saw the expected number of commands:
-    // decrypt the same .sfw and compare counts.
-    const dec = decryptSfw(readFileSync(sfwPath));
-    expect(mock.sectorErases).toBe(dec.sectorErases.length);
-    expect(mock.hexRecords).toBe(dec.hexRecords.length);
-    expect(mock.finishedFlashes).toBeGreaterThanOrEqual(1);
+      // Cross-check that the mock saw the expected number of commands:
+      // decrypt the same .sfw and compare counts.
+      const dec = decryptSfw(readFileSync(sfwPath));
+      expect(mock.sectorErases).toBe(dec.sectorErases.length);
+      expect(mock.hexRecords).toBe(dec.hexRecords.length);
+      expect(mock.finishedFlashes).toBeGreaterThanOrEqual(1);
 
-    // Verify the ordering: 0x80 boot → ... → 0x83 finalize.
-    // No 0x90 enter/exit — see flash.ts comment about why.
-    const firstFlashCmd = mock.flashCommandHistory[0];
-    expect(firstFlashCmd).toBeDefined();
-    expect(firstFlashCmd?.cmd).toBe(0x80); // boot query
-    const lastFlashCmd = mock.flashCommandHistory.at(-1);
-    expect(lastFlashCmd).toBeDefined();
-    expect(lastFlashCmd?.cmd).toBe(0x83); // finalize
-    // 0x81 key exchange should appear exactly once.
-    const keyExchanges = mock.flashCommandHistory.filter((c) => c.cmd === 0x81);
-    expect(keyExchanges.length).toBe(1);
-  });
+      // Verify the ordering: 0x80 boot → ... → 0x83 finalize.
+      // No 0x90 enter/exit — see flash.ts comment about why.
+      const firstFlashCmd = mock.flashCommandHistory[0];
+      expect(firstFlashCmd).toBeDefined();
+      expect(firstFlashCmd?.cmd).toBe(0x80); // boot query
+      const lastFlashCmd = mock.flashCommandHistory.at(-1);
+      expect(lastFlashCmd).toBeDefined();
+      expect(lastFlashCmd?.cmd).toBe(0x83); // finalize
+      // 0x81 key exchange should appear exactly once.
+      const keyExchanges = mock.flashCommandHistory.filter((c) => c.cmd === 0x81);
+      expect(keyExchanges.length).toBe(1);
+    },
+  );
 
   test("refuses to flash when mode name is not in the catalog", async () => {
     const mock = new MockDongle();

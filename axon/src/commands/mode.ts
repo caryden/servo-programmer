@@ -57,6 +57,7 @@ import {
   resolveCatalogFirmware,
 } from "../firmware-store.ts";
 import { type DecryptedSfw, decryptSfw, sfwHashHex } from "../sfw.ts";
+import { readLineFromStdin } from "../util/prompt.ts";
 import { renderProgressBar } from "../util/tui.ts";
 
 export type ModeSubcommand = "list" | "current" | "set";
@@ -421,7 +422,7 @@ async function runModeSet(
       }
     } else {
       process.stderr.write("Continue? [y/N] ");
-      const answer = await readLine();
+      const answer = await readLineFromStdin();
       if (answer.trim().toLowerCase() !== "y") {
         process.stderr.write("Aborted.\n");
         return ExitCode.Ok;
@@ -584,25 +585,6 @@ function friendlyModeName(mode: ServoMode): string {
 /** Returns true when AXON_DEBUG=1 is set. */
 function isDebug(): boolean {
   return process.env.AXON_DEBUG === "1";
-}
-
-/** Read a single line from stdin. Blocks until newline. */
-function readLine(): Promise<string> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    const onData = (chunk: Buffer) => {
-      chunks.push(chunk);
-      const combined = Buffer.concat(chunks).toString("utf8");
-      const nl = combined.indexOf("\n");
-      if (nl >= 0) {
-        process.stdin.removeListener("data", onData);
-        process.stdin.pause();
-        resolve(combined.slice(0, nl).replace(/\r$/, ""));
-      }
-    };
-    process.stdin.resume();
-    process.stdin.on("data", onData);
-  });
 }
 
 function makeProgressSink(global: GlobalFlags): FlashProgressFn {
