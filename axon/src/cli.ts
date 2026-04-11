@@ -34,7 +34,7 @@ export interface GlobalFlags {
   yes: boolean;
 }
 
-interface ParsedArgs {
+export interface ParsedArgs {
   command: string | null;
   positional: string[];
   flags: Record<string, string | boolean>;
@@ -43,7 +43,11 @@ interface ParsedArgs {
 
 const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h", "version", "v", "recover"]);
 
-function parseArgs(argv: string[]): ParsedArgs {
+function isNegativeNumberToken(arg: string): boolean {
+  return /^-(?:\d|\.\d)/.test(arg);
+}
+
+export function parseArgs(argv: string[]): ParsedArgs {
   const global: GlobalFlags = { json: false, quiet: false, yes: false };
   const flags: Record<string, string | boolean> = {};
   const positional: string[] = [];
@@ -51,7 +55,13 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
-    if (arg.startsWith("--")) {
+    if (isNegativeNumberToken(arg)) {
+      if (command === null) {
+        command = arg;
+      } else {
+        positional.push(arg);
+      }
+    } else if (arg.startsWith("--")) {
       const body = arg.slice(2);
       const eq = body.indexOf("=");
       let name: string;
@@ -126,7 +136,7 @@ See docs/CLI_DESIGN.md in the repo for the full spec.
   );
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
 
   // `axon --version` / `axon -v` / `axon version` prints the bundled
@@ -248,6 +258,7 @@ async function main(argv: string[]): Promise<number> {
           `${JSON.stringify({
             error: e.message,
             code: e.code,
+            category: e.category,
             hint: e.hint ?? null,
           })}\n`,
         );
@@ -365,9 +376,11 @@ function printCommandHelp(command: string): void {
   }
 }
 
-main(process.argv.slice(2))
-  .then((code) => process.exit(code))
-  .catch((e) => {
-    process.stderr.write(`fatal: ${(e as Error).message}\n`);
-    process.exit(ExitCode.ServoIoError);
-  });
+if (import.meta.main) {
+  main(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      process.stderr.write(`fatal: ${(e as Error).message}\n`);
+      process.exit(ExitCode.ServoIoError);
+    });
+}

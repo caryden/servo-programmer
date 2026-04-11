@@ -23,6 +23,15 @@ axon [--json] [--quiet] [--yes] <command> [args...]
 | `--quiet` | Suppress headers/decoration. Raw values only. |
 | `--yes` / `-y` | Skip confirmation prompts on destructive operations. |
 
+In `--json` mode, `AxonError` failures are written to stderr as:
+
+```json
+{"error":"...","code":1,"category":"usage","hint":"..."}
+```
+
+Scripts and agents should branch on `category`, not on human-readable
+message text.
+
 **One dongle only.** If zero or more than one Axon dongle is present
 on USB, the CLI exits with code 2 and a descriptive message. There
 is no `--device` flag — the Axon hardware ecosystem does not support

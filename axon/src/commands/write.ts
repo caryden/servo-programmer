@@ -7,12 +7,13 @@
  * is complete and JSON round-trips can be implemented safely.
  *
  * Flow:
- *   1. Read current config from servo.
- *   2. Load new config from file.
- *   3. Show diff.
- *   4. Confirm (unless --yes or --dry-run).
- *   5. Write.
- *   6. Read back and verify.
+ *   1. Load new config from file.
+ *   2. Read current config from servo.
+ *   3. Verify model ids match before building/showing a diff.
+ *   4. Show diff.
+ *   5. Confirm (unless --yes or --dry-run).
+ *   6. Write.
+ *   7. Read back and verify.
  */
 
 import { readFileSync } from "node:fs";
@@ -24,6 +25,7 @@ import {
   readFullConfig,
   writeFullConfig,
 } from "../driver/protocol.ts";
+import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
 import { confirm } from "../util/prompt.ts";
 
@@ -33,8 +35,25 @@ export interface WriteFlags {
 }
 
 export async function runWrite(global: GlobalFlags, local: WriteFlags): Promise<number> {
-  // 1. Load the new config from disk
-  const path = local.from;
+  const newBytes = loadConfigFile(local.from);
+  const handle = await openDongle();
+  try {
+    return await runWriteBytesWithHandle(handle, global, local, newBytes);
+  } finally {
+    await handle.release();
+  }
+}
+
+export async function runWriteWithHandle(
+  handle: DongleHandle,
+  global: GlobalFlags,
+  local: WriteFlags,
+): Promise<number> {
+  const newBytes = loadConfigFile(local.from);
+  return runWriteBytesWithHandle(handle, global, local, newBytes);
+}
+
+function loadConfigFile(path: string): Buffer {
   const lower = path.toLowerCase();
   if (lower.endsWith(".json") || lower === "-") {
     throw AxonError.validation(
@@ -55,89 +74,99 @@ export async function runWrite(global: GlobalFlags, local: WriteFlags): Promise<
         `(a vendor .svo file).`,
     );
   }
+  return newBytes;
+}
 
-  const handle = await openDongle();
-  try {
-    // 2. Read current config
-    const currentBytes = await readFullConfig(handle);
+async function runWriteBytesWithHandle(
+  handle: DongleHandle,
+  global: GlobalFlags,
+  local: WriteFlags,
+  newBytes: Buffer,
+): Promise<number> {
+  const path = local.from;
+  // 2. Read current config
+  const currentBytes = await readFullConfig(handle);
 
-    // 3. Compute diff
-    const diffs: Array<{
-      offset: number;
-      before: number;
-      after: number;
-    }> = [];
-    for (let i = 0; i < CONFIG_BLOCK_SIZE; i++) {
-      const before = currentBytes[i] ?? 0;
-      const after = newBytes[i] ?? 0;
-      if (before !== after) {
-        diffs.push({
-          offset: i,
-          before,
-          after,
-        });
-      }
+  // 3. Model-id sanity check before building or showing a diff.
+  const currentModel = modelIdFromConfig(currentBytes);
+  const newModel = modelIdFromConfig(newBytes);
+  if (currentModel.length === 0) {
+    throw AxonError.validation("Connected servo reported an empty model id. Refusing to write.");
+  }
+  if (newModel.length === 0) {
+    throw AxonError.validation(`${path} has an empty model id. Refusing to write.`);
+  }
+  if (newModel !== currentModel) {
+    throw AxonError.validation(
+      `${path} has model id "${newModel}" but the connected servo is "${currentModel}". ` +
+        `Refusing to write a different model's config.`,
+    );
+  }
+
+  // 4. Compute diff
+  const diffs: Array<{
+    offset: number;
+    before: number;
+    after: number;
+  }> = [];
+  for (let i = 0; i < CONFIG_BLOCK_SIZE; i++) {
+    const before = currentBytes[i] ?? 0;
+    const after = newBytes[i] ?? 0;
+    if (before !== after) {
+      diffs.push({
+        offset: i,
+        before,
+        after,
+      });
     }
+  }
 
-    // Model-id sanity check: refuse if target is for a different model
-    const currentModel = modelIdFromConfig(currentBytes);
-    const newModel = modelIdFromConfig(newBytes);
-    if (newModel && newModel !== currentModel) {
-      throw AxonError.validation(
-        `${path} has model id "${newModel}" but the connected servo is "${currentModel}". ` +
-          `Refusing to write a different model's config.`,
-      );
-    }
-
-    if (diffs.length === 0) {
-      if (!global.quiet) {
-        process.stderr.write("No changes — file matches current config.\n");
-      }
-      return ExitCode.Ok;
-    }
-
-    // 4. Show diff
-    showDiff(diffs, global);
-
-    if (local.dryRun) {
-      if (!global.quiet) {
-        process.stderr.write("(--dry-run, not writing)\n");
-      }
-      return ExitCode.Ok;
-    }
-
-    // 5. Confirm
-    if (!global.yes) {
-      const ok = await confirm(`Write ${diffs.length} byte(s) to servo?`);
-      if (!ok) {
-        process.stderr.write("Aborted.\n");
-        return ExitCode.Ok;
-      }
-    }
-
-    // 6. Write
-    await writeFullConfig(handle, newBytes);
-
-    // 7. Read back and verify
-    const verify = await readFullConfig(handle);
-    let mismatches = 0;
-    for (let i = 0; i < CONFIG_BLOCK_SIZE; i++) {
-      if (verify[i] !== newBytes[i]) mismatches++;
-    }
-    if (mismatches > 0) {
-      throw AxonError.servoIo(
-        `write verification failed: ${mismatches} byte(s) read back wrong. ` +
-          `Servo may be in an inconsistent state.`,
-      );
-    }
-
+  if (diffs.length === 0) {
     if (!global.quiet) {
-      process.stderr.write(`Wrote ${diffs.length} byte(s), verified.\n`);
+      process.stderr.write("No changes — file matches current config.\n");
     }
     return ExitCode.Ok;
-  } finally {
-    await handle.release();
   }
+
+  // 5. Show diff
+  showDiff(diffs, global);
+
+  if (local.dryRun) {
+    if (!global.quiet) {
+      process.stderr.write("(--dry-run, not writing)\n");
+    }
+    return ExitCode.Ok;
+  }
+
+  // 6. Confirm
+  if (!global.yes) {
+    const ok = await confirm(`Write ${diffs.length} byte(s) to servo?`);
+    if (!ok) {
+      process.stderr.write("Aborted.\n");
+      return ExitCode.Ok;
+    }
+  }
+
+  // 7. Write
+  await writeFullConfig(handle, newBytes);
+
+  // 8. Read back and verify
+  const verify = await readFullConfig(handle);
+  let mismatches = 0;
+  for (let i = 0; i < CONFIG_BLOCK_SIZE; i++) {
+    if (verify[i] !== newBytes[i]) mismatches++;
+  }
+  if (mismatches > 0) {
+    throw AxonError.servoIo(
+      `write verification failed: ${mismatches} byte(s) read back wrong. ` +
+        `Servo may be in an inconsistent state.`,
+    );
+  }
+
+  if (!global.quiet) {
+    process.stderr.write(`Wrote ${diffs.length} byte(s), verified.\n`);
+  }
+  return ExitCode.Ok;
 }
 
 function showDiff(
