@@ -62,48 +62,58 @@ axon monitor                 # live presence polling, Ctrl-C to stop
 ```json
 {
   "adapter": "connected",
-  "servo":   "present",
-  "model":   {"id": "SA33***", "name": "Axon Mini"},
-  "firmware":{"mode": "standard", "version": "1.0.5"}
+  "servo": "present",
+  "category": "servo_present",
+  "mode_byte": "0x03",
+  "mode_label": "Servo Mode",
+  "model": {
+    "id": "SA33****",
+    "name": "Axon Mini",
+    "known": true,
+    "docs_url": "https://docs.axon-robotics.com/servos/mini"
+  }
 }
 ```
 
 ### Read
 
 ```
-axon read                    # pretty human view, with units
-axon read --json             # machine-readable full model
+axon read                    # human-readable model + block summary
+axon read --json             # machine-readable model + raw bytes
 axon read --svo > cfg.svo    # raw 95-byte vendor-compatible dump
+axon read --hex              # annotated hex dump for debugging
 ```
 
 `axon read`:
 ```
-Axon Mini (SA33***)                        mode: standard   fw: 1.0.5
-Docs: https://docs.axon-robotics.com/servos/mini
-─────────────────────────────────────────────────────────────────────
-range         260° / 355° max              (default 260°)
-center        177.5°                        (default 177.5°)
-direction     normal
-deadband      2 µs
-speed limit   100%
+model      SA33****  (Axon Mini)
+docs       https://docs.axon-robotics.com/servos/mini
+block      95 bytes (magic 3bd00bf6)
+Named parameters not yet shown in v1 scaffold.
+Use `axon read --svo > cfg.svo` to save the block, or
+`axon read --hex` to see the raw byte layout.
 ```
 
 ### Write
 
 ```
-axon write --from cfg.json        # load JSON, show diff, confirm, write
 axon write --from cfg.svo         # load raw .svo, same flow
-axon write --from -               # read JSON from stdin
-axon write --dry-run              # show diff only
+axon write --from cfg.svo --dry-run  # show diff only
 ```
 
-`axon write` always shows a diff before committing unless `--yes`:
+`axon write` supports vendor-compatible 95-byte `.svo` files in the
+current CLI. JSON config files and stdin writes are reserved for a
+future release.
+
+`axon write` rejects empty or mismatched model IDs before showing a
+diff. When the model ID matches, it always shows a byte-level diff
+before committing unless `--yes`:
 
 ```
-The following parameters will change:
-  range      260° → 180°
-  direction  normal → reversed
-Proceed? [y/N]
+The following 2 byte(s) will change:
+  0x04    0x82 → 0x80
+  0x05    0x82 → 0x80
+Write 2 byte(s) to servo? [y/N]
 ```
 
 After writing, the CLI reads back and verifies. Any mismatch is a
@@ -119,15 +129,17 @@ axon get <param> --json           # {"value": 260, "unit": "deg", ...}
 axon set <param> <value>          # read-modify-write with diff+confirm
 axon set <param> default          # reset one param to its model default
 axon set default                  # reset all params to model defaults
-axon set default --backup cfg.json  # save current config first
+axon set default --backup cfg.svo   # save current raw config first
 ```
 
 Accepted value units (CLI auto-converts from whichever the user supplies):
 
 | Parameter kind | Accepts | Stored as |
 |---|---|---|
-| Angular | `deg`, `°`, `%` of max, `--raw` 0–255 | `deg` |
-| Time/pulse | `us`, `µs`, `ms`, `--raw` | `us` |
+| Raw byte | number 0–255 | raw byte |
+| Pulse offset | `us`, `µs`, or a bare number | `us` |
+| Percent | number or `%` suffix | percent |
+| Step | integer step | step |
 | Discrete | named enum (e.g. `normal`, `reversed`) | string |
 
 Out-of-range values are rejected with exit code 5 and a message
@@ -143,8 +155,10 @@ dirty config in memory across invocations.
 ```
 axon mode list                    # known and discovered .sfw files
 axon mode current                 # which mode is this servo running?
-axon mode set <mode>              # flash known mode by name
+axon mode set <mode>              # flash known mode by name: servo/cr/standard/continuous
 axon mode set --file custom.sfw   # flash a user-supplied .sfw
+axon mode set --file custom.sfw --recover
+axon mode set servo --recover mini
 ```
 
 `axon mode set` is **the only destructive operation with no undo.**
@@ -152,9 +166,7 @@ It displays a prominent warning, requires confirmation unless `--yes`
 is passed, and verifies the flash afterward.
 
 `.sfw` decryption is handled internally — the user never sees
-"decrypt" as a CLI verb. Users who need to inspect an `.sfw` file
-for debugging can use `axon debug decrypt-sfw <file>` but that
-subcommand is hidden from `--help` unless `AXON_DEV=1` is set.
+"decrypt" as a CLI verb.
 
 **Firmware file discovery precedence for `axon mode set <name>`:**
 
@@ -202,7 +214,7 @@ These are hidden from the `--help` output and live under
 | `axon reset --factory` | Redundant with `axon set default` |
 | `axon watch <param>` | Nice-to-have; not critical for v1 |
 | `axon shell` (REPL) | Nice-to-have; not critical for v1 |
-| `axon debug decrypt-sfw` | Dev-only, hidden unless `AXON_DEV=1` |
+| `axon debug decrypt-sfw` | Dev-only idea, not implemented in the CLI |
 | Raw HID framing access | Internal to the protocol module |
 | Saleae integration | Dev-only, stays in `research/static-analysis/` |
 | Multiple dongle support | Not needed, enforced absent |
