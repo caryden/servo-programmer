@@ -28,6 +28,7 @@ import { createDecipheriv, createHash } from "node:crypto";
 /** AES-128 key used for every .sfw file: sixteen ASCII 'T' bytes. */
 const KEY = Buffer.from("TTTTTTTTTTTTTTTT", "ascii");
 const IV_ZERO = Buffer.alloc(16, 0);
+const MIN_SFW_BYTES = 32; // 16-byte ECB header + at least one AES-CBC body block
 
 /** Expected magic run in the 16-byte ECB header: twelve ASCII 'x' bytes. */
 const MAGIC = Buffer.from("xxxxxxxxxxxx", "ascii");
@@ -85,9 +86,9 @@ export interface DecryptedSfw {
 }
 
 function ensureAligned(ciphertext: Buffer): void {
-  if (ciphertext.length < 32 || ciphertext.length % 16 !== 0) {
+  if (ciphertext.length < MIN_SFW_BYTES || ciphertext.length % 16 !== 0) {
     throw new Error(
-      `sfw: ciphertext is ${ciphertext.length} bytes; expected >=32 and a multiple of 16`,
+      `sfw: ciphertext is ${ciphertext.length} bytes; expected >=${MIN_SFW_BYTES} and a multiple of 16`,
     );
   }
 }

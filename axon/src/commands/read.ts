@@ -27,28 +27,21 @@ export async function runRead(global: GlobalFlags, local: ReadFlags): Promise<nu
     await handle.release();
   }
 
-  switch (local.format) {
-    case "svo":
-      // Raw bytes to stdout — identical to a vendor .svo file
-      process.stdout.write(new Uint8Array(config));
-      return ExitCode.Ok;
-
-    case "hex":
-      process.stdout.write(`${hexDump(config)}\n`);
-      return ExitCode.Ok;
-
-    case "json":
-      emitJson(config);
-      return ExitCode.Ok;
-
-    default:
-      if (global.json) {
-        emitJson(config);
-      } else {
-        emitHuman(config, global);
-      }
-      return ExitCode.Ok;
+  if (local.format === "svo") {
+    // Raw bytes to stdout — identical to a vendor .svo file
+    process.stdout.write(new Uint8Array(config));
+    return ExitCode.Ok;
   }
+  if (local.format === "hex") {
+    process.stdout.write(`${hexDump(config)}\n`);
+    return ExitCode.Ok;
+  }
+  if (local.format === "json" || global.json) {
+    emitJson(config);
+    return ExitCode.Ok;
+  }
+  emitHuman(config, global);
+  return ExitCode.Ok;
 }
 
 function emitJson(config: Buffer): void {

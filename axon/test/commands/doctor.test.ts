@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { ExitCode } from "../../src/errors.ts";
+import { AxonError, ExitCode } from "../../src/errors.ts";
 import { MockDongle } from "../mocks/mock-dongle.ts";
 
 interface CapturedIO {
@@ -88,18 +88,15 @@ describe("axon doctor", () => {
   });
 
   test("classifies adapter_busy when the HID interface is owned elsewhere", async () => {
-    await mock.module("../../src/driver/hid.ts", () => {
-      const { AxonError } = require("../../src/errors.ts");
-      return {
-        listDongles: () => [DONGLE],
-        openDongle: async () => {
-          throw AxonError.adapterBusy("device or resource busy (mock)");
-        },
-        VID: 0x0471,
-        PID: 0x13aa,
-        REPORT_SIZE: 64,
-      };
-    });
+    await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
+      openDongle: async () => {
+        throw AxonError.adapterBusy("device or resource busy (mock)");
+      },
+      VID: 0x0471,
+      PID: 0x13aa,
+      REPORT_SIZE: 64,
+    }));
 
     const { runDoctor } = await import("../../src/commands/doctor.ts");
     const code = await runDoctor(JSON_FLAGS);
