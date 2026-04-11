@@ -16,7 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { ExitCode } from "../../src/errors.ts";
+import { AxonError, ExitCode } from "../../src/errors.ts";
 import { MockDongle } from "../mocks/mock-dongle.ts";
 
 interface CapturedIO {
@@ -98,21 +98,16 @@ describe("axon status", () => {
   });
 
   test("adapter_busy phase: openDongle throw is surfaced verbatim", async () => {
-    await mock.module("../../src/driver/hid.ts", () => {
-      // Import inside the factory so we get a fresh AxonError that
-      // hasn't been frozen by the previous test.
-      const { AxonError } = require("../../src/errors.ts");
-      return {
-        listDongles: () => [DONGLE],
-        isDonglePresent: () => true,
-        openDongle: async () => {
-          throw AxonError.adapterBusy("device or resource busy (errno=EACCES)");
-        },
-        VID: 0x0471,
-        PID: 0x13aa,
-        REPORT_SIZE: 64,
-      };
-    });
+    await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [DONGLE],
+      isDonglePresent: () => true,
+      openDongle: async () => {
+        throw AxonError.adapterBusy("device or resource busy (errno=EACCES)");
+      },
+      VID: 0x0471,
+      PID: 0x13aa,
+      REPORT_SIZE: 64,
+    }));
     const { runStatus } = await import("../../src/commands/status.ts");
     const code = await runStatus(JSON_FLAGS);
     expect(code).toBe(ExitCode.Ok);

@@ -220,7 +220,7 @@ function buildServoNeutral(): ParameterSpec {
     },
 
     parseUserInput(input) {
-      const trimmed = input.trim().replace(/\s*(us|µs|us)\s*$/i, "");
+      const trimmed = input.trim().replace(/\s*(us|µs)\s*$/i, "");
       const n = Number(trimmed);
       if (!Number.isFinite(n)) {
         throw AxonError.validation(
@@ -296,12 +296,11 @@ function buildSensitivity(): ParameterSpec {
     },
 
     validate(value) {
-      if (!Number.isInteger(value as number)) {
+      if (typeof value !== "number" || !Number.isInteger(value)) {
         return "sensitivity: value must be an integer step 0..14.";
       }
-      const n = value as number;
-      if (n < 0 || n > 14) {
-        return `sensitivity: ${n} out of range (0..14).`;
+      if (value < 0 || value > 14) {
+        return `sensitivity: ${value} out of range (0..14).`;
       }
       return null;
     },
