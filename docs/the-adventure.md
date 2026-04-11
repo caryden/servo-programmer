@@ -39,7 +39,7 @@ teams run Macs.
 ## 3. The plan
 
 My goal was modest: read and write the servo's config from a Mac. A
-CLI, not a GUI. Stretch goal: also flash the bundled firmware modes
+CLI, not a GUI. Stretch goal: also flash the vendor firmware modes
 (standard PWM vs. continuous rotation), which ship as encrypted `.sfw`
 files only the vendor software knows how to load.
 
@@ -415,7 +415,7 @@ axon read                   # pretty / --json / --svo / --hex
 axon write --from cfg.svo   # diff, confirm, write, verify
 axon get <param>            # named parameter with unit conversion
 axon set <param> <value>    # read-modify-write with diff-confirm
-axon mode set <name>        # flash bundled firmware mode
+axon mode set <name>        # flash a known firmware mode
 ```
 
 Today, `status`, `monitor`, `read`, and `write` are working. `get` /

@@ -79,6 +79,14 @@ function captureIO(): CapturedIO {
   return result;
 }
 
+function expectAxonError(error: AxonError | undefined): AxonError {
+  expect(error).toBeInstanceOf(AxonError);
+  if (!(error instanceof AxonError)) {
+    throw new Error("expected AxonError");
+  }
+  return error;
+}
+
 const GLOBALS = { json: false, quiet: false, yes: false };
 const GLOBALS_JSON = { json: true, quiet: false, yes: false };
 
@@ -228,10 +236,10 @@ describe("axon get error paths", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.ValidationError);
-    expect(caught!.message).toContain("not available");
-    expect(caught!.message.toLowerCase()).toContain("cr mode");
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.ValidationError);
+    expect(error.message).toContain("not available");
+    expect(error.message.toLowerCase()).toContain("cr mode");
   });
 
   test("get unknown_param: usage error", async () => {
@@ -246,9 +254,9 @@ describe("axon get error paths", () => {
     } catch (e) {
       caught = e as AxonError;
     }
-    expect(caught).toBeInstanceOf(AxonError);
-    expect(caught!.code).toBe(ExitCode.UsageError);
-    expect(caught!.message).toContain("unknown parameter");
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.UsageError);
+    expect(error.message).toContain("unknown parameter");
   });
 
   test("get servo_angle --help: does NOT leak 'implementation' into output", async () => {

@@ -10,20 +10,22 @@
  * write, 0x83 marker, 0x90 mode lock).
  *
  * Coverage:
- *   - mode list: reports bundled firmware entries for the connected
- *     Mini, including embedded vs not-embedded status.
+ *   - mode list: reports catalog firmware entries for the connected
+ *     Mini, including whether a matching external .sfw is available.
  *   - mode current: maps identify mode byte → human name.
  *   - mode set <name>: full flash round-trip against FlashMockDongle.
- *     Verifies the exact order of 0x80 → 0x83 cancel → 0x81 key
- *     exchange → 0x82 erase × N → 0x82 write × M → 0x83 finalize
- *     commands, and that the XOR key is applied correctly.
+ *     Verifies the command order starts at 0x80 boot query, proceeds
+ *     through 0x81 key exchange and 0x82 erase/write records, then
+ *     ends with 0x83 finalize.
  *
  * Real hardware is never touched; the mock is enough to catch
  * protocol regressions.
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { createCipheriv } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runModeWithHandle } from "../../src/commands/mode.ts";
@@ -76,17 +78,23 @@ class FlashMockDongle implements DongleHandle {
   public finishedFlashes = 0;
   /** Mode byte to return from identify after a successful flash. */
   public nextIdentifyModeByte: number;
+  public identifyPresent: boolean;
 
   private pendingRx: Buffer | null = null;
   private released = false;
 
-  constructor(initialModeByte: number, nextModeByte: number) {
+  constructor(
+    initialModeByte: number,
+    nextModeByte: number,
+    options: { identifyPresent?: boolean } = {},
+  ) {
     this.base = new MockDongle();
     // Start in the initial mode so identify() reports it.
     // MockDongle's identify hard-codes rx[5]=0x03; override by
     // replacing the config-block mode byte and intercepting identify.
     this.currentIdentifyModeByte = initialModeByte;
     this.nextIdentifyModeByte = nextModeByte;
+    this.identifyPresent = options.identifyPresent ?? true;
   }
 
   private currentIdentifyModeByte: number;
@@ -99,7 +107,7 @@ class FlashMockDongle implements DongleHandle {
     if (recorded[0] !== REPORT_ID) {
       throw new Error("mock: expected report id 0x04");
     }
-    const cmd = recorded[1]!;
+    const cmd = recorded[1] ?? 0;
     switch (cmd) {
       case CMD_IDENTIFY:
         this.pendingRx = this.buildIdentifyReply();
@@ -117,7 +125,7 @@ class FlashMockDongle implements DongleHandle {
       case CMD_DATA_WRITE:
       case CMD_FLASH_MARKER:
       case CMD_MODE_LOCK: {
-        const length = recorded[2]!;
+        const length = recorded[2] ?? 0;
         const payload = recorded.subarray(3, 3 + length);
         this.flashCommandHistory.push({ cmd, payload: Buffer.from(payload) });
         this.pendingRx = this.buildFlashReply(cmd, payload);
@@ -145,6 +153,11 @@ class FlashMockDongle implements DongleHandle {
   private buildIdentifyReply(): Buffer {
     const rx = Buffer.alloc(REPORT_SIZE);
     rx[0] = REPORT_ID;
+    if (!this.identifyPresent) {
+      rx[1] = 0x8a;
+      rx[2] = 0xfa;
+      return rx;
+    }
     rx[1] = 0x01;
     rx[2] = 0x00;
     rx[3] = 0x01;
@@ -198,7 +211,7 @@ class FlashMockDongle implements DongleHandle {
       // 0xAA bytes (easy to verify later).
       this.challenge = Buffer.from(payload);
       const response = Buffer.alloc(FLASH_PAYLOAD_SIZE);
-      for (let i = 0; i < FLASH_PAYLOAD_SIZE; i++) response[i] = payload[i]! ^ 0xaa;
+      for (let i = 0; i < FLASH_PAYLOAD_SIZE; i++) response[i] = (payload[i] ?? 0) ^ 0xaa;
       this.sessionKey = Buffer.alloc(FLASH_PAYLOAD_SIZE, 0xaa);
       response.copy(rx, 5);
       this.flashState = "flashing";
@@ -208,12 +221,13 @@ class FlashMockDongle implements DongleHandle {
       // Decrypt the payload using the saved session key, then
       // inspect the first byte to determine whether this is a sector
       // erase or a hex record.
-      if (this.sessionKey === null) {
+      const sessionKey = this.sessionKey;
+      if (sessionKey === null) {
         throw new Error("mock: 0x82 arrived before 0x81 key exchange");
       }
       const decrypted = Buffer.alloc(FLASH_PAYLOAD_SIZE);
       for (let i = 0; i < FLASH_PAYLOAD_SIZE; i++) {
-        decrypted[i] = payload[i]! ^ this.sessionKey[i]!;
+        decrypted[i] = (payload[i] ?? 0) ^ (sessionKey[i] ?? 0);
       }
       if (decrypted[0] === DATA_PREFIX_SECTOR_ERASE) {
         this.sectorErases += 1;
@@ -224,17 +238,16 @@ class FlashMockDongle implements DongleHandle {
         this.hexRecords += 1;
         // Echo the record's Intel HEX checksum byte at
         // decrypted[count + 5] where count = decrypted[1].
-        const count = decrypted[1]!;
+        const count = decrypted[1] ?? 0;
         const checksumIndex = count + 5;
         if (checksumIndex >= FLASH_PAYLOAD_SIZE) {
           throw new Error(`mock: hex record count ${count} too large`);
         }
-        rx[5] = decrypted[checksumIndex]!;
+        rx[5] = decrypted[checksumIndex] ?? 0;
         return rx;
       }
-      throw new Error(
-        `mock: 0x82 payload[0]=0x${decrypted[0]!.toString(16)} (expected 0x0A or 0x3A)`,
-      );
+      const prefix = decrypted[0] ?? 0;
+      throw new Error(`mock: 0x82 payload[0]=0x${prefix.toString(16)} (expected 0x0A or 0x3A)`);
     }
     if (cmd === CMD_FLASH_MARKER) {
       if (this.flashState === "flashing") {
@@ -242,6 +255,7 @@ class FlashMockDongle implements DongleHandle {
         this.finishedFlashes += 1;
         // After completion, flip the identify reply to the new mode.
         this.currentIdentifyModeByte = this.nextIdentifyModeByte;
+        this.identifyPresent = true;
       }
       rx[5] = 0xaa;
       return rx;
@@ -255,6 +269,31 @@ class FlashMockDongle implements DongleHandle {
 }
 
 // --- tests ------------------------------------------------------------------
+
+const SFW_KEY = Buffer.from("TTTTTTTTTTTTTTTT", "ascii");
+
+function encryptEcb16(block: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-ecb", SFW_KEY, null);
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(block), cipher.final()]);
+}
+
+function encryptCbc(body: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-cbc", SFW_KEY, Buffer.alloc(16));
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(body), cipher.final()]);
+}
+
+function buildTinySfw(): Buffer {
+  const plaintext = Buffer.from("@0801SA33\r\n$0000\r\n:00000001FF\r\n", "ascii");
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(plaintext.length, 0);
+  header.fill(0x78, 4);
+
+  const pad = (16 - (plaintext.length % 16)) % 16;
+  const body = Buffer.concat([plaintext, Buffer.alloc(pad)]);
+  return Buffer.concat([encryptEcb16(header), encryptCbc(body)]);
+}
 
 function captureIO(): {
   stdout: () => string;
@@ -286,7 +325,7 @@ function captureIO(): {
 }
 
 describe("mode list", () => {
-  test("prints the bundled modes for SA33**** (Mini)", async () => {
+  test("prints the known modes for SA33**** (Mini)", async () => {
     const mock = new MockDongle();
     const cap = captureIO();
     let code: number;
@@ -353,10 +392,10 @@ describe("mode current", () => {
     const out = cap.stdout();
     expect(out).toContain("Servo Mode");
     expect(out).toContain("servo_mode");
-    expect(out).toContain("bundled  standard");
+    expect(out).toContain("catalog  standard");
   });
 
-  test("reports the bundled 'continuous' key when identify says cr_mode (0x04)", async () => {
+  test("reports the catalog 'continuous' key when identify says cr_mode (0x04)", async () => {
     // FlashMockDongle lets us control the identify mode byte.
     const mock = new FlashMockDongle(0x04, 0x04);
     const cap = captureIO();
@@ -374,15 +413,71 @@ describe("mode current", () => {
     const out = cap.stdout();
     expect(out).toContain("CR Mode");
     expect(out).toContain("cr_mode");
-    expect(out).toContain("bundled  continuous");
+    expect(out).toContain("catalog  continuous");
   });
 });
 
 describe("mode set (flash round-trip)", () => {
+  test("no servo detected suggests recovery commands", async () => {
+    const mock = new MockDongle();
+    mock.state = "cold";
+
+    let caught: unknown = null;
+    try {
+      await runModeWithHandle(
+        mock,
+        { json: false, quiet: true, yes: true },
+        { subcommand: "set", modeName: "servo" },
+      );
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain("no servo detected");
+    expect((caught as { hint?: string }).hint).toContain("axon mode set servo --recover mini");
+    expect((caught as { hint?: string }).hint).toContain("--file <path.sfw> --recover");
+  });
+
+  test("--recover skips identify/config read and starts at boot query", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "axon-recover-"));
+    const sfwPath = join(tmp, "Axon_Mini_Test_Recovery.sfw");
+    writeFileSync(sfwPath, buildTinySfw());
+
+    const mock = new FlashMockDongle(0x03, 0x04, { identifyPresent: false });
+    const prevSleep = process.env.AXON_FLASH_CMD_SLEEP_MS;
+    process.env.AXON_FLASH_CMD_SLEEP_MS = "0";
+    const cap = captureIO();
+    let code: number;
+    try {
+      code = await runModeWithHandle(
+        mock,
+        { json: true, quiet: true, yes: true },
+        { subcommand: "set", filePath: sfwPath, recover: true },
+      );
+    } finally {
+      cap.restore();
+      rmSync(tmp, { recursive: true, force: true });
+      if (prevSleep === undefined) delete process.env.AXON_FLASH_CMD_SLEEP_MS;
+      else process.env.AXON_FLASH_CMD_SLEEP_MS = prevSleep;
+    }
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(mock.txHistory[0]?.[1]).toBe(CMD_BOOT_QUERY);
+    expect(mock.txHistory.some((tx) => tx[1] === CMD_READ)).toBe(false);
+    expect(mock.finishedFlashes).toBe(1);
+
+    const summary = JSON.parse(cap.stdout());
+    expect(summary.recovery).toBe(true);
+    expect(summary.model.id).toBe("SA33");
+    expect(summary.model.name).toBe("Axon Mini");
+    expect(summary.old_mode).toBe(null);
+    expect(summary.new_mode).toBe("cr_mode");
+  });
+
   test("--file flashes cleanly against FlashMockDongle", async () => {
-    // Use the Mini Modified CR Mode .sfw directly off disk so we
-    // don't need the (gitignored) `sfw-embedded.ts` to be populated
-    // for this test to pass. If downloads/ isn't present (fresh
+    // Use the Mini Modified CR Mode .sfw directly off disk. If
+    // downloads/ isn't present (fresh
     // clone / CI), skip gracefully.
     const sfwPath = MINI_SERVO_SFW.replace("Servo_Mode", "Modified_CR_Mode");
     if (!existsSync(sfwPath)) return;
@@ -440,7 +535,7 @@ describe("mode set (flash round-trip)", () => {
     expect(keyExchanges.length).toBe(1);
   });
 
-  test("refuses to flash when mode name is not bundled", async () => {
+  test("refuses to flash when mode name is not in the catalog", async () => {
     const mock = new MockDongle();
     const cap = captureIO();
     let threw = false;

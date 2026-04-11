@@ -26,6 +26,8 @@ export const VID = 0x0471;
 export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
 
+export type DongleDescriptor = HID.Device;
+
 /**
  * Wrap a raw node-hid failure in an AxonError so the top-level
  * catch in cli.ts renders it cleanly (no stack trace). The detail
@@ -46,14 +48,33 @@ function hidReadError(detail: string): AxonError {
   return AxonError.adapterIo(detail);
 }
 
+function hidEnumerateError(detail: string): AxonError {
+  return AxonError.adapterIo(`HID enumeration failed: ${detail}`);
+}
+
 /**
- * Cheap "is there a dongle plugged in" check. Enumerates HID devices
- * and filters by VID/PID. Does NOT open the device — safe to call
- * from `axon status` and `axon monitor`'s "not-yet-opened" state.
+ * Cheap "which dongles are visible through this OS's HID layer?"
+ * check. Does NOT open the device — safe to call from `axon status`
+ * and `axon monitor`'s "not-yet-opened" state.
+ *
+ * This is deliberately phrased as HID visibility rather than physical
+ * USB presence: if a VM such as Parallels has captured the adapter,
+ * macOS may still list the raw USB device while node-hid cannot see
+ * an openable HID interface.
+ */
+export function listDongles(): DongleDescriptor[] {
+  try {
+    return HID.devices(VID, PID);
+  } catch (e) {
+    throw hidEnumerateError((e as Error).message ?? "unknown failure");
+  }
+}
+
+/**
+ * Back-compat helper for callers that only need a boolean.
  */
 export function isDonglePresent(): boolean {
-  const matches = HID.devices(VID, PID);
-  return matches.length > 0;
+  return listDongles().length > 0;
 }
 
 /**
@@ -125,8 +146,8 @@ class NodeHidDongle implements DongleHandle {
  *   - Open fails   → AxonError.adapterBusy (category "adapter_busy",
  *                    usually another process is claiming it)
  */
-export async function openDongle(): Promise<DongleHandle> {
-  const matches = HID.devices(VID, PID);
+export async function openDongle(descriptor?: DongleDescriptor): Promise<DongleHandle> {
+  const matches = descriptor ? [descriptor] : listDongles();
   if (matches.length === 0) {
     throw AxonError.noAdapter("Axon dongle not found on USB.");
   }
@@ -134,8 +155,11 @@ export async function openDongle(): Promise<DongleHandle> {
     throw AxonError.noAdapter(`Found ${matches.length} Axon dongles on USB — expected exactly 1.`);
   }
 
-  const desc = matches[0]!;
-  const path = desc.path;
+  const selected = matches[0];
+  if (selected === undefined) {
+    throw AxonError.noAdapter("Axon dongle not found on USB.");
+  }
+  const path = selected.path;
   if (!path) {
     throw AxonError.noAdapter(
       "Axon dongle enumerated but no device path (node-hid returned an entry without `path`).",

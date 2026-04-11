@@ -28,16 +28,37 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dirname, "../fixtures/dual_test7_config.svo");
 const FIXTURE = new Uint8Array(readFileSync(FIXTURE_PATH));
 
+function replyHandle(rx: Buffer): DongleHandle {
+  return {
+    async write() {},
+    async read() {
+      return rx;
+    },
+    async release() {},
+  };
+}
+
+function txAt(mock: MockDongle, index: number): Buffer {
+  const tx = mock.txHistory[index];
+  if (tx === undefined) {
+    throw new Error(`expected txHistory[${index}]`);
+  }
+  return tx;
+}
+
 describe("identify", () => {
   test("returns PRESENT in primed state", async () => {
     const mock = new MockDongle();
     const reply = await identify(mock);
     expect(reply.present).toBe(true);
+    expect(reply.statusHi).toBe(0x01);
     expect(reply.statusLo).toBe(0x00);
+    expect(reply.modeByte).toBe(0x03);
     // Ensure exactly one TX went out with the identify command byte.
     expect(mock.txHistory.length).toBe(1);
-    expect(mock.txHistory[0]![0]).toBe(0x04);
-    expect(mock.txHistory[0]![1]).toBe(0x8a);
+    const tx0 = txAt(mock, 0);
+    expect(tx0[0]).toBe(0x04);
+    expect(tx0[1]).toBe(0x8a);
   });
 
   test("returns absent with statusLo 0xFA in cold state", async () => {
@@ -46,6 +67,37 @@ describe("identify", () => {
     const reply = await identify(mock);
     expect(reply.present).toBe(false);
     expect(reply.statusLo).toBe(0xfa);
+    expect(reply.modeByte).toBe(null);
+  });
+
+  test("returns present with unknown mode when identify succeeds with a new mode byte", async () => {
+    const rx = Buffer.alloc(64);
+    rx[0] = 0x04;
+    rx[1] = 0x01;
+    rx[2] = 0x00;
+    rx[5] = 0x09;
+
+    const reply = await identify(replyHandle(rx));
+    expect(reply.present).toBe(true);
+    expect(reply.mode).toBe("unknown");
+    expect(reply.modeByte).toBe(0x09);
+  });
+
+  test("throws servo_io instead of absent for malformed identify replies", async () => {
+    const rx = Buffer.alloc(64);
+    rx[0] = 0x04;
+    rx[1] = 0x8a;
+    rx[2] = 0x02;
+
+    let caught: unknown;
+    try {
+      await identify(replyHandle(rx));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(AxonError);
+    expect((caught as AxonError).category).toBe("servo_io");
+    expect((caught as Error).message).toContain("identify nack");
   });
 });
 
@@ -136,12 +188,14 @@ describe("readFullConfig", () => {
     // lengths 0x3B (59) and 0x24 (36). This matches the vendor exe's
     // capture in docs/FINDINGS.md.
     expect(mock.txHistory.length).toBe(2);
-    expect(mock.txHistory[0]![1]).toBe(0xcd);
-    expect(mock.txHistory[0]![3]).toBe(0x00);
-    expect(mock.txHistory[0]![4]).toBe(0x3b);
-    expect(mock.txHistory[1]![1]).toBe(0xcd);
-    expect(mock.txHistory[1]![3]).toBe(0x3b);
-    expect(mock.txHistory[1]![4]).toBe(CONFIG_BLOCK_SIZE - MAX_CHUNK); // 36 (0x24)
+    const tx0 = txAt(mock, 0);
+    const tx1 = txAt(mock, 1);
+    expect(tx0[1]).toBe(0xcd);
+    expect(tx0[3]).toBe(0x00);
+    expect(tx0[4]).toBe(0x3b);
+    expect(tx1[1]).toBe(0xcd);
+    expect(tx1[3]).toBe(0x3b);
+    expect(tx1[4]).toBe(CONFIG_BLOCK_SIZE - MAX_CHUNK); // 36 (0x24)
   });
 });
 
@@ -182,10 +236,12 @@ describe("writeFullConfig", () => {
     expect(Array.from(mock.config)).toEqual(Array.from(newCfg));
     // Two-chunk split: 59 + 36, matching the read path.
     expect(mock.txHistory.length).toBe(2);
-    expect(mock.txHistory[0]![3]).toBe(0x00);
-    expect(mock.txHistory[0]![4]).toBe(0x3b);
-    expect(mock.txHistory[1]![3]).toBe(0x3b);
-    expect(mock.txHistory[1]![4]).toBe(CONFIG_BLOCK_SIZE - MAX_CHUNK);
+    const tx0 = txAt(mock, 0);
+    const tx1 = txAt(mock, 1);
+    expect(tx0[3]).toBe(0x00);
+    expect(tx0[4]).toBe(0x3b);
+    expect(tx1[3]).toBe(0x3b);
+    expect(tx1[4]).toBe(CONFIG_BLOCK_SIZE - MAX_CHUNK);
   });
 
   test("rejects wrong-size input", async () => {

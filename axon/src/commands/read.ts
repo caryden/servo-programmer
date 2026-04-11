@@ -34,14 +34,13 @@ export async function runRead(global: GlobalFlags, local: ReadFlags): Promise<nu
       return ExitCode.Ok;
 
     case "hex":
-      process.stdout.write(hexDump(config) + "\n");
+      process.stdout.write(`${hexDump(config)}\n`);
       return ExitCode.Ok;
 
     case "json":
       emitJson(config);
       return ExitCode.Ok;
 
-    case "human":
     default:
       if (global.json) {
         emitJson(config);
@@ -69,7 +68,7 @@ function emitJson(config: Buffer): void {
       _note: "Named parameters not yet implemented in v1 scaffold. See docs/BYTE_MAPPING.md.",
     },
   };
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 function emitHuman(config: Buffer, _global: GlobalFlags): void {

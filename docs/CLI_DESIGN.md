@@ -132,17 +132,15 @@ dirty config in memory across invocations.
 ### Mode (firmware flashing)
 
 ```
-axon mode list                    # bundled and discovered .sfw files
+axon mode list                    # known and discovered .sfw files
 axon mode current                 # which mode is this servo running?
-axon mode set <mode>              # flash bundled mode by name
+axon mode set <mode>              # flash known mode by name
 axon mode set --file custom.sfw   # flash a user-supplied .sfw
 ```
 
 `axon mode set` is **the only destructive operation with no undo.**
-It displays a prominent warning, requires confirmation (even with
-`--yes` it still requires the mode name to match what's currently
-selected in an extra "are you sure" prompt), and verifies the flash
-afterward.
+It displays a prominent warning, requires confirmation unless `--yes`
+is passed, and verifies the flash afterward.
 
 `.sfw` decryption is handled internally — the user never sees
 "decrypt" as a CLI verb. Users who need to inspect an `.sfw` file
@@ -151,13 +149,22 @@ subcommand is hidden from `--help` unless `AXON_DEV=1` is set.
 
 **Firmware file discovery precedence for `axon mode set <name>`:**
 
-1. `$AXON_FIRMWARE_PATH` — colon-separated user directories
-2. `~/.config/axon/firmware/` — future auto-download cache (not v1)
-3. Bundled-at-build-time — the canonical Axon `.sfw` files embedded
-   in the binary, selected by the current catalog's
-   `bundled_firmware` entry for the detected servo model.
+1. `$AXON_FIRMWARE_PATH` — platform-delimited user directories
+   (`:` on macOS/Linux, `;` on Windows)
+2. User firmware cache:
+   - macOS: `~/Library/Application Support/axon/firmware`
+   - Linux: `$XDG_DATA_HOME/axon/firmware` or `~/.local/share/axon/firmware`
+   - Windows: `%LOCALAPPDATA%\Axon\firmware`
+3. Repo-root `downloads/` when running from source
 
 `axon mode set --file <path>` bypasses all of the above.
+
+The CLI does **not** redistribute vendor `.sfw` files. The catalog
+stores the expected filenames and SHA-256 values; the user obtains the
+firmware from Axon's docs or supplies a custom file explicitly. This
+matches the vendor app's flow and leaves room for future MK2/WebHID
+support where firmware may come from a browser file picker or verified
+remote manifest.
 
 ## Servo catalog
 
@@ -168,7 +175,7 @@ code. The catalog is the single source of truth for:
 - Per-model metadata (name, max range, pulse range, docs URL)
 - Per-model parameter defaults (for `axon set default`)
 - Per-parameter metadata (unit, description, docs URL)
-- Bundled firmware mapping with SHA-256 checksums
+- Known firmware mapping with SHA-256 checksums
 
 On unknown model ID (byte range `0x40..0x47` of the config block),
 the CLI exits with code 6 and points the user at a

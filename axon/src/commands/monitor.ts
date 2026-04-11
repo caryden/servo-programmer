@@ -7,10 +7,10 @@
 
 import { findModel, loadCatalog } from "../catalog.ts";
 import type { GlobalFlags } from "../cli.ts";
-import { isDonglePresent, openDongle } from "../driver/hid.ts";
+import { listDongles, openDongle } from "../driver/hid.ts";
 import { identify, modelIdFromConfig, readFullConfig, type ServoMode } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
-import { ExitCode } from "../errors.ts";
+import { AxonError, ExitCode } from "../errors.ts";
 import { CLEAR_LINE, HIDE_CURSOR, renderStatusBar, SHOW_CURSOR } from "../util/tui.ts";
 
 const POLL_INTERVAL_MS = 300;
@@ -37,24 +37,30 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
   process.on("SIGINT", cleanup);
 
   while (!stopping) {
-    let adapterPresent = false;
+    let adapterState: "connected" | "disconnected" | "busy" = "disconnected";
     let servoName: string | null = null;
     let mode: string | null = null;
 
     try {
       if (handle === null) {
         cachedModelName = null;
-        if (isDonglePresent()) {
+        const dongles = listDongles();
+        if (dongles.length === 1) {
           try {
-            handle = await openDongle();
-          } catch {
+            handle = await openDongle(dongles[0]);
+          } catch (e) {
+            if (e instanceof AxonError && e.category === "adapter_busy") {
+              adapterState = "busy";
+            }
             // claim failed — retry next tick
           }
+        } else if (dongles.length > 1) {
+          adapterState = "busy";
         }
       }
 
       if (handle !== null) {
-        adapterPresent = true;
+        adapterState = "connected";
         try {
           const id = await identify(handle);
           if (id.present) {
@@ -80,7 +86,7 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
             await handle.release();
           } catch {}
           handle = null;
-          adapterPresent = false;
+          adapterState = "disconnected";
           cachedModelName = null;
         }
       }
@@ -95,15 +101,16 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
     }
 
     if (flags.json) {
-      const obj = { adapter: adapterPresent, servo: servoName, mode };
+      const obj = { adapter: adapterState, servo: servoName, mode };
       const line = JSON.stringify(obj);
       if (line !== lastLine) {
-        process.stdout.write(line + "\n");
+        process.stdout.write(`${line}\n`);
         lastLine = line;
       }
     } else {
       const bar = renderStatusBar({
-        adapter: adapterPresent,
+        adapter: adapterState === "connected",
+        adapterLabel: adapterState === "busy" ? "Adapter Busy" : null,
         servoName,
         modeName: mode,
       });

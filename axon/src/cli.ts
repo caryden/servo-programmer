@@ -41,7 +41,7 @@ interface ParsedArgs {
   global: GlobalFlags;
 }
 
-const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h", "version", "v"]);
+const GLOBAL_BOOLS = new Set(["json", "quiet", "yes", "y", "help", "h", "version", "v", "recover"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const global: GlobalFlags = { json: false, quiet: false, yes: false };
@@ -50,7 +50,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let command: string | null = null;
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
+    const arg = argv[i] ?? "";
     if (arg.startsWith("--")) {
       const body = arg.slice(2);
       const eq = body.indexOf("=");
@@ -109,7 +109,7 @@ COMMANDS:
   write             Write config to servo
   get               Read a named parameter (or list them)
   set               Write a named parameter
-  mode              List / show / flash bundled servo modes
+  mode              List / show / flash servo modes
   version           Print the CLI version and exit
   help              Show this message
 
@@ -220,11 +220,17 @@ async function main(argv: string[]): Promise<number> {
         const subcommand: ModeSubcommand = sub;
         if (subcommand === "set") {
           const filePath = typeof parsed.flags.file === "string" ? parsed.flags.file : undefined;
+          const recoverFlag = parsed.flags.recover;
+          const recover = recoverFlag === true || typeof recoverFlag === "string";
           const modeName = parsed.positional[1];
+          const recoveryModel =
+            parsed.positional[2] ?? (typeof recoverFlag === "string" ? recoverFlag : undefined);
           return await runMode(parsed.global, {
             subcommand,
             modeName,
             filePath,
+            recover,
+            recoveryModel,
           });
         }
         return await runMode(parsed.global, { subcommand });
@@ -252,8 +258,9 @@ async function main(argv: string[]): Promise<number> {
       return e.code;
     }
     process.stderr.write(`unexpected error: ${(e as Error).message}\n`);
-    if ((e as Error).stack) {
-      process.stderr.write(`${(e as Error).stack!}\n`);
+    const stack = (e as Error).stack;
+    if (stack) {
+      process.stderr.write(`${stack}\n`);
     }
     return ExitCode.ServoIoError;
   }
@@ -336,8 +343,16 @@ function printCommandHelp(command: string): void {
           `  axon mode set servo                Switch to Servo Mode (position control)\n` +
           `  axon mode set cr                   Switch to CR Mode (continuous rotation)\n` +
           `  axon mode set --file <path>        Flash an arbitrary .sfw file\n\n` +
+          `  axon mode set servo --recover mini Recover Mini to Servo Mode from search paths\n` +
+          `  axon mode set cr --recover mini    Recover Mini to CR Mode from search paths\n` +
+          `  axon mode set --file <path> --recover\n` +
+          `                                      Flash via bootloader when identify/read fails\n\n` +
           `FLAGS:\n` +
-          `  --yes, -y    Skip the confirmation prompt\n\n` +
+          `  --yes, -y    Skip the confirmation prompt\n` +
+          `  --recover    Skip normal identify/config read and flash via bootloader\n\n` +
+          `FIRMWARE SEARCH:\n` +
+          `  --file <path> always wins. Otherwise axon searches AXON_FIRMWARE_PATH,\n` +
+          `  the user firmware cache, and repo downloads/ when running from source.\n\n` +
           `Example:\n` +
           `  axon mode set servo\n` +
           `  axon mode set cr --yes\n`,

@@ -146,7 +146,7 @@ export function parseIntelHexRecord(body: string): IntelHexRecord {
   const checksum = hexByte(body.slice(8 + count * 2, 10 + count * 2), "hex record checksum");
   // Verify.
   let sum = count + addrHi + addrLo + type;
-  for (let i = 0; i < count; i++) sum += data[i]!;
+  for (let i = 0; i < count; i++) sum += data[i] ?? 0;
   const expected = (0x100 - (sum & 0xff)) & 0xff;
   if (expected !== checksum) {
     throw new Error(
@@ -183,9 +183,9 @@ function splitLines(text: string): string[] {
 /**
  * Decrypt a .sfw blob and parse the resulting plaintext into
  * structured records. Throws on anything abnormal (wrong magic, bad
- * checksum, unexpected line prefix, missing EOF record). Deliberately
- * strict — a silent-failure decrypter would put us in a bad spot the
- * first time we flash real hardware.
+ * checksum, unexpected line prefix, missing EOF record, or non-empty
+ * data after EOF). Deliberately strict — a silent-failure decrypter
+ * would put us in a bad spot the first time we flash real hardware.
  */
 export function decryptSfw(ciphertext: Buffer): DecryptedSfw {
   ensureAligned(ciphertext);
@@ -216,7 +216,10 @@ export function decryptSfw(ciphertext: Buffer): DecryptedSfw {
   }
 
   // Line 1: @0801<model>
-  const first = lines[0]!;
+  const first = lines[0];
+  if (first === undefined) {
+    throw new Error("sfw: plaintext had no lines");
+  }
   if (!first.startsWith("@")) {
     throw new Error(`sfw: expected first line to start with '@', got "${first.slice(0, 16)}"`);
   }
@@ -236,12 +239,10 @@ export function decryptSfw(ciphertext: Buffer): DecryptedSfw {
   const hexRecords: IntelHexRecord[] = [];
   let sawEof = false;
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]!;
+    const line = lines[i] ?? "";
     if (line.length === 0) continue;
     if (sawEof) {
-      // Trailing garbage after EOF record — the vendor exe stops
-      // walking at `:00000001FF` so we do too. Ignore silently.
-      break;
+      throw new Error(`sfw: non-empty line after Intel HEX EOF at line ${i + 1}`);
     }
     if (line.startsWith("$")) {
       if (line.length < 5) {

@@ -68,11 +68,13 @@ export async function runWrite(global: GlobalFlags, local: WriteFlags): Promise<
       after: number;
     }> = [];
     for (let i = 0; i < CONFIG_BLOCK_SIZE; i++) {
-      if (currentBytes[i] !== newBytes[i]) {
+      const before = currentBytes[i] ?? 0;
+      const after = newBytes[i] ?? 0;
+      if (before !== after) {
         diffs.push({
           offset: i,
-          before: currentBytes[i]!,
-          after: newBytes[i]!,
+          before,
+          after,
         });
       }
     }
@@ -144,14 +146,14 @@ function showDiff(
 ): void {
   if (global.json) {
     process.stdout.write(
-      JSON.stringify({
+      `${JSON.stringify({
         changes: diffs.map((d) => ({
           offset: `0x${d.offset.toString(16).padStart(2, "0")}`,
           before: `0x${d.before.toString(16).padStart(2, "0")}`,
           after: `0x${d.after.toString(16).padStart(2, "0")}`,
         })),
         count: diffs.length,
-      }) + "\n",
+      })}\n`,
     );
     return;
   }

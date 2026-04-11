@@ -151,7 +151,7 @@ function listAllParamsForMode(
       }));
     const modeSpec = findServoMode(mode === "servo_mode" ? 3 : 4);
     process.stdout.write(
-      JSON.stringify(
+      `${JSON.stringify(
         {
           mode,
           mode_label: modeSpec?.name ?? friendlyModeLabel(mode),
@@ -160,7 +160,7 @@ function listAllParamsForMode(
         },
         null,
         2,
-      ) + "\n",
+      )}\n`,
     );
     return ExitCode.Ok;
   }
@@ -169,7 +169,7 @@ function listAllParamsForMode(
 
   // Status bar
   process.stdout.write(
-    renderStatusBar({ adapter: true, servoName: modelName, modeName: modeLabel }) + "\n",
+    `${renderStatusBar({ adapter: true, servoName: modelName, modeName: modeLabel })}\n`,
   );
 
   // Parameter table
@@ -229,7 +229,7 @@ function emitSingle(
       obj.raw = value.raw;
     }
     if (value.notes) obj.notes = value.notes;
-    process.stdout.write(JSON.stringify(obj) + "\n");
+    process.stdout.write(`${JSON.stringify(obj)}\n`);
     return;
   }
 
@@ -260,7 +260,7 @@ function printParameterHelp(name: string, global: GlobalFlags): number {
     }
     if (global.json) {
       process.stdout.write(
-        JSON.stringify(
+        `${JSON.stringify(
           {
             name,
             vendor_label: entry.vendor_label,
@@ -271,7 +271,7 @@ function printParameterHelp(name: string, global: GlobalFlags): number {
           },
           null,
           2,
-        ) + "\n",
+        )}\n`,
       );
       return ExitCode.Ok;
     }
@@ -300,7 +300,7 @@ function printParameterHelp(name: string, global: GlobalFlags): number {
     if (spec.max != null) obj.max = spec.max;
     if (spec.values) obj.values = spec.values;
     if (spec.docsUrl) obj.docs_url = spec.docsUrl;
-    process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+    process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
     return ExitCode.Ok;
   }
 
@@ -342,7 +342,7 @@ export function printGetHelp(global: GlobalFlags): number {
         vendor_label: e.vendor_label,
       })),
     };
-    process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+    process.stdout.write(`${JSON.stringify(obj, null, 2)}\n`);
     return ExitCode.Ok;
   }
   process.stdout.write(

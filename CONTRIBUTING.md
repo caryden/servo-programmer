@@ -43,14 +43,36 @@ bun install
 bun run src/cli.ts status
 
 # Type-check, lint, format, and test before committing
-bun run typecheck
-bun run check       # Biome lint+format check
-bun test
+../scripts/ci-local.sh
 ```
 
-(The `check`/`lint`/`format`/`test` scripts land as part of issue
-[#5](https://github.com/caryden/servo-programmer/issues/5) — until then
-the test runner and Biome aren't wired up yet.)
+### Local commit checks
+
+Install the repo's Git hooks once per clone:
+
+```bash
+scripts/install-git-hooks.sh
+```
+
+The pre-commit hook runs the same required checks as CI on your local
+platform: `bun install --frozen-lockfile`, `bun run check`,
+`bun run typecheck`, and `bun test`. If you need to make an emergency
+commit while iterating, set `AXON_SKIP_PRECOMMIT=1`, then run the local
+CI script before pushing.
+
+### Firmware files during development
+
+The CLI does not redistribute or embed vendor `.sfw` firmware files.
+The catalog records expected filenames and SHA-256 values, and runtime
+code looks for user-supplied files in:
+
+1. `$AXON_FIRMWARE_PATH`
+2. the per-user firmware cache
+3. repo-root `downloads/` when running from source
+
+For local hardware testing, download the `.sfw` files from Axon's docs
+into `downloads/` or pass `--file <path.sfw>` explicitly. Keep
+`downloads/` gitignored; do not commit vendor firmware.
 
 ## Branches and PRs
 

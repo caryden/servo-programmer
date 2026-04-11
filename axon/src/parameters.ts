@@ -383,11 +383,11 @@ function buildInversion(): ParameterSpec {
 const LOOSE_PWM_MODES = ["release", "hold", "neutral"] as const;
 type LoosePwmMode = (typeof LOOSE_PWM_MODES)[number];
 const LOOSE_PWM_BITS: Record<LoosePwmMode, number> = { release: 0x00, hold: 0x40, neutral: 0x60 };
-const BITS_TO_MODE: Record<number, LoosePwmMode> = {
-  0x00: "release",
-  0x40: "hold",
-  0x60: "neutral",
-};
+const BITS_TO_MODE = new Map<number, LoosePwmMode>([
+  [0x00, "release"],
+  [0x40, "hold"],
+  [0x60, "neutral"],
+]);
 
 function buildLoosePwmProtection(): ParameterSpec {
   const entry = requireCatalogEntry("loose_pwm_protection");
@@ -405,7 +405,7 @@ function buildLoosePwmProtection(): ParameterSpec {
     read(config) {
       const raw = config[0x25] ?? 0;
       const bits = raw & 0x60;
-      const mode = BITS_TO_MODE[bits] ?? "release";
+      const mode = BITS_TO_MODE.get(bits) ?? "release";
       return { raw: bits >> 5, physical: mode, unit: "enum" };
     },
 
@@ -418,7 +418,7 @@ function buildLoosePwmProtection(): ParameterSpec {
         );
       }
       const out = cloneConfig(config);
-      out[0x25] = (out[0x25]! & ~0x60) | bits;
+      out[0x25] = ((out[0x25] ?? 0) & ~0x60) | bits;
       return out;
     },
 
@@ -522,9 +522,9 @@ function buildSoftStart(): ParameterSpec {
       const on = value === true || value === "on" || value === 1;
       const out = cloneConfig(config);
       if (on) {
-        out[0x25] = out[0x25]! | 0x10;
+        out[0x25] = (out[0x25] ?? 0) | 0x10;
       } else {
-        out[0x25] = out[0x25]! & ~0x10;
+        out[0x25] = (out[0x25] ?? 0) & ~0x10;
       }
       return out;
     },
@@ -584,7 +584,7 @@ function buildOverloadProtection(): ParameterSpec {
         });
       }
       const summary = enabled
-        ? `on  L1: ${levels[0]!.pct}%/${levels[0]!.sec}s  L2: ${levels[1]!.pct}%/${levels[1]!.sec}s  L3: ${levels[2]!.pct}%/${levels[2]!.sec}s`
+        ? `on  ${levels.map((level, i) => `L${i + 1}: ${level.pct}%/${level.sec}s`).join("  ")}`
         : "off";
       return { raw: enabled ? 1 : 0, physical: summary, unit: "enum" };
     },
@@ -593,8 +593,8 @@ function buildOverloadProtection(): ParameterSpec {
       const v = String(value).toLowerCase();
       if (v === "on" || v === "off") {
         const out = cloneConfig(config);
-        if (v === "on") out[0x25] = out[0x25]! | 0x80;
-        else out[0x25] = out[0x25]! & ~0x80;
+        if (v === "on") out[0x25] = (out[0x25] ?? 0) | 0x80;
+        else out[0x25] = (out[0x25] ?? 0) & ~0x80;
         return out;
       }
       throw AxonError.validation(

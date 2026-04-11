@@ -98,10 +98,6 @@ jobs:
           bun run typecheck
           bun test
 
-      - name: Embed firmware
-        working-directory: axon
-        run: bun run embed-sfw
-
       # `bun build --compile` produces a single executable that
       # bundles the Bun runtime + our source. The --target flag is
       # redundant on a matching host (it would let Bun cross-compile

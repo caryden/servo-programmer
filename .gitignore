@@ -2,6 +2,9 @@
 # Re-download with the URLs in docs/FINDINGS.md.
 downloads/
 
+# Local scratch workspace for captures, generated probes, and agent output.
+tmp/
+
 # Scratch files from static analysis
 *.strings.txt
 *.bin

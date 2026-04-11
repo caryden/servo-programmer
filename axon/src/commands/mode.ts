@@ -1,23 +1,23 @@
 /**
- * `axon mode` — list / inspect / flash bundled servo modes.
+ * `axon mode` — list / inspect / flash known servo modes.
  *
  * Sub-commands (see docs/CLI_DESIGN.md "Mode switching"):
  *
- *   axon mode list                     show bundled modes for the current servo
+ *   axon mode list                     show known modes for the current servo
  *   axon mode current                  show the mode the connected servo is in
- *   axon mode set <name> [--yes]       flash a bundled mode (standard|continuous|...)
+ *   axon mode set <name> [--yes]       flash a known mode (standard|continuous|...)
  *   axon mode set --file <path>        flash an arbitrary .sfw from disk
  *
  * Flashing is the most destructive operation in the CLI. This module
  * intentionally layers three gates before any write leaves the
  * host:
  *
- *   1. Hash verification (for bundled: `sha256(file) == catalog sha`;
- *      for --file: print the computed hash in the confirmation
- *      prompt so the user can cross-check it against Discord / docs).
+ *   1. Hash verification for catalog firmware found in the user's
+ *      firmware search paths. For --file, print the computed hash in
+ *      debug output so the user can cross-check it against docs.
  *   2. Prominent visible warning that flashing the wrong firmware is
- *      unrecoverable, plus an echo-the-mode-name prompt that the user
- *      must satisfy exactly, even with `--yes` / `-y`.
+ *      unrecoverable, plus an interactive confirmation unless the
+ *      caller passes `--yes` / `-y`.
  *   3. A model-id match check against the `@0801<model>` header line
  *      inside the .sfw — if the firmware was built for a different
  *      model we refuse.
@@ -30,6 +30,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
+  type BundledFirmware,
   findModel,
   findServoMode,
   loadCatalog,
@@ -50,18 +51,29 @@ import {
 } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
-import { type DecryptedSfw, decryptSfw, sfwHashHex, verifySfwHash } from "../sfw.ts";
-import { EMBEDDED_FIRMWARE, type EmbeddedFirmware, findEmbeddedFirmware } from "../sfw-embedded.ts";
+import {
+  type FirmwareResolution,
+  firmwareResolutionHint,
+  resolveCatalogFirmware,
+} from "../firmware-store.ts";
+import { type DecryptedSfw, decryptSfw, sfwHashHex } from "../sfw.ts";
 import { renderProgressBar } from "../util/tui.ts";
 
 export type ModeSubcommand = "list" | "current" | "set";
 
 export interface ModeFlags {
   subcommand: ModeSubcommand;
-  /** For `mode set`: the bundled mode name (if no --file). */
+  /** For `mode set`: the catalog mode name (if no --file). */
   modeName?: string;
   /** For `mode set --file <path>`: path to an arbitrary .sfw file. */
   filePath?: string;
+  /**
+   * Recovery flashing path: skip identify/config read and rely on the
+   * .sfw header plus bootloader family-byte check.
+   */
+  recover?: boolean;
+  /** For catalog recovery: mini|max|micro, or a catalog model id. */
+  recoveryModel?: string;
 }
 
 // ---- entry points ----------------------------------------------------------
@@ -117,19 +129,23 @@ async function runModeList(handle: DongleHandle, global: GlobalFlags): Promise<n
     file: string;
     description: string;
     sha256: string;
-    embedded: boolean;
+    available: boolean;
+    source: string | null;
+    path: string | null;
     unavailable_reason: string | null;
   };
   const rows: Row[] = [];
   for (const [modeKey, entry] of Object.entries(model.bundled_firmware)) {
-    const emb = findEmbeddedFirmware(modelId, modeKey);
+    const firmware = resolveCatalogFirmware(entry);
     rows.push({
       name: modeKey,
       file: entry.file,
       description: entry.description,
       sha256: entry.sha256,
-      embedded: emb?.available ?? false,
-      unavailable_reason: emb && !emb.available ? emb.reason : null,
+      available: firmware.found,
+      source: firmware.found ? firmware.source : null,
+      path: firmware.found ? firmware.path : null,
+      unavailable_reason: firmware.found ? null : firmware.reason,
     });
   }
 
@@ -149,15 +165,18 @@ async function runModeList(handle: DongleHandle, global: GlobalFlags): Promise<n
 
   process.stdout.write(`model    ${modelId} (${model.name})\n`);
   if (rows.length === 0) {
-    process.stdout.write("(no bundled firmware listed in catalog for this model)\n");
+    process.stdout.write("(no catalog firmware listed for this model)\n");
     return ExitCode.Ok;
   }
   process.stdout.write("modes:\n");
   for (const r of rows) {
-    const tag = r.embedded ? "embedded" : "(not embedded)";
+    const tag = r.available ? `found:${r.source}` : "(missing)";
     process.stdout.write(`  ${r.name.padEnd(11)}  ${tag.padEnd(16)}  ${r.file}\n`);
     process.stdout.write(`                                  ${r.description}\n`);
-    if (!r.embedded && r.unavailable_reason !== null) {
+    if (r.path !== null) {
+      process.stdout.write(`                                  ${r.path}\n`);
+    }
+    if (!r.available && r.unavailable_reason !== null) {
       process.stderr.write(`    reason: ${r.unavailable_reason}\n`);
     }
   }
@@ -178,15 +197,15 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
 
-  // Map identify-byte mode → bundled_firmware key heuristically:
+  // Map identify-byte mode → catalog firmware key heuristically:
   // "servo_mode" → "standard", "cr_mode" → "continuous" are the
   // conventions used by the catalog today.
-  let matchingBundledKey: string | null = null;
+  let matchingCatalogKey: string | null = null;
   if (model) {
     const modeKeyGuess =
       id.mode === "servo_mode" ? "standard" : id.mode === "cr_mode" ? "continuous" : null;
     if (modeKeyGuess && modeKeyGuess in model.bundled_firmware) {
-      matchingBundledKey = modeKeyGuess;
+      matchingCatalogKey = modeKeyGuess;
     }
   }
 
@@ -199,7 +218,7 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
             id: id.mode,
             name: modeSpec?.name ?? null,
             id_byte: modeSpec?.id_byte ?? null,
-            bundled_key: matchingBundledKey,
+            catalog_key: matchingCatalogKey,
           },
         },
         null,
@@ -217,8 +236,8 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
   } else {
     process.stdout.write(`mode     unknown (identify mode byte = ${id.mode})\n`);
   }
-  if (matchingBundledKey) {
-    process.stdout.write(`bundled  ${matchingBundledKey}\n`);
+  if (matchingCatalogKey) {
+    process.stdout.write(`catalog  ${matchingCatalogKey}\n`);
   }
   return ExitCode.Ok;
 }
@@ -236,10 +255,21 @@ async function runModeSet(
   global: GlobalFlags,
   local: ModeFlags,
 ): Promise<number> {
+  const recover = local.recover === true;
+  if (
+    recover &&
+    local.filePath === undefined &&
+    (local.modeName === undefined || local.recoveryModel === undefined)
+  ) {
+    throw AxonError.usage(
+      "`axon mode set --recover` requires either --file <path> or " +
+        "`axon mode set <servo|cr> --recover <mini|max|micro>` with the firmware in a search path.",
+    );
+  }
   if (local.filePath === undefined && local.modeName === undefined) {
     throw AxonError.usage(
       "`axon mode set` requires either a mode name or --file <path>. " +
-        "Run `axon mode list` to see the bundled modes for the connected servo.",
+        "Run `axon mode list` to see the known modes for the connected servo.",
     );
   }
   if (local.filePath !== undefined && local.modeName !== undefined) {
@@ -247,17 +277,47 @@ async function runModeSet(
       "`axon mode set`: specify either a mode name OR --file <path>, not both.",
     );
   }
-
-  const id = await identify(handle);
-  if (!id.present) {
-    throw AxonError.notPrimed();
+  if (local.filePath !== undefined && local.recoveryModel !== undefined) {
+    throw AxonError.usage(
+      "`axon mode set --file <path>` does not take a recovery model. " +
+        "The model comes from the .sfw header.",
+    );
   }
-  const config = await readFullConfig(handle);
-  const modelId = modelIdFromConfig(config);
+
   const catalog = loadCatalog();
-  const model = findModel(catalog, modelId);
-  if (model === undefined) {
-    throw AxonError.unknownModel(modelId);
+  let id: IdentifyReply | null = null;
+  let modelId: string | null = null;
+  let model: ServoModel | undefined;
+
+  if (!recover) {
+    id = await identify(handle);
+    if (!id.present) {
+      throw new AxonError(
+        ExitCode.NotPrimed,
+        "Adapter connected, but no servo detected before mode flashing.",
+        "Replug the servo and retry. For firmware recovery, use `axon mode set --file <path.sfw> --recover` with a known-good firmware file, or put the vendor .sfw in a firmware search path and run `axon mode set servo --recover mini` (or max/micro).",
+        "no_servo",
+      );
+    }
+    const config = await readFullConfig(handle);
+    modelId = modelIdFromConfig(config);
+    model = findModel(catalog, modelId);
+    if (model === undefined) {
+      throw AxonError.unknownModel(modelId);
+    }
+  } else if (local.filePath === undefined) {
+    if (local.recoveryModel === undefined) {
+      throw AxonError.usage(
+        "`axon mode set <mode> --recover` requires a model: mini, max, or micro.",
+      );
+    }
+    model = findModelForRecoveryTarget(catalog, local.recoveryModel);
+    if (model === undefined) {
+      throw AxonError.validation(
+        `unknown recovery model "${local.recoveryModel}". Expected mini, max, micro, or a catalog model id.`,
+      );
+    }
+    modelId = model.id;
   }
 
   // Resolve the user's mode name to a catalog key. Accept
@@ -265,7 +325,7 @@ async function runModeSet(
   // "cr" / "cr mode" / "continuous rotation" → "continuous".
   let sfwCiphertext: Buffer;
   let sourceDescription: string;
-  let bundledModeKey: string | null = null;
+  let catalogModeKey: string | null = null;
   if (local.filePath !== undefined) {
     try {
       sfwCiphertext = readFileSync(local.filePath);
@@ -274,9 +334,15 @@ async function runModeSet(
         `could not read --file ${local.filePath}: ${(e as Error).message}`,
       );
     }
-    sourceDescription = local.filePath;
+    sourceDescription = `file:${local.filePath}`;
   } else {
-    const resolvedKey = resolveModeName(local.modeName!, model.bundled_firmware);
+    if (model === undefined) {
+      throw AxonError.validation("cannot resolve catalog firmware without a known servo model.");
+    }
+    if (modelId === null || local.modeName === undefined) {
+      throw AxonError.validation("cannot resolve catalog firmware without a mode name.");
+    }
+    const resolvedKey = resolveModeName(local.modeName, model.bundled_firmware);
     if (resolvedKey === null) {
       const humanNames = Object.keys(model.bundled_firmware)
         .map((k) => friendlyModeKey(k))
@@ -285,23 +351,17 @@ async function runModeSet(
         `"${local.modeName}" is not a recognized mode. Available: ${humanNames}`,
       );
     }
-    bundledModeKey = resolvedKey;
+    catalogModeKey = resolvedKey;
     const entry = model.bundled_firmware[resolvedKey];
     if (!entry) {
       throw AxonError.validation(`mode "${resolvedKey}" not found in catalog.`);
     }
-    const embedded = findEmbeddedFirmware(modelId, resolvedKey);
-    if (!embedded || !embedded.available || embedded.base64 === null) {
-      throw AxonError.validation(
-        `firmware for ${friendlyModeKey(resolvedKey)} is not available in this build. ` +
-          `Pass --file <path> to supply it directly.`,
-      );
+    const firmware = resolveCatalogFirmware(entry);
+    if (!firmware.found) {
+      throw firmwareResolutionError(model, resolvedKey, entry, firmware);
     }
-    sfwCiphertext = Buffer.from(embedded.base64, "base64");
-    if (!verifySfwHash(sfwCiphertext, entry.sha256)) {
-      throw AxonError.validation("embedded firmware integrity check failed.");
-    }
-    sourceDescription = `bundled:${entry.file}`;
+    sfwCiphertext = firmware.bytes;
+    sourceDescription = `${firmware.source}:${firmware.path}`;
   }
 
   let decrypted: DecryptedSfw;
@@ -310,20 +370,35 @@ async function runModeSet(
   } catch (e) {
     throw AxonError.validation(`failed to decrypt firmware: ${(e as Error).message}`);
   }
+  if (recover && local.filePath !== undefined) {
+    modelId = decrypted.header.modelId;
+    model = findModelForFirmwareId(catalog, decrypted.header.modelId);
+  }
 
   const fileHashHex = sfwHashHex(sfwCiphertext);
-  const targetModeName = bundledModeKey
-    ? friendlyModeKey(bundledModeKey)
-    : basename(local.filePath!);
-  const currentModeName = friendlyModeName(id.mode);
+  const targetModeName = catalogModeKey
+    ? friendlyModeKey(catalogModeKey)
+    : basename(local.filePath ?? sourceDescription);
+  const currentModeName = id ? friendlyModeName(id.mode) : "unknown mode";
+  const modelLabel = model ? `${model.name} (${modelId})` : `firmware model ${modelId}`;
 
   // Simple confirmation — no SHA dumps, no hex record counts,
   // no type-the-word echo. Just tell the user what will happen
   // and let --yes skip it.
   if (!global.json && !global.quiet) {
-    process.stderr.write(
-      `\nSwitching ${model.name} from ${currentModeName} to ${targetModeName}.\n`,
-    );
+    if (recover) {
+      process.stderr.write(`\nRecovery flashing ${modelLabel} to ${targetModeName}.\n`);
+      process.stderr.write(
+        "  Cannot identify or read the servo first; using the firmware file header only.\n",
+      );
+      process.stderr.write(
+        "  The bootloader family bytes will still be checked before any erase/write.\n",
+      );
+    } else {
+      process.stderr.write(
+        `\nSwitching ${modelLabel} from ${currentModeName} to ${targetModeName}.\n`,
+      );
+    }
     if (local.filePath !== undefined) {
       process.stderr.write(`  file: ${local.filePath}\n`);
     }
@@ -339,7 +414,7 @@ async function runModeSet(
     if (!process.stdin.isTTY) {
       // Non-interactive: require AXON_FLASH_CONFIRM=<key> or --yes.
       const envEcho = process.env.AXON_FLASH_CONFIRM ?? "";
-      const echoTarget = bundledModeKey ?? (local.filePath ? basename(local.filePath) : "");
+      const echoTarget = catalogModeKey ?? (local.filePath ? basename(local.filePath) : "");
       if (envEcho !== echoTarget) {
         process.stderr.write("(non-interactive — pass --yes or set AXON_FLASH_CONFIRM)\n");
         return ExitCode.Ok;
@@ -357,7 +432,7 @@ async function runModeSet(
   // Flash.
   const cmdSleepOverride = Number.parseInt(process.env.AXON_FLASH_CMD_SLEEP_MS ?? "", 10);
   await flashFirmware(handle, decrypted, {
-    expectedModelId: modelId,
+    expectedModelId: modelId ?? undefined,
     onProgress: makeProgressSink(global),
     cmdSleepMs: Number.isFinite(cmdSleepOverride) ? cmdSleepOverride : undefined,
   });
@@ -390,17 +465,18 @@ async function runModeSet(
     process.stdout.write(
       `${JSON.stringify({
         ok: true,
-        model: { id: modelId, name: model.name },
-        old_mode: id.mode,
+        recovery: recover,
+        model: { id: modelId, name: model?.name ?? null },
+        old_mode: id?.mode ?? null,
         new_mode: afterId.mode,
-        bundled_mode_key: bundledModeKey,
+        catalog_mode_key: catalogModeKey,
         source: sourceDescription,
         file_sha256: fileHashHex,
       })}\n`,
     );
   } else {
     const newModeName = friendlyModeName(afterId.mode);
-    process.stderr.write(`\nDone. ${model.name} is now in ${newModeName}.\n`);
+    process.stderr.write(`\nDone. ${modelLabel} is now in ${newModeName}.\n`);
   }
   return ExitCode.Ok;
 }
@@ -428,6 +504,67 @@ function resolveModeName(input: string, bundledFirmware: Record<string, unknown>
   if (mapped && Object.hasOwn(bundledFirmware, mapped)) return mapped;
 
   return null;
+}
+
+function normalizeModelId(modelId: string): string {
+  return modelId.replace(/[*\0\s]+$/, "");
+}
+
+function normalizeModelAlias(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function findModelForRecoveryTarget(
+  catalog: ReturnType<typeof loadCatalog>,
+  target: string,
+): ServoModel | undefined {
+  const aliases: Record<string, string> = {
+    mini: "SA33****",
+    axonmini: "SA33****",
+    max: "SA81BHMW",
+    axonmax: "SA81BHMW",
+    micro: "SA20BHS*",
+    axonmicro: "SA20BHS*",
+  };
+  const normalized = normalizeModelAlias(target);
+  const aliasModelId = aliases[normalized];
+  if (aliasModelId !== undefined) return findModel(catalog, aliasModelId);
+
+  const cleanTarget = normalizeModelId(target);
+  for (const candidate of catalog.models.values()) {
+    if (candidate.id === target || normalizeModelId(candidate.id) === cleanTarget) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function findModelForFirmwareId(
+  catalog: ReturnType<typeof loadCatalog>,
+  firmwareModelId: string,
+): ServoModel | undefined {
+  const cleanFirmware = normalizeModelId(firmwareModelId);
+  for (const candidate of catalog.models.values()) {
+    if (normalizeModelId(candidate.id) === cleanFirmware) return candidate;
+  }
+  return undefined;
+}
+
+function firmwareResolutionError(
+  model: ServoModel,
+  modeKey: string,
+  entry: BundledFirmware,
+  resolution: Extract<FirmwareResolution, { found: false }>,
+): AxonError {
+  const modeLabel = friendlyModeKey(modeKey);
+  const reason =
+    resolution.reason === "hash_mismatch" ? "found file with wrong SHA-256" : "file not found";
+  return new AxonError(
+    ExitCode.ValidationError,
+    `firmware for ${model.name} ${modeLabel} is not available (${reason}): ${entry.file}`,
+    firmwareResolutionHint(entry, resolution),
+    "validation",
+  );
 }
 
 /** User-friendly label for a catalog bundled_firmware key. */
@@ -488,12 +625,6 @@ function makeProgressSink(global: GlobalFlags): FlashProgressFn {
       }
     }
   };
-}
-
-// ---- test-oriented re-exports ---------------------------------------------
-
-export function embeddedFirmwareManifest(): readonly EmbeddedFirmware[] {
-  return EMBEDDED_FIRMWARE;
 }
 
 export type { IdentifyReply, ServoModel };

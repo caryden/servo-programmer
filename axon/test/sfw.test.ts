@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { createCipheriv } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +35,7 @@ const MINI_CR_CIPHER = join(DOWNLOADS, "Axon_Mini_Modified_CR_Mode.sfw");
 const MINI_CR_PLAIN = join(GROUND_TRUTH, "Axon_Mini_Modified_CR_Mode.plain.bin");
 const MAX_SERVO_CIPHER = join(DOWNLOADS, "Axon_Max_Servo_Mode.sfw");
 const MAX_SERVO_PLAIN = join(GROUND_TRUTH, "Axon_Max_Servo_Mode.plain.bin");
+const SFW_KEY = Buffer.from("TTTTTTTTTTTTTTTT", "ascii");
 
 const KNOWN_HASHES: Record<string, string> = {
   [MINI_SERVO_CIPHER]: "c9f038a854629c1f237e5008c9444a829d2fe5744203bcc959c8fd0c2e95c2c3",
@@ -46,6 +48,30 @@ function tryRead(path: string): Buffer | null {
   } catch {
     return null;
   }
+}
+
+function encryptEcb16(block: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-ecb", SFW_KEY, null);
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(block), cipher.final()]);
+}
+
+function encryptCbc(body: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-cbc", SFW_KEY, Buffer.alloc(16));
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(body), cipher.final()]);
+}
+
+function encryptTestSfw(plaintext: string): Buffer {
+  const body = Buffer.from(plaintext, "ascii");
+  const paddedBody = Buffer.alloc(Math.ceil(body.length / 16) * 16);
+  body.copy(paddedBody);
+
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(body.length, 0);
+  header.fill(0x78, 4); // 'x' magic bytes
+
+  return Buffer.concat([encryptEcb16(header), encryptCbc(paddedBody)]);
 }
 
 describe("sfw decrypt", () => {
@@ -106,12 +132,15 @@ describe("sfw decrypt", () => {
     // will decrypt back to our bogus header.
     // (We just use a zero-body; decrypt will reject at the magic
     // check before touching it.)
-    const { createCipheriv } = require("node:crypto") as typeof import("node:crypto");
-    const cipher = createCipheriv("aes-128-ecb", Buffer.from("TTTTTTTTTTTTTTTT", "ascii"), null);
-    cipher.setAutoPadding(false);
-    const encHeader = Buffer.concat([cipher.update(fakeHeader), cipher.final()]);
+    const encHeader = encryptEcb16(fakeHeader);
     const blob = Buffer.concat([encHeader, Buffer.alloc(16)]);
     expect(() => decryptSfw(blob)).toThrow(/magic/);
+  });
+
+  test("decryptSfw rejects non-empty lines after Intel HEX EOF", () => {
+    const blob = encryptTestSfw("@0801SA33\r\n$0000\r\n:00000001FF\r\n:0000000000\r\n");
+
+    expect(() => decryptSfw(blob)).toThrow(/after Intel HEX EOF/);
   });
 });
 

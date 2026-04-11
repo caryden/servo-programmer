@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${AXON_SKIP_PRECOMMIT:-}" = "1" ]; then
+  echo "AXON_SKIP_PRECOMMIT=1 set; skipping local CI pre-commit checks." >&2
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/scripts/ci-local.sh"

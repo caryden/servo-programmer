@@ -17,12 +17,13 @@ the research session that led here, read
 ## Overview
 
 The dongle is a USB HID class device that bridges to a half-duplex
-9600-baud Dynamixel-v1-style serial bus on the servo signal wire.
-This document covers both halves: the host-to-dongle HID protocol
-and the dongle-to-servo wire protocol. Because the dongle is a
-transparent proxy for the three runtime commands (identify, read,
-write), the two halves are effectively the same protocol wearing
-two different framings.
+serial bus on the servo signal wire. Runtime config commands use a
+9600-baud Dynamixel-v1-style framing. Firmware upload / recovery uses
+the servo bootloader path at 115200 baud with raw bootloader payloads.
+This document covers both halves: the host-to-dongle HID protocol and
+the dongle-to-servo wire protocol. Because the dongle is a transparent
+proxy for the three runtime commands (identify, read, write), those two
+halves are effectively the same protocol wearing two different framings.
 
 Target reader: a developer who wants to write their own tool
 against the dongle, possibly in another language.
@@ -61,12 +62,12 @@ navigator.hid.requestDevice({
 | `0xCB` | write | host to dongle | Write N bytes to the servo's 95-byte config block |
 | `0x90` / `0x91` | self-test | host to dongle | Observed in wire captures as an init-time probe (write 32 bytes at virtual address `0x0100`, read 32 bytes at `0x0000`). Not used by v1.0 of the `axon` CLI. |
 
-The vendor exe additionally uses `0x5A`, `0x80`, `0x81`, `0x82`,
-`0x83` for firmware upload and a single-byte status probe — those
-are out of scope for this document but are covered in the raw
-findings.
+The vendor exe additionally uses `0x5A`, `0x80`, `0x81`, `0x82`, and
+`0x83` for firmware upload and a single-byte status probe. The
+bootloader upload path is summarized in
+[`Firmware upload / recovery`](#firmware-upload--recovery).
 
-## HID request format (host to dongle)
+## Runtime HID request format (host to dongle)
 
 All requests are exactly 64 bytes long (zero-padded on the right)
 and begin with Report ID `0x04`.
@@ -88,7 +89,7 @@ the dongle drops `addr_hi` before forwarding to the wire — the
 on-wire address field is single-byte because the servo's config
 block is only `0x5F` bytes long.
 
-## HID reply format (dongle to host)
+## Runtime HID reply format (dongle to host)
 
 Replies are also exactly 64 bytes, same Report ID.
 
@@ -115,7 +116,7 @@ Note that the write primitive only checks `rx[1] !== 0` — `rx[2]` is
 not validated on writes. This is documented in the vendor exe's
 `FUN_00404900` helper.
 
-## Wire format (dongle to servo, servo to dongle)
+## Runtime wire format (dongle to servo, servo to dongle)
 
 The dongle is a **transparent proxy** on the read and write paths
 when properly primed: the HID command byte (`0x8A` / `0xCD` / `0xCB`)
@@ -138,9 +139,9 @@ Field reference:
 - `CHKSUM` — `(~(ID + LEN + INSTR + PARAMS)) & 0xFF` — bitwise NOT
   of the running sum, **not** two's complement
 
-The bus runs at 9600 baud, 8N1, half-duplex on a single wire. One
-byte takes ~1.04 ms on the wire; a full 65-byte read reply (the
-biggest frame the dongle emits) takes ~68 ms.
+The runtime bus runs at 9600 baud, 8N1, half-duplex on a single wire.
+One byte takes ~1.04 ms on the wire; a full 65-byte read reply (the
+biggest runtime frame the dongle emits) takes ~68 ms.
 
 ### Checksum reference implementation
 
@@ -385,6 +386,49 @@ python3 research/static-analysis/static_analyze.py decrypt \
 The "Servo Mode" and "Modified CR Mode" firmware variants for a
 given servo family differ by exactly **one byte** — the byte at
 flash offset `0x1C5F`: `0x00` for Modified CR, `0x01` for Servo Mode.
+
+## Firmware upload / recovery
+
+Firmware flashing uses a different wire protocol from the 9600-baud
+runtime config path. A real `axon mode set servo --recover micro --yes`
+capture against an Axon Micro is preserved in
+[`research/saleae-captures/axon-recover-micro-2026-04-11-summary.md`](../research/saleae-captures/axon-recover-micro-2026-04-11-summary.md).
+
+Observed servo-signal settings for the flash bootloader path:
+
+- Baud: **115200**
+- Format: 8N1
+- Signal inversion: non-inverted
+- Framing: raw bootloader bytes, not the `FF FF ... CHKSUM`
+  Dynamixel-style runtime frame
+
+The first bootloader exchange on the wire is:
+
+```text
+host:  01 02 03 04
+servo: 56 30 2E 33 08 01
+```
+
+The reply decodes as boot version `V0.3` plus type bytes `08 01`.
+Those type bytes match the `@0801...` header in the `.sfw`; this is the
+wire-level family guard used before erase/write.
+
+The observed successful Micro Servo Mode recovery flash sequence was:
+
+1. `0x80` HID boot query forwards raw `01 02 03 04` at 115200; servo
+   replies `56 30 2E 33 08 01`.
+2. `0x81` key exchange sends 22 bytes and receives 22 bytes.
+3. `0x82` sector erases send 13 encrypted 22-byte payloads, each
+   ACKed by `55`.
+4. `0x82` firmware writes send 398 encrypted 22-byte Intel HEX payloads,
+   including EOF.
+5. The servo reboots and returns to the normal 9600 identify protocol;
+   the captured post-flash identify reply had mode byte `0x03` (Servo
+   Mode).
+
+This is the path used by `axon mode set --recover`: skip normal
+identify/config reads, rely on the `.sfw` header and bootloader type-byte
+check, then flash through the bootloader.
 
 ## See also
 
