@@ -87,63 +87,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
 
-      - name: Install dependencies
-        working-directory: axon
-        run: bun install --frozen-lockfile
-
-      - name: Sanity — test + typecheck + lint
-        working-directory: axon
-        run: |
-          bun run check
-          bun run typecheck
-          bun test
-
-      # `bun build --compile` produces a single executable that
-      # bundles the Bun runtime + our source. The --target flag is
-      # redundant on a matching host (it would let Bun cross-compile
-      # the runtime, but NOT the native node-hid .node addon —
-      # that's the reason we build per-runner in the first place).
-      # We pass --target anyway so a mis-configured matrix (wrong
-      # os/target pair) fails loudly at build time instead of
-      # shipping a binary with a wrong-arch .node inside.
       - name: Build standalone binary
-        working-directory: axon
         shell: bash
         run: |
-          mkdir -p dist
-          bun build \
-            --compile \
-            --target=${{ matrix.bun_target }} \
-            --outfile=dist/${{ matrix.artifact }}${{ matrix.ext }} \
-            src/cli.ts
-
-      - name: Smoke test the binary (non-Windows)
-        if: runner.os != 'Windows'
-        working-directory: axon
-        run: |
-          ./dist/${{ matrix.artifact }} --version || true
-          ./dist/${{ matrix.artifact }} --help || true
-
-      - name: Smoke test the binary (Windows)
-        if: runner.os == 'Windows'
-        working-directory: axon
-        shell: pwsh
-        run: |
-          .\dist\${{ matrix.artifact }}.exe --version
-          .\dist\${{ matrix.artifact }}.exe --help
-
-      - name: Compute SHA256
-        working-directory: axon/dist
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            shasum -a 256 ${{ matrix.artifact }}${{ matrix.ext }} > ${{ matrix.artifact }}${{ matrix.ext }}.sha256
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            sha256sum ${{ matrix.artifact }}${{ matrix.ext }} > ${{ matrix.artifact }}${{ matrix.ext }}.sha256
-          else
-            # Windows: use PowerShell via bash wrapper
-            powershell -Command "(Get-FileHash ${{ matrix.artifact }}${{ matrix.ext }} -Algorithm SHA256).Hash.ToLower() + '  ${{ matrix.artifact }}${{ matrix.ext }}'" > ${{ matrix.artifact }}${{ matrix.ext }}.sha256
-          fi
+          ./scripts/build-release.sh \
+            --target ${{ matrix.bun_target }} \
+            --outfile axon/dist/${{ matrix.artifact }}${{ matrix.ext }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -163,6 +112,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -173,6 +124,7 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f \( -name 'axon-*' -o -name '*.sha256' \) -exec cp {} release/ \;
+          cp scripts/install.sh release/install.sh
           ls -la release/
 
       - name: Create GitHub Release
@@ -211,10 +163,8 @@ jobs:
             shasum -a 256 -c axon-darwin-arm64.sha256
             ```
 
-            ### Homebrew (macOS / Linux)
+            ### Notes
 
-            ```bash
-            brew install caryden/axon/axon
-            ```
-
-            _(See [INSTALL.md](https://github.com/caryden/servo-programmer/blob/main/docs/INSTALL.md) for the full matrix including Scoop, npm, and bunx.)_
+            - Full install matrix: [docs/INSTALL.md](https://github.com/caryden/servo-programmer/blob/main/docs/INSTALL.md)
+            - Project background: [docs/the-adventure.md](https://github.com/caryden/servo-programmer/blob/main/docs/the-adventure.md)
+            - Homebrew, npm, and Scoop remain planned follow-on channels; direct download and `install.sh` are the v1.0 path.

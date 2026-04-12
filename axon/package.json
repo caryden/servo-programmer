@@ -1,6 +1,6 @@
 {
   "name": "axon",
-  "version": "0.1.0-dev",
+  "version": "1.0.0",
   "description": "Cross-platform CLI for Axon Robotics servo programmer. Replacement for the Windows-only vendor exe.",
   "type": "module",
   "private": true,

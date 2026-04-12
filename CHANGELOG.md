@@ -7,34 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0]
+## [1.0.0] — 2026-04-12
 
 ### Added
 
-- `LICENSE` (MIT, copyright 2026 Carl Ryden) at repo root.
-- `README.md` (baseline stub) at repo root with project tagline,
-  research-experiment framing, current status, and quick start.
-- `CHANGELOG.md` (this file) at repo root.
-- `CONTRIBUTING.md` at repo root with the contributor workflow.
-- `docs/wire-protocol.md` — polished public-audience reference for
-  the USB HID and on-wire protocols, derived from `docs/FINDINGS.md`.
+- The full v1 CLI surface for the legacy Axon V1.3 programmer:
+  `status`, `doctor`, `monitor`, `read`, `write`, `get`, `set`,
+  `mode`, and `version`.
+- Standalone release artifacts for macOS, Linux, and Windows via
+  `.github/workflows/release.yml` and `scripts/build-release.sh`.
+- `scripts/install.sh` plus `scripts/test-install.sh` for the
+  direct-download install path on macOS and Linux.
+- Public-facing protocol and operator docs in `docs/`, including
+  `wire-protocol.md`, `BYTE_MAPPING.md`, `CLI_DESIGN.md`, and
+  `INSTALL.md`.
 
 ### Changed
 
-- `docs/FINDINGS.md` was polished into `docs/wire-protocol.md` (the
-  public-audience reference) and the original research diary was
-  moved to `research/session-notes/findings-raw.md` as source
-  material for the future blog post. All inbound links (in
-  `README.md`, `axon/src/driver/protocol.ts`, and this changelog)
-  now point to `docs/wire-protocol.md`.
-- `README.md` now documents how agents should use the CLI directly:
-  `--help`, `--json`, stable error categories, and `axon doctor`.
+- Firmware mode flashing now uses external `.sfw` files from search
+  paths or explicit `--file` input rather than bundling vendor
+  firmware into the CLI binary.
+- CLI guidance for humans and agents is now centered on `--help`,
+  stable `--json` output, `AxonError.category`, and `axon doctor`
+  instead of repo-specific agent glue.
+- The catalog now includes Mini, Micro, and Max model coverage for
+  the current reverse-engineered surface, with unresolved defaults
+  left explicit rather than guessed.
 
-### Documented
+### Removed
 
-- Plan to v1.0 broken into 18 GitHub issues across 3 milestones
-  (`v0.2-clean-baseline`, `v1.0`, `post-v1.0`). See the
-  [milestones page](https://github.com/caryden/servo-programmer/milestones).
+- The old libusb-era approach and its reset/claim footguns from the
+  runnable CLI path. The released tool is HID-based and runs without
+  sudo on supported platforms.
+
+### Fixed
+
+- Prompt handling no longer consumes stdin across repeated confirms.
+- `write` now rejects empty or mismatched model IDs before showing a
+  diff or touching a servo.
+- `get` and `set` now fail clearly on unknown modes and unknown mode
+  labels instead of degrading into misleading parameter errors.
+- HID and protocol tests are now isolated from cross-test module-cache
+  pollution on Windows and other CI runners.
+
+### Security
+
+- Unexpected stack traces are hidden by default and shown only when
+  `AXON_DEBUG=1` is set.
+- HID protocol reads reject truncated replies before slicing payloads.
+- Catalog firmware lookup for mode detection uses own-property checks
+  instead of prototype-inherited keys.
+- Firmware resolution verifies SHA-256 before trusting catalog-backed
+  `.sfw` files from search paths.
 
 ## [0.1.0] — 2026-04-09 (un-tagged research checkpoint)
 
@@ -102,5 +126,5 @@ this revision — but the working CLI runs from source.
   wipes primed state and is therefore destructive — never call it.
 
 [Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/caryden/servo-programmer/compare/v0.1.0...v1.0.0
-[0.1.0]: https://github.com/caryden/servo-programmer/releases/tag/v0.1.0
+[1.0.0]: https://github.com/caryden/servo-programmer/compare/61e2c41...v1.0.0
+[0.1.0]: https://github.com/caryden/servo-programmer/tree/61e2c41
