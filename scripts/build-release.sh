@@ -117,9 +117,15 @@ case "${target}" in
 esac
 
 if [[ -z "${outfile}" ]]; then
+  if [[ "${outdir}" != /* ]]; then
+    outdir="${repo_root}/${outdir}"
+  fi
   mkdir -p "${outdir}"
   outfile="${outdir%/}/${artifact}"
 else
+  if [[ "${outfile}" != /* ]]; then
+    outfile="${repo_root}/${outfile}"
+  fi
   mkdir -p "$(dirname "${outfile}")"
 fi
 
@@ -148,12 +154,17 @@ fi
 
 chmod +x "${outfile}" 2>/dev/null || true
 
-if [[ "${artifact}" == *.exe ]]; then
-  "${outfile}" --version
-  "${outfile}" --help >/dev/null
+if [[ "${target}" == "${default_target}" ]]; then
+  if [[ "${artifact}" == *.exe ]]; then
+    "${outfile}" --version
+    "${outfile}" --help >/dev/null
+  else
+    "${outfile}" --version
+    "${outfile}" --help >/dev/null
+  fi
 else
-  "${outfile}" --version
-  "${outfile}" --help >/dev/null
+  printf 'skipping smoke execution for cross-target build %s on host %s\n' \
+    "${target}" "${default_target}"
 fi
 
 sha_file="${outfile}.sha256"
