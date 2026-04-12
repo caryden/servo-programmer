@@ -14,14 +14,48 @@ export async function confirm(question: string): Promise<boolean> {
     return false;
   }
   process.stderr.write(`${question} [y/N] `);
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk as Uint8Array);
-    const combined = Buffer.concat(chunks).toString("utf8");
-    if (combined.includes("\n")) {
-      const answer = (combined.split("\n")[0] ?? "").trim().toLowerCase();
-      return answer === "y" || answer === "yes";
-    }
-  }
-  return false;
+  const answer = (await readLineFromStdin()).trim().toLowerCase();
+  return answer === "y" || answer === "yes";
+}
+
+/** Read a single line from stdin without consuming the async iterator. */
+export function readLineFromStdin(): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+
+    const cleanup = () => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("end", onEnd);
+      process.stdin.removeListener("error", onError);
+      process.stdin.pause();
+    };
+
+    const finish = (line: string) => {
+      cleanup();
+      resolve(line);
+    };
+
+    const currentLine = (): string => {
+      const combined = Buffer.concat(chunks).toString("utf8");
+      const newlineIndex = combined.indexOf("\n");
+      const line = newlineIndex >= 0 ? combined.slice(0, newlineIndex) : combined;
+      return line.replace(/\r$/, "");
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+      const combined = Buffer.concat(chunks).toString("utf8");
+      if (combined.includes("\n")) {
+        finish(currentLine());
+      }
+    };
+
+    const onEnd = () => finish(currentLine());
+    const onError = () => finish("");
+
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+    process.stdin.once("end", onEnd);
+    process.stdin.once("error", onError);
+  });
 }

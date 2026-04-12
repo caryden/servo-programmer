@@ -17,41 +17,8 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AxonError, ExitCode } from "../../src/errors.ts";
+import { type CapturedIO, captureIO } from "../helpers/capture-io.ts";
 import { MockDongle } from "../mocks/mock-dongle.ts";
-
-interface CapturedIO {
-  stdout: string;
-  stderr: string;
-  restore: () => void;
-}
-
-function captureIO(): CapturedIO {
-  const chunks = { stdout: [] as Uint8Array[], stderr: [] as Uint8Array[] };
-  const origOut = process.stdout.write.bind(process.stdout);
-  const origErr = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error override
-  process.stdout.write = (chunk: string | Uint8Array): boolean => {
-    chunks.stdout.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    return true;
-  };
-  // @ts-expect-error override
-  process.stderr.write = (chunk: string | Uint8Array): boolean => {
-    chunks.stderr.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    return true;
-  };
-  return {
-    get stdout() {
-      return Buffer.concat(chunks.stdout).toString("utf8");
-    },
-    get stderr() {
-      return Buffer.concat(chunks.stderr).toString("utf8");
-    },
-    restore() {
-      process.stdout.write = origOut;
-      process.stderr.write = origErr;
-    },
-  };
-}
 
 const JSON_FLAGS = { json: true, quiet: false, yes: true };
 const DONGLE = {

@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createCipheriv } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -36,6 +36,10 @@ const MINI_CR_PLAIN = join(GROUND_TRUTH, "Axon_Mini_Modified_CR_Mode.plain.bin")
 const MAX_SERVO_CIPHER = join(DOWNLOADS, "Axon_Max_Servo_Mode.sfw");
 const MAX_SERVO_PLAIN = join(GROUND_TRUTH, "Axon_Max_Servo_Mode.plain.bin");
 const SFW_KEY = Buffer.from("TTTTTTTTTTTTTTTT", "ascii");
+const HAS_MINI_SERVO_FIXTURE = existsSync(MINI_SERVO_CIPHER) && existsSync(MINI_SERVO_PLAIN);
+const HAS_MINI_CR_FIXTURE = existsSync(MINI_CR_CIPHER) && existsSync(MINI_CR_PLAIN);
+const HAS_MAX_SERVO_FIXTURE = existsSync(MAX_SERVO_CIPHER) && existsSync(MAX_SERVO_PLAIN);
+const HAS_MINI_SERVO_CIPHER = existsSync(MINI_SERVO_CIPHER);
 
 const KNOWN_HASHES: Record<string, string> = {
   [MINI_SERVO_CIPHER]: "c9f038a854629c1f237e5008c9444a829d2fe5744203bcc959c8fd0c2e95c2c3",
@@ -48,6 +52,20 @@ function tryRead(path: string): Buffer | null {
   } catch {
     return null;
   }
+}
+
+function requireBuffer(value: Buffer | null, label: string): Buffer {
+  if (value === null) {
+    throw new Error(`missing fixture: ${label}`);
+  }
+  return value;
+}
+
+function requireString(value: string | undefined, label: string): string {
+  if (value === undefined) {
+    throw new Error(`missing value: ${label}`);
+  }
+  return value;
 }
 
 function encryptEcb16(block: Buffer): Buffer {
@@ -75,42 +93,42 @@ function encryptTestSfw(plaintext: string): Buffer {
 }
 
 describe("sfw decrypt", () => {
-  test("Axon_Mini_Servo_Mode matches ground-truth plaintext", () => {
-    const ct = tryRead(MINI_SERVO_CIPHER);
-    const expected = tryRead(MINI_SERVO_PLAIN);
-    if (ct === null || expected === null) {
-      // downloads/ is gitignored and may not exist on CI runners.
-      return;
-    }
-    const dec = decryptSfw(ct);
-    expect(dec.plaintext.equals(expected)).toBe(true);
-    expect(dec.declaredLength).toBe(expected.length);
-    expect(dec.header.raw).toBe("0801SA33");
-    expect(dec.header.typeBytes).toEqual([0x08, 0x01]);
-    expect(dec.header.modelId).toBe("SA33");
-    expect(dec.sectorErases.length).toBe(13);
-    expect(dec.hexRecords.length).toBe(401);
-    // Last record must be the Intel HEX EOF.
-    const last = dec.hexRecords.at(-1);
-    expect(last).toBeDefined();
-    expect(last?.type).toBe(0x01);
-    expect(last?.count).toBe(0);
-    expect(last?.checksum).toBe(0xff);
-  });
+  test.skipIf(!HAS_MINI_SERVO_FIXTURE)(
+    "Axon_Mini_Servo_Mode matches ground-truth plaintext",
+    () => {
+      const ct = requireBuffer(tryRead(MINI_SERVO_CIPHER), MINI_SERVO_CIPHER);
+      const expected = requireBuffer(tryRead(MINI_SERVO_PLAIN), MINI_SERVO_PLAIN);
+      const dec = decryptSfw(ct);
+      expect(dec.plaintext.equals(expected)).toBe(true);
+      expect(dec.declaredLength).toBe(expected.length);
+      expect(dec.header.raw).toBe("0801SA33");
+      expect(dec.header.typeBytes).toEqual([0x08, 0x01]);
+      expect(dec.header.modelId).toBe("SA33");
+      expect(dec.sectorErases.length).toBe(13);
+      expect(dec.hexRecords.length).toBe(401);
+      // Last record must be the Intel HEX EOF.
+      const last = dec.hexRecords.at(-1);
+      expect(last).toBeDefined();
+      expect(last?.type).toBe(0x01);
+      expect(last?.count).toBe(0);
+      expect(last?.checksum).toBe(0xff);
+    },
+  );
 
-  test("Axon_Mini_Modified_CR_Mode matches ground-truth plaintext", () => {
-    const ct = tryRead(MINI_CR_CIPHER);
-    const expected = tryRead(MINI_CR_PLAIN);
-    if (ct === null || expected === null) return;
-    const dec = decryptSfw(ct);
-    expect(dec.plaintext.equals(expected)).toBe(true);
-    expect(dec.header.modelId).toBe("SA33");
-  });
+  test.skipIf(!HAS_MINI_CR_FIXTURE)(
+    "Axon_Mini_Modified_CR_Mode matches ground-truth plaintext",
+    () => {
+      const ct = requireBuffer(tryRead(MINI_CR_CIPHER), MINI_CR_CIPHER);
+      const expected = requireBuffer(tryRead(MINI_CR_PLAIN), MINI_CR_PLAIN);
+      const dec = decryptSfw(ct);
+      expect(dec.plaintext.equals(expected)).toBe(true);
+      expect(dec.header.modelId).toBe("SA33");
+    },
+  );
 
-  test("Axon_Max_Servo_Mode matches ground-truth plaintext", () => {
-    const ct = tryRead(MAX_SERVO_CIPHER);
-    const expected = tryRead(MAX_SERVO_PLAIN);
-    if (ct === null || expected === null) return;
+  test.skipIf(!HAS_MAX_SERVO_FIXTURE)("Axon_Max_Servo_Mode matches ground-truth plaintext", () => {
+    const ct = requireBuffer(tryRead(MAX_SERVO_CIPHER), MAX_SERVO_CIPHER);
+    const expected = requireBuffer(tryRead(MAX_SERVO_PLAIN), MAX_SERVO_PLAIN);
     const dec = decryptSfw(ct);
     expect(dec.plaintext.equals(expected)).toBe(true);
     // Max has a longer model id (SA81BHMW).
@@ -185,29 +203,25 @@ describe("intel hex parser", () => {
 });
 
 describe("sfw hash helpers", () => {
-  test("sfwHashHex matches a known-good SHA-256", () => {
-    const ct = tryRead(MINI_SERVO_CIPHER);
-    if (ct === null) return;
+  test.skipIf(!HAS_MINI_SERVO_CIPHER)("sfwHashHex matches a known-good SHA-256", () => {
+    const ct = requireBuffer(tryRead(MINI_SERVO_CIPHER), MINI_SERVO_CIPHER);
     expect(sfwHashHex(ct)).toBe(KNOWN_HASHES[MINI_SERVO_CIPHER]);
   });
 
-  test("verifySfwHash accepts the catalog hash", () => {
-    const ct = tryRead(MINI_SERVO_CIPHER);
-    const expected = KNOWN_HASHES[MINI_SERVO_CIPHER];
-    if (ct === null || expected === undefined) return;
+  test.skipIf(!HAS_MINI_SERVO_CIPHER)("verifySfwHash accepts the catalog hash", () => {
+    const ct = requireBuffer(tryRead(MINI_SERVO_CIPHER), MINI_SERVO_CIPHER);
+    const expected = requireString(KNOWN_HASHES[MINI_SERVO_CIPHER], MINI_SERVO_CIPHER);
     expect(verifySfwHash(ct, expected)).toBe(true);
   });
 
-  test("verifySfwHash rejects a wrong hash", () => {
-    const ct = tryRead(MINI_SERVO_CIPHER);
-    if (ct === null) return;
+  test.skipIf(!HAS_MINI_SERVO_CIPHER)("verifySfwHash rejects a wrong hash", () => {
+    const ct = requireBuffer(tryRead(MINI_SERVO_CIPHER), MINI_SERVO_CIPHER);
     expect(verifySfwHash(ct, "0".repeat(64))).toBe(false);
   });
 
-  test("verifySfwHash is case-insensitive", () => {
-    const ct = tryRead(MINI_SERVO_CIPHER);
-    const expected = KNOWN_HASHES[MINI_SERVO_CIPHER];
-    if (ct === null || expected === undefined) return;
+  test.skipIf(!HAS_MINI_SERVO_CIPHER)("verifySfwHash is case-insensitive", () => {
+    const ct = requireBuffer(tryRead(MINI_SERVO_CIPHER), MINI_SERVO_CIPHER);
+    const expected = requireString(KNOWN_HASHES[MINI_SERVO_CIPHER], MINI_SERVO_CIPHER);
     expect(verifySfwHash(ct, expected.toUpperCase())).toBe(true);
   });
 });
