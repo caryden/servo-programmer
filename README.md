@@ -191,6 +191,7 @@ first-person write-up, including every dead end, is in
 - [docs/BYTE_MAPPING.md](docs/BYTE_MAPPING.md) — byte offset → parameter mapping
 - [docs/logic-analyzers.md](docs/logic-analyzers.md) — low-cost logic analyzer options and Saleae notes
 - [docs/licenses.md](docs/licenses.md) — dependency license audit
+- [RELEASE.md](RELEASE.md) — maintainer release process and lifecycle
 - [research/](research/) — captures, decompiled exe output, Python test scripts used during reverse engineering
 - [vendor/](vendor/) — vendor-format samples and licensing notes
 - [CHANGELOG.md](CHANGELOG.md) — release notes
