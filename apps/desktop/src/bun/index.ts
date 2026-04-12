@@ -6,14 +6,11 @@ import {
   readFullConfig,
 } from "@axon/core/driver/protocol";
 import { AxonError } from "@axon/core/errors";
+import { type DongleDescriptor, listDongles, openDongle } from "@axon/transport-nodehid";
+import type { ProbeConfigInfo, ProbeDeviceInfo, ProbeIdentifyInfo, ProbeInventory } from "@axon/ui";
 import { BrowserView, BrowserWindow } from "electrobun/bun";
-import { type DongleDescriptor, listDongles, openDongle } from "../../../cli/src/driver/hid.ts";
 import type {
-  AdapterInfo,
-  AdapterInventory,
-  ConfigInfo,
   DesktopPocSchema,
-  IdentifyInfo,
   RpcResult,
   RuntimeInfo,
   SerializedAxonError,
@@ -34,9 +31,9 @@ function hexDump(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
 }
 
-function serializeDescriptor(descriptor: DongleDescriptor): AdapterInfo {
+function serializeDescriptor(descriptor: DongleDescriptor): ProbeDeviceInfo {
   return {
-    path: descriptor.path ?? null,
+    id: descriptor.path ?? null,
     vendorId: hex(descriptor.vendorId, 4),
     productId: hex(descriptor.productId, 4),
     product: descriptor.product ?? null,
@@ -45,13 +42,14 @@ function serializeDescriptor(descriptor: DongleDescriptor): AdapterInfo {
     interface: descriptor.interface ?? null,
     usagePage: hex(descriptor.usagePage, 4),
     usage: hex(descriptor.usage, 4),
+    opened: descriptor.path === activeDescriptor?.path,
   };
 }
 
-function currentInventory(): AdapterInventory {
+function currentInventory(): ProbeInventory {
   return {
-    adapters: listDongles().map(serializeDescriptor),
-    openedPath: activeDescriptor?.path ?? null,
+    devices: listDongles().map(serializeDescriptor),
+    openedId: activeDescriptor?.path ?? null,
   };
 }
 
@@ -94,7 +92,7 @@ function requireOpenHandle() {
   return activeHandle;
 }
 
-function toIdentifyInfo(reply: IdentifyReply): IdentifyInfo {
+function toIdentifyInfo(reply: IdentifyReply): ProbeIdentifyInfo {
   return {
     present: reply.present,
     statusHi: hex(reply.statusHi) ?? "0x00",
@@ -159,7 +157,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
           const model = findModel(catalog, modelId);
           const chunkSplit = 59;
 
-          const info: ConfigInfo = {
+          const info: ProbeConfigInfo = {
             length: config.length,
             modelId,
             known: Boolean(model),

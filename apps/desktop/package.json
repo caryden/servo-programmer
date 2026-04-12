@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@axon/core": "workspace:*",
+    "@axon/transport-nodehid": "workspace:*",
+    "@axon/ui": "workspace:*",
     "electrobun": "1.16.0"
   },
   "devDependencies": {

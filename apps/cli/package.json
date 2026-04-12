@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@axon/core": "workspace:*",
-    "node-hid": "^3.3.0"
+    "@axon/transport-nodehid": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",

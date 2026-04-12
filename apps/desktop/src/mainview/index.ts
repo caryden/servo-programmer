@@ -1,32 +1,16 @@
+import {
+  mountProbeApp,
+  type ProbeConfigInfo,
+  type ProbeIdentifyInfo,
+  type ProbeInventory,
+} from "@axon/ui";
 import { Electroview } from "electrobun/view";
 import type {
-  AdapterInventory,
-  ConfigInfo,
   DesktopPocSchema,
-  IdentifyInfo,
   RpcResult,
   RuntimeInfo,
   SerializedAxonError,
 } from "../shared/api.ts";
-
-function mustQuery<T extends Element>(selector: string): T {
-  const element = document.querySelector<T>(selector);
-  if (!element) {
-    throw new Error(`Electrobun PoC DOM did not initialize correctly for ${selector}`);
-  }
-  return element;
-}
-
-const refreshButton = mustQuery<HTMLButtonElement>("#refreshAdapters");
-const openButton = mustQuery<HTMLButtonElement>("#openAdapter");
-const identifyButton = mustQuery<HTMLButtonElement>("#identifyServo");
-const readButton = mustQuery<HTMLButtonElement>("#readConfig");
-const closeButton = mustQuery<HTMLButtonElement>("#closeAdapter");
-
-const environmentEl = mustQuery<HTMLElement>("#environment");
-const deviceInfoEl = mustQuery<HTMLElement>("#deviceInfo");
-const latestReplyEl = mustQuery<HTMLElement>("#latestReply");
-const logEl = mustQuery<HTMLElement>("#log");
 
 const rpc = Electroview.defineRPC<DesktopPocSchema>({
   handlers: {
@@ -37,44 +21,6 @@ const rpc = Electroview.defineRPC<DesktopPocSchema>({
 
 new Electroview({ rpc });
 
-let openedPath: string | null = null;
-let lastInventory: AdapterInventory | null = null;
-
-function log(message: string) {
-  const timestamp = new Date().toLocaleTimeString();
-  logEl.textContent += `[${timestamp}] ${message}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-function renderButtons() {
-  const visibleCount = lastInventory?.adapters.length ?? 0;
-  const isOpen = openedPath !== null;
-  openButton.disabled = visibleCount === 0 || isOpen;
-  identifyButton.disabled = !isOpen;
-  readButton.disabled = !isOpen;
-  closeButton.disabled = !isOpen;
-}
-
-function renderInventory(inventory: AdapterInventory) {
-  lastInventory = inventory;
-  openedPath = inventory.openedPath;
-  const payload = {
-    openedPath: inventory.openedPath,
-    visibleCount: inventory.adapters.length,
-    adapters: inventory.adapters,
-  };
-  deviceInfoEl.textContent = JSON.stringify(payload, null, 2);
-  renderButtons();
-}
-
-function renderEnvironment(info: RuntimeInfo) {
-  environmentEl.textContent = JSON.stringify(info, null, 2);
-}
-
-function renderLatest(value: unknown) {
-  latestReplyEl.textContent = JSON.stringify(value, null, 2);
-}
-
 function describeError(error: SerializedAxonError): string {
   const out = [`${error.category ?? "internal"}: ${error.message}`];
   if (error.hint) {
@@ -83,108 +29,51 @@ function describeError(error: SerializedAxonError): string {
   return out.join("\n");
 }
 
-async function handleResult<T>(
-  promise: Promise<RpcResult<T>>,
-  onOk: (data: T) => void,
-  successMessage: string,
-) {
+async function unwrapResult<T>(promise: Promise<RpcResult<T>>): Promise<T> {
   const result = await promise;
   if (!result.ok) {
-    renderLatest({ error: result.error });
-    log(`error: ${describeError(result.error)}`);
-    return;
+    throw new Error(describeError(result.error));
   }
-  onOk(result.data);
-  log(successMessage);
+  return result.data;
 }
 
-async function refreshAdapters() {
-  await handleResult(
-    rpc.request.refreshAdapters(),
-    (data) => {
-      renderInventory(data);
-      renderLatest({
-        visibleCount: data.adapters.length,
-        openedPath: data.openedPath,
-      });
-    },
-    "adapter inventory refreshed",
-  );
+const root = document.getElementById("app");
+if (!(root instanceof HTMLElement)) {
+  throw new Error("Electrobun PoC DOM did not initialize correctly for #app");
 }
 
-async function loadRuntime() {
-  await handleResult(
-    rpc.request.getRuntime(),
-    (data) => {
-      renderEnvironment(data);
-    },
-    "runtime info loaded",
-  );
-}
-
-async function openAdapter() {
-  await handleResult(
-    rpc.request.openAdapter(),
-    (data) => {
-      renderInventory(data);
-      renderLatest({
-        openedPath: data.openedPath,
-        visibleCount: data.adapters.length,
-      });
-    },
-    "adapter opened",
-  );
-}
-
-async function closeAdapter() {
-  await handleResult(
-    rpc.request.closeAdapter(),
-    (data) => {
-      renderInventory(data);
-      renderLatest({
-        openedPath: data.openedPath,
-        visibleCount: data.adapters.length,
-      });
-    },
-    "adapter closed",
-  );
-}
-
-async function identifyServo() {
-  await handleResult(
-    rpc.request.identifyServo(),
-    (data: IdentifyInfo) => {
-      renderLatest(data);
-    },
-    "identify completed",
-  );
-}
-
-async function readConfig() {
-  await handleResult(
-    rpc.request.readFullConfig(),
-    (data: ConfigInfo) => {
-      renderLatest(data);
-    },
-    "full config read completed",
-  );
-}
-
-refreshButton.addEventListener("click", () => {
-  void refreshAdapters();
+mountProbeApp({
+  root,
+  title: "Axon Electrobun PoC",
+  description:
+    "Minimal desktop probe for the Axon V1.3 HID adapter. The UI is shared with the WebHID PoC, while HID traffic stays in the Bun main process through the node-hid transport.",
+  bullets: [
+    "Use this on the host OS with the adapter released from any VM such as Parallels.",
+    "This PoC mirrors the WebHID flow, but it does not depend on browser WebHID support.",
+    "It only enumerates, identifies, and reads config. It does not write or flash firmware.",
+  ],
+  devicePanelTitle: "Visible Adapters",
+  emptyDeviceText: "No adapter scan yet.",
+  loadEnvironment: async (): Promise<RuntimeInfo> => unwrapResult(rpc.request.getRuntime()),
+  loadInventory: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
+  refreshInventory: {
+    label: "Refresh Visible Adapters",
+    run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
+  },
+  openDevice: {
+    label: "Open First Visible Adapter",
+    run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.openAdapter()),
+  },
+  closeDevice: {
+    label: "Close Adapter",
+    run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.closeAdapter()),
+  },
+  identifyServo: {
+    label: "Identify",
+    run: async (): Promise<ProbeIdentifyInfo> => unwrapResult(rpc.request.identifyServo()),
+  },
+  readFullConfig: {
+    label: "Read Full Config",
+    run: async (): Promise<ProbeConfigInfo> => unwrapResult(rpc.request.readFullConfig()),
+  },
 });
-openButton.addEventListener("click", () => {
-  void openAdapter();
-});
-identifyButton.addEventListener("click", () => {
-  void identifyServo();
-});
-readButton.addEventListener("click", () => {
-  void readConfig();
-});
-closeButton.addEventListener("click", () => {
-  void closeAdapter();
-});
-
-void loadRuntime();
-void refreshAdapters();

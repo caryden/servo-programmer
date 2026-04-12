@@ -16,7 +16,7 @@
       },
       "dependencies": {
         "@axon/core": "workspace:*",
-        "node-hid": "^3.3.0",
+        "@axon/transport-nodehid": "workspace:*",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.4.11",
@@ -29,6 +29,8 @@
       "version": "0.0.1",
       "dependencies": {
         "@axon/core": "workspace:*",
+        "@axon/transport-nodehid": "workspace:*",
+        "@axon/ui": "workspace:*",
         "electrobun": "1.16.0",
       },
       "devDependencies": {
@@ -41,9 +43,54 @@
     "apps/web": {
       "name": "@axon/web-poc",
       "version": "0.0.1",
+      "dependencies": {
+        "@axon/core": "workspace:*",
+        "@axon/transport-webhid": "workspace:*",
+        "@axon/ui": "workspace:*",
+      },
+      "devDependencies": {
+        "@biomejs/biome": "^2.4.11",
+        "@types/bun": "latest",
+        "typescript": "^5",
+      },
     },
     "packages/core": {
       "name": "@axon/core",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@biomejs/biome": "^2.4.11",
+        "@types/bun": "latest",
+        "typescript": "^5",
+      },
+    },
+    "packages/transport-nodehid": {
+      "name": "@axon/transport-nodehid",
+      "version": "0.0.1",
+      "dependencies": {
+        "@axon/core": "workspace:*",
+        "node-hid": "^3.3.0",
+      },
+      "devDependencies": {
+        "@biomejs/biome": "^2.4.11",
+        "@types/bun": "latest",
+        "typescript": "^5",
+      },
+    },
+    "packages/transport-webhid": {
+      "name": "@axon/transport-webhid",
+      "version": "0.0.1",
+      "dependencies": {
+        "@axon/core": "workspace:*",
+        "@axon/ui": "workspace:*",
+      },
+      "devDependencies": {
+        "@biomejs/biome": "^2.4.11",
+        "@types/bun": "latest",
+        "typescript": "^5",
+      },
+    },
+    "packages/ui": {
+      "name": "@axon/ui",
       "version": "0.0.1",
       "devDependencies": {
         "@biomejs/biome": "^2.4.11",
@@ -56,6 +103,12 @@
     "@axon/core": ["@axon/core@workspace:packages/core"],
 
     "@axon/desktop-poc": ["@axon/desktop-poc@workspace:apps/desktop"],
+
+    "@axon/transport-nodehid": ["@axon/transport-nodehid@workspace:packages/transport-nodehid"],
+
+    "@axon/transport-webhid": ["@axon/transport-webhid@workspace:packages/transport-webhid"],
+
+    "@axon/ui": ["@axon/ui@workspace:packages/ui"],
 
     "@axon/web-poc": ["@axon/web-poc@workspace:apps/web"],
 

@@ -9,6 +9,12 @@ It answers one narrow question:
 > it over WebHID, and exchange the same identify/read reports that the
 > CLI sends over `node-hid`?
 
+The current implementation now uses:
+
+- [`../../packages/ui/`](../../packages/ui/) for the shared probe UI
+- [`../../packages/transport-webhid/`](../../packages/transport-webhid/) for browser HID access
+- [`../../packages/core/`](../../packages/core/) for shared protocol and catalog logic
+
 ## What it does
 
 - filters for the Axon adapter (`VID 0x0471`, `PID 0x13aa`)
@@ -28,7 +34,7 @@ From the repo root:
 
 ```bash
 cd apps/web
-python3 -m http.server 8765
+bun run start
 ```
 
 Then open:
@@ -37,22 +43,12 @@ Then open:
 http://localhost:8765
 ```
 
+The `start` script bundles [`src/index.ts`](./src/index.ts) to
+[`dist/index.js`](./dist/index.js) and then serves the app.
+
 ## Browser constraints
 
-- Use a Chromium-based browser such as Chrome, Edge, or Brave.
+- Use a Chromium-based browser such as Chrome, Edge, Brave, or Arc.
 - Safari and Firefox do not currently give you a useful path here.
 - If the adapter is captured by a VM such as Parallels, the browser
   will not be able to open it from the host.
-
-## Protocol note
-
-The production CLI writes 64-byte HID reports that include report id
-`0x04` as byte 0. WebHID passes the report id separately, so this PoC
-uses:
-
-- `reportId = 0x04`
-- a 63-byte payload for the rest of the report
-
-Likewise, the input report event exposes the reply payload without the
-report id byte, so the protocol offsets are shifted by `-1` relative to
-the `node-hid` code.

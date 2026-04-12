@@ -34,6 +34,7 @@ node_modules/
 *.log
 apps/cli/bin/
 apps/cli/dist/
+apps/web/dist/
 
 # Capture files (large binary data)
 captures/*.sal

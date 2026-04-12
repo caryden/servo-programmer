@@ -122,6 +122,9 @@ The repo is now organized as a Bun workspace:
 - [`apps/web/`](apps/web/) — browser WebHID PoC
 - [`apps/desktop/`](apps/desktop/) — Electrobun desktop PoC
 - [`packages/core/`](packages/core/) — shared transport-agnostic protocol/catalog logic
+- [`packages/ui/`](packages/ui/) — shared probe UI used by the browser and desktop PoCs
+- [`packages/transport-nodehid/`](packages/transport-nodehid/) — Node/Bun HID transport
+- [`packages/transport-webhid/`](packages/transport-webhid/) — browser WebHID transport
 
 ## Firmware files
 

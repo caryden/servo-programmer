@@ -23,6 +23,12 @@ good desktop abstraction, though:
 So this PoC keeps the UI browser-like but routes all hardware access
 through Electrobun RPC into the Bun process.
 
+The current implementation now uses:
+
+- [`../../packages/ui/`](../../packages/ui/) for the shared probe UI
+- [`../../packages/transport-nodehid/`](../../packages/transport-nodehid/) for desktop HID access
+- [`../../packages/core/`](../../packages/core/) for shared protocol and catalog logic
+
 ## What it does
 
 - shows runtime and transport info
@@ -49,14 +55,3 @@ Then start the Electrobun app:
 cd /Users/caryden/github/servo-programmer/apps/desktop
 bun run start
 ```
-
-## Current implementation tradeoff
-
-This PoC now imports the shared catalog/protocol/error logic from
-[`../../packages/core/`](../../packages/core/) while still using the
-CLI's `node-hid` transport from [`../cli/`](../cli/). That is
-an intentional halfway step:
-
-- shared pure logic moves first
-- platform transports stay where they currently live
-- bigger repo reshaping can happen after the boundaries are proven

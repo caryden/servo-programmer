@@ -1,8 +1,8 @@
 /**
  * Tests for the production HID transport wrapper in `src/driver/hid.ts`.
  *
- * These use a mocked local node-hid binding wrapper so we can exercise
- * the adapter wrapping logic without requiring a physical programmer.
+ * These use a mocked node-hid binding wrapper from the transport package
+ * so we can exercise the adapter logic without requiring a programmer.
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -43,7 +43,7 @@ describe("hid transport", () => {
       close(): void {}
     }
 
-    await mock.module("../../src/driver/nodehid.ts", () => ({
+    await mock.module("@axon/transport-nodehid/nodehid", () => ({
       getNodeHidBinding: () => ({
         devices: () => [device],
         HID: FakeHID,
