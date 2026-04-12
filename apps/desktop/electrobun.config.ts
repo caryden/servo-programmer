@@ -15,8 +15,7 @@ export default {
     copy: {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
-      "src/mainview/legacy-programming-software.png":
-        "views/mainview/legacy-programming-software.png",
+      "src/mainview/mk2-programmer-reference.png": "views/mainview/mk2-programmer-reference.png",
     },
     mac: {
       bundleCEF: false,

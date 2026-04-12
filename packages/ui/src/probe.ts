@@ -86,6 +86,16 @@ interface SummaryItem {
   tone: SummaryTone;
 }
 
+interface ProbeSnapshot {
+  adapterDetected: boolean;
+  sessionOpen: boolean;
+  servoDetected: boolean | null;
+  modeLabel: string;
+  profileLabel: string;
+  adapterLabel: string;
+  nextStep: string;
+}
+
 function installStyles(document: Document) {
   if (document.getElementById(STYLE_ID)) {
     return;
@@ -97,18 +107,19 @@ function installStyles(document: Document) {
     :root {
       color-scheme: dark;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --probe-bg: #0f1214;
-      --probe-bg-elevated: #171c1f;
-      --probe-bg-muted: #111619;
-      --probe-border: #2a3337;
-      --probe-border-strong: #3d4f4e;
-      --probe-text: #f4f7f6;
-      --probe-text-muted: #a6b4b0;
-      --probe-accent: #5ed9aa;
-      --probe-accent-strong: #86f0c8;
+      --probe-bg: #0b0d10;
+      --probe-bg-elevated: #12161a;
+      --probe-bg-muted: #171c21;
+      --probe-border: #2a2f36;
+      --probe-border-strong: #404751;
+      --probe-text: #f4f5f7;
+      --probe-text-muted: #a7adb7;
+      --probe-accent: #ec4040;
+      --probe-accent-strong: #ff6565;
+      --probe-success: #7adf8f;
       --probe-warn: #f2c86d;
       --probe-danger: #ff7a6e;
-      --probe-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+      --probe-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
     }
 
     * {
@@ -119,8 +130,9 @@ function installStyles(document: Document) {
       margin: 0;
       min-height: 100vh;
       background:
-        linear-gradient(180deg, rgba(94, 217, 170, 0.08), transparent 18%),
-        linear-gradient(180deg, #101416 0%, #0d1012 100%);
+        linear-gradient(180deg, rgba(236, 64, 64, 0.12), transparent 18%),
+        radial-gradient(circle at top right, rgba(255, 101, 101, 0.08), transparent 28%),
+        linear-gradient(180deg, #101216 0%, #090b0d 100%);
       color: var(--probe-text);
       line-height: 1.45;
     }
@@ -145,26 +157,67 @@ function installStyles(document: Document) {
     }
 
     .axon-probe-shell {
-      max-width: 1280px;
+      max-width: 1320px;
       margin: 0 auto;
       display: grid;
-      gap: 20px;
+      gap: 18px;
+    }
+
+    .axon-probe-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .axon-probe-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .axon-probe-brand-mark {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, var(--probe-accent-strong), var(--probe-accent));
+      box-shadow: 0 0 0 6px rgba(236, 64, 64, 0.12);
+      flex: 0 0 auto;
+    }
+
+    .axon-probe-brand-copy {
+      min-width: 0;
+    }
+
+    .axon-probe-brand-name {
+      margin: 0;
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .axon-probe-brand-tag {
+      margin: 2px 0 0;
+      color: var(--probe-text-muted);
+      font-size: 0.82rem;
     }
 
     .axon-probe-top {
       display: grid;
-      grid-template-columns: minmax(0, 1.45fr) minmax(280px, 400px);
-      gap: 20px;
-      align-items: stretch;
+      grid-template-columns: 1fr;
+      gap: 18px;
     }
 
     .axon-probe-intro {
       display: grid;
-      gap: 14px;
-      padding: 24px;
+      gap: 16px;
+      padding: 28px;
       border: 1px solid var(--probe-border-strong);
       border-radius: 8px;
-      background: linear-gradient(180deg, rgba(94, 217, 170, 0.09), rgba(23, 28, 31, 0.92) 42%);
+      background:
+        linear-gradient(135deg, rgba(236, 64, 64, 0.18), rgba(236, 64, 64, 0.03) 34%),
+        linear-gradient(180deg, rgba(18, 22, 26, 0.98), rgba(12, 14, 17, 0.98));
       box-shadow: var(--probe-shadow);
     }
 
@@ -178,9 +231,9 @@ function installStyles(document: Document) {
 
     .axon-probe-title {
       margin: 0;
-      font-size: 2.45rem;
-      line-height: 1.05;
-      max-width: 14ch;
+      font-size: 2.7rem;
+      line-height: 1;
+      max-width: 12ch;
     }
 
     .axon-probe-description {
@@ -198,9 +251,14 @@ function installStyles(document: Document) {
       color: var(--probe-text-muted);
     }
 
+    .axon-probe-action-panel {
+      display: grid;
+      gap: 14px;
+    }
+
     .axon-probe-summary {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
     }
 
@@ -233,7 +291,7 @@ function installStyles(document: Document) {
     }
 
     .axon-probe-tone-good {
-      color: var(--probe-accent-strong);
+      color: var(--probe-success);
     }
 
     .axon-probe-tone-warn {
@@ -242,35 +300,6 @@ function installStyles(document: Document) {
 
     .axon-probe-tone-bad {
       color: var(--probe-danger);
-    }
-
-    .axon-probe-reference {
-      margin: 0;
-      display: grid;
-      grid-template-rows: minmax(0, 1fr) auto;
-      overflow: hidden;
-      border: 1px solid var(--probe-border-strong);
-      border-radius: 8px;
-      background: var(--probe-bg-elevated);
-      box-shadow: var(--probe-shadow);
-    }
-
-    .axon-probe-reference-image {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      object-position: top center;
-      min-height: 260px;
-      background: var(--probe-bg-muted);
-    }
-
-    .axon-probe-reference-caption {
-      margin: 0;
-      padding: 12px 14px;
-      color: var(--probe-text-muted);
-      font-size: 0.92rem;
-      border-top: 1px solid var(--probe-border);
-      background: rgba(8, 11, 12, 0.88);
     }
 
     .axon-probe-toolbar {
@@ -297,14 +326,14 @@ function installStyles(document: Document) {
 
     .axon-probe-toolbar button:hover:not(:disabled) {
       transform: translateY(-1px);
-      border-color: var(--probe-accent);
+      border-color: var(--probe-accent-strong);
       background: #1b2327;
     }
 
     .axon-probe-toolbar button[data-action="request"],
     .axon-probe-toolbar button[data-action="refresh"],
     .axon-probe-toolbar button[data-action="open"] {
-      background: linear-gradient(180deg, rgba(94, 217, 170, 0.24), rgba(16, 23, 24, 0.94));
+      background: linear-gradient(180deg, rgba(236, 64, 64, 0.24), rgba(16, 23, 24, 0.94));
     }
 
     .axon-probe-toolbar button[data-action="read"] {
@@ -323,8 +352,8 @@ function installStyles(document: Document) {
 
     .axon-probe-grid {
       display: grid;
-      gap: 20px;
-      grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+      gap: 18px;
+      grid-template-columns: minmax(0, 1.7fr) minmax(300px, 360px);
     }
 
     .axon-probe-panel {
@@ -333,6 +362,10 @@ function installStyles(document: Document) {
       border-radius: 8px;
       background: rgba(18, 22, 25, 0.96);
       min-width: 0;
+    }
+
+    .axon-probe-panel-primary {
+      padding: 22px;
     }
 
     .axon-probe-panel-header {
@@ -356,6 +389,110 @@ function installStyles(document: Document) {
     .axon-probe-stack {
       display: grid;
       gap: 18px;
+    }
+
+    .axon-probe-current {
+      display: grid;
+      gap: 16px;
+    }
+
+    .axon-probe-state-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .axon-probe-task-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .axon-probe-task {
+      padding: 14px;
+      border: 1px solid var(--probe-border);
+      border-radius: 8px;
+      background: rgba(9, 11, 14, 0.78);
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      min-height: 168px;
+    }
+
+    .axon-probe-task-title {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .axon-probe-task-body {
+      margin: 0;
+      color: var(--probe-text-muted);
+      font-size: 0.94rem;
+    }
+
+    .axon-probe-disclosure {
+      border: 1px solid var(--probe-border);
+      border-radius: 8px;
+      background: rgba(16, 19, 23, 0.92);
+      overflow: hidden;
+    }
+
+    .axon-probe-disclosure > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 16px 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .axon-probe-disclosure > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .axon-probe-disclosure-note {
+      color: var(--probe-text-muted);
+      font-size: 0.86rem;
+      font-weight: 400;
+    }
+
+    .axon-probe-disclosure-body {
+      padding: 0 18px 18px;
+    }
+
+    .axon-probe-diagnostics-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .axon-probe-reference {
+      margin: 0;
+      display: grid;
+      gap: 0;
+      overflow: hidden;
+      border: 1px solid var(--probe-border);
+      border-radius: 8px;
+      background: var(--probe-bg-elevated);
+    }
+
+    .axon-probe-reference-image {
+      width: 100%;
+      height: auto;
+      object-fit: cover;
+      object-position: top center;
+      background: var(--probe-bg-muted);
+    }
+
+    .axon-probe-reference-caption {
+      margin: 0;
+      padding: 12px 14px;
+      color: var(--probe-text-muted);
+      font-size: 0.92rem;
+      border-top: 1px solid var(--probe-border);
+      background: rgba(8, 11, 12, 0.88);
     }
 
     .axon-probe-empty {
@@ -435,7 +572,7 @@ function installStyles(document: Document) {
     }
 
     .axon-probe-chip.axon-probe-tone-good {
-      border-color: rgba(94, 217, 170, 0.45);
+      border-color: rgba(122, 223, 143, 0.45);
     }
 
     .axon-probe-chip.axon-probe-tone-warn {
@@ -480,30 +617,35 @@ function installStyles(document: Document) {
     }
 
     @media (max-width: 1080px) {
-      .axon-probe-top {
-        grid-template-columns: 1fr;
-      }
-
       .axon-probe-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .axon-probe-reference-image {
-        min-height: 220px;
-      }
-    }
-
-    @media (max-width: 820px) {
       .axon-probe-grid {
         grid-template-columns: 1fr;
       }
 
-      .axon-probe-summary {
-        grid-template-columns: 1fr 1fr;
+      .axon-probe-task-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .axon-probe-diagnostics-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .axon-probe-header {
+        flex-direction: column;
+        align-items: flex-start;
       }
 
       .axon-probe-title {
         font-size: 2rem;
+      }
+
+      .axon-probe-summary {
+        grid-template-columns: 1fr;
       }
     }
 
@@ -648,6 +790,80 @@ function requireElement<T extends Element>(root: ParentNode, selector: string, m
   return element;
 }
 
+function deriveSnapshot(
+  _environment: unknown,
+  inventory: ProbeInventory,
+  latest: unknown,
+): ProbeSnapshot {
+  const adapter = inventory.devices[0];
+  const adapterDetected = inventory.devices.length > 0;
+  const sessionOpen = inventory.openedId !== null;
+  const adapterLabel = adapter?.product ?? adapter?.manufacturer ?? "Adapter not detected";
+
+  if (!adapterDetected) {
+    return {
+      adapterDetected,
+      sessionOpen,
+      servoDetected: null,
+      modeLabel: "Awaiting probe",
+      profileLabel: "Load settings to identify the servo",
+      adapterLabel,
+      nextStep: "Detect the adapter on the host OS, then connect to it.",
+    };
+  }
+
+  if (!sessionOpen) {
+    return {
+      adapterDetected,
+      sessionOpen,
+      servoDetected: null,
+      modeLabel: "Awaiting connection",
+      profileLabel: "Connect before reading the servo",
+      adapterLabel,
+      nextStep: "Connect to the adapter, then detect the attached servo.",
+    };
+  }
+
+  if (isConfigInfo(latest)) {
+    return {
+      adapterDetected,
+      sessionOpen,
+      servoDetected: true,
+      modeLabel: latest.known ? "Servo settings loaded" : "Unknown profile loaded",
+      profileLabel: latest.modelName ?? (latest.modelId || "Unknown model"),
+      adapterLabel,
+      nextStep:
+        "Ready for mode changes and servo-mode tuning such as limits and PWM loss behavior.",
+    };
+  }
+
+  if (isIdentifyInfo(latest)) {
+    return {
+      adapterDetected,
+      sessionOpen,
+      servoDetected: latest.present,
+      modeLabel: startCase(latest.mode.replace(/_/g, " ")),
+      profileLabel: latest.present
+        ? "Read settings to load the current profile"
+        : "No servo detected",
+      adapterLabel,
+      nextStep: latest.present
+        ? "Load settings before changing range, neutral, or failsafe behavior."
+        : "Plug in a compatible servo, then run servo detection again.",
+    };
+  }
+
+  return {
+    adapterDetected,
+    sessionOpen,
+    servoDetected: null,
+    modeLabel: "Connected",
+    profileLabel: "Settings not loaded yet",
+    adapterLabel,
+    nextStep: "Detect the attached servo, then load settings.",
+  };
+}
+
 function makeSummaryItems(
   environment: unknown,
   inventory: ProbeInventory,
@@ -656,24 +872,8 @@ function makeSummaryItems(
   const transport =
     isRecord(environment) && typeof environment.transport === "string"
       ? environment.transport
-      : "Probe Runtime";
-
-  let servoValue = "Not Probed";
-  let servoTone: SummaryTone = "neutral";
-  let targetValue = "No Read Yet";
-  let targetTone: SummaryTone = "neutral";
-
-  if (isIdentifyInfo(latest)) {
-    servoValue = latest.present ? startCase(latest.mode.replace(/_/g, " ")) : "No Servo";
-    servoTone = latest.present ? "good" : "warn";
-    targetValue = `${latest.statusHi} / ${latest.statusLo}`;
-  } else if (isConfigInfo(latest)) {
-    servoValue = latest.known ? "Config Ready" : "Unknown Model";
-    servoTone = latest.known ? "good" : "warn";
-    targetValue =
-      latest.modelName ?? (latest.modelId.length > 0 ? latest.modelId : "Unnamed Target");
-    targetTone = latest.known ? "good" : "warn";
-  }
+      : "Programmer";
+  const snapshot = deriveSnapshot(environment, inventory, latest);
 
   return [
     {
@@ -682,24 +882,29 @@ function makeSummaryItems(
       tone: "neutral",
     },
     {
-      label: "Adapters",
-      value: inventory.devices.length.toString(),
-      tone: inventory.devices.length > 0 ? "good" : "warn",
+      label: "Adapter",
+      value: snapshot.adapterDetected ? "Detected" : "Missing",
+      tone: snapshot.adapterDetected ? "good" : "warn",
     },
     {
       label: "Session",
-      value: inventory.openedId ? "Open" : "Idle",
-      tone: inventory.openedId ? "good" : "neutral",
+      value: snapshot.sessionOpen ? "Connected" : "Idle",
+      tone: snapshot.sessionOpen ? "good" : "neutral",
     },
     {
       label: "Servo",
-      value: servoValue,
-      tone: servoTone,
+      value:
+        snapshot.servoDetected === null
+          ? "Not Checked"
+          : snapshot.servoDetected
+            ? "Detected"
+            : "Not Found",
+      tone: snapshot.servoDetected === null ? "neutral" : snapshot.servoDetected ? "good" : "warn",
     },
     {
-      label: "Target",
-      value: targetValue,
-      tone: targetTone,
+      label: "Profile",
+      value: snapshot.profileLabel,
+      tone: isConfigInfo(latest) && latest.known ? "good" : "neutral",
     },
   ];
 }
@@ -726,6 +931,130 @@ function renderSummary(
     value.textContent = item.value;
     metric.append(label, value);
     container.append(metric);
+  }
+}
+
+function renderCurrentPanel(
+  document: Document,
+  container: HTMLElement,
+  environment: unknown,
+  inventory: ProbeInventory,
+  latest: unknown,
+) {
+  clear(container);
+
+  const snapshot = deriveSnapshot(environment, inventory, latest);
+  const chips = createElement(document, "div", "axon-probe-state-row");
+  chips.append(
+    createChip(
+      document,
+      snapshot.adapterDetected ? "Adapter detected" : "Adapter missing",
+      snapshot.adapterDetected ? "good" : "warn",
+    ),
+    createChip(
+      document,
+      snapshot.sessionOpen ? "Connection open" : "Connection idle",
+      snapshot.sessionOpen ? "good" : "neutral",
+    ),
+    createChip(
+      document,
+      snapshot.servoDetected === null
+        ? "Servo not checked"
+        : snapshot.servoDetected
+          ? "Servo detected"
+          : "No servo detected",
+      snapshot.servoDetected === null ? "neutral" : snapshot.servoDetected ? "good" : "warn",
+    ),
+  );
+
+  const docsValue =
+    isConfigInfo(latest) && latest.docsUrl
+      ? (() => {
+          const link = createElement(document, "a");
+          link.href = latest.docsUrl;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = latest.docsUrl;
+          return link;
+        })()
+      : "—";
+
+  const rows: ReadonlyArray<readonly [string, string | Node]> = [
+    ["Adapter", snapshot.adapterLabel],
+    ["Current Mode", snapshot.modeLabel],
+    ["Detected Servo", snapshot.profileLabel],
+    ["Docs", docsValue],
+    ["Next Step", snapshot.nextStep],
+  ];
+
+  const content = createElement(document, "div", "axon-probe-current");
+  content.append(chips, createKeyValueList(document, rows));
+  container.append(content);
+}
+
+function renderTaskPanel(document: Document, container: HTMLElement) {
+  clear(container);
+
+  const cards = [
+    {
+      title: "Switch Mode",
+      body: "The common path is switching between Servo Mode and Continuous Rotation Mode. Start by loading the current servo so the UI can present the right mode target clearly.",
+    },
+    {
+      title: "Tune Range",
+      body: "In Servo Mode, the key work is left and right travel plus neutral position. Those settings should be surfaced as the primary controls, not buried in diagnostics.",
+    },
+    {
+      title: "Handle Signal Loss",
+      body: "Kids need to choose what happens when PWM disappears: release, hold, or neutral. That belongs near the top-level setup flow with plain language and visible consequences.",
+    },
+  ] as const;
+
+  const grid = createElement(document, "div", "axon-probe-task-grid");
+  for (const card of cards) {
+    const item = createElement(document, "article", "axon-probe-task");
+    const title = createElement(document, "h3", "axon-probe-task-title");
+    const body = createElement(document, "p", "axon-probe-task-body");
+    const chipRow = createElement(document, "div", "axon-probe-chip-row");
+    title.textContent = card.title;
+    body.textContent = card.body;
+    chipRow.append(createChip(document, "Primary workflow", "good"));
+    item.append(title, body, chipRow);
+    grid.append(item);
+  }
+
+  container.append(grid);
+}
+
+function renderConnectionPanel(
+  document: Document,
+  container: HTMLElement,
+  inventory: ProbeInventory,
+) {
+  clear(container);
+
+  if (inventory.devices.length === 0) {
+    const empty = createElement(document, "p", "axon-probe-empty");
+    empty.textContent =
+      "No adapter is visible yet. Keep the device on the host OS, then run the detect or scan action.";
+    container.append(empty);
+    return;
+  }
+
+  const primary = inventory.devices[0];
+  const rows: ReadonlyArray<readonly [string, string]> = [
+    ["Adapter", primary.product ?? "Axon Adapter"],
+    ["Vendor / Product", `${primary.vendorId ?? "VID?"} / ${primary.productId ?? "PID?"}`],
+    ["Interface", formatValue(primary.interface)],
+    ["Status", primary.opened ? "Connected" : "Detected"],
+    ["Path", primary.id ?? "—"],
+  ];
+
+  container.append(createKeyValueList(document, rows));
+  if (inventory.devices.length > 1) {
+    const note = createElement(document, "p", "axon-probe-empty");
+    note.textContent = `${inventory.devices.length} adapters are visible. The first one is the active target.`;
+    container.append(note);
   }
 }
 
@@ -923,66 +1252,120 @@ export function mountProbeApp(options: ProbeUiOptions): void {
 
   const imageMarkup = options.referenceImage
     ? `
-        <figure class="axon-probe-reference">
-          <img class="axon-probe-reference-image" src="${options.referenceImage.src}" alt="${options.referenceImage.alt}" />
-          <figcaption class="axon-probe-reference-caption">${options.referenceImage.caption}</figcaption>
-        </figure>
+        <details class="axon-probe-disclosure">
+          <summary>
+            <span>Axon MK2 Reference</span>
+            <span class="axon-probe-disclosure-note">Branding and interaction baseline</span>
+          </summary>
+          <div class="axon-probe-disclosure-body">
+            <figure class="axon-probe-reference">
+              <img class="axon-probe-reference-image" src="${options.referenceImage.src}" alt="${options.referenceImage.alt}" />
+              <figcaption class="axon-probe-reference-caption">${options.referenceImage.caption}</figcaption>
+            </figure>
+          </div>
+        </details>
       `
     : "";
 
   options.root.innerHTML = `
     <main class="axon-probe-app">
       <div class="axon-probe-shell">
+        <header class="axon-probe-header">
+          <div class="axon-probe-brand">
+            <span class="axon-probe-brand-mark" aria-hidden="true"></span>
+            <div class="axon-probe-brand-copy">
+              <p class="axon-probe-brand-name">Axon Robotics</p>
+              <p class="axon-probe-brand-tag">Servo programmer workspace</p>
+            </div>
+          </div>
+        </header>
+
         <section class="axon-probe-top">
-          <section class="axon-probe-intro">
+          <section class="axon-probe-intro axon-probe-panel-primary">
             ${options.eyebrow ? `<p class="axon-probe-eyebrow">${options.eyebrow}</p>` : ""}
             <h1 class="axon-probe-title">${options.title}</h1>
             <p class="axon-probe-description">${options.description}</p>
             <ul class="axon-probe-bullets">${options.bullets.map((bullet) => `<li>${bullet}</li>`).join("")}</ul>
             <div class="axon-probe-summary" data-role="summary"></div>
           </section>
-          ${imageMarkup}
         </section>
 
-        <section class="axon-probe-toolbar" data-role="actions"></section>
+        <section class="axon-probe-panel axon-probe-action-panel">
+          <div class="axon-probe-panel-header">
+            <h2 class="axon-probe-panel-title">Primary Actions</h2>
+            <span class="axon-probe-panel-note">Detect hardware first, then load the current servo.</span>
+          </div>
+          <section class="axon-probe-toolbar" data-role="actions"></section>
+        </section>
 
         <section class="axon-probe-grid">
-          <div class="axon-probe-stack">
-            <section class="axon-probe-panel">
-              <div class="axon-probe-panel-header">
-                <h2 class="axon-probe-panel-title">Environment</h2>
-                <span class="axon-probe-panel-note">Runtime snapshot</span>
-              </div>
-              <div data-role="environment"></div>
-            </section>
+          <section class="axon-probe-panel axon-probe-panel-primary">
+            <div class="axon-probe-panel-header">
+              <h2 class="axon-probe-panel-title">Current Setup</h2>
+              <span class="axon-probe-panel-note">Connection state and the next likely action.</span>
+            </div>
+            <div data-role="current"></div>
 
-            <section class="axon-probe-panel">
-              <div class="axon-probe-panel-header">
-                <h2 class="axon-probe-panel-title">${options.devicePanelTitle}</h2>
-                <span class="axon-probe-panel-note">Enumerated through the active transport</span>
-              </div>
-              <div data-role="devices"></div>
-            </section>
-          </div>
+            <div class="axon-probe-subsection">
+              <p class="axon-probe-subsection-label">Common Tasks</p>
+              <div data-role="tasks"></div>
+            </div>
+          </section>
 
           <div class="axon-probe-stack">
             <section class="axon-probe-panel">
               <div class="axon-probe-panel-header">
-                <h2 class="axon-probe-panel-title">Latest Exchange</h2>
-                <span class="axon-probe-panel-note">Parsed response plus raw bytes</span>
+                <h2 class="axon-probe-panel-title">Connection</h2>
+                <span class="axon-probe-panel-note">Clear hardware status before any settings work.</span>
               </div>
-              <div data-role="latest"></div>
+              <div data-role="connection"></div>
             </section>
 
-            <section class="axon-probe-panel">
-              <div class="axon-probe-panel-header">
-                <h2 class="axon-probe-panel-title">Session Log</h2>
-                <span class="axon-probe-panel-note">Most recent actions and errors</span>
-              </div>
-              <pre class="axon-probe-pre axon-probe-log" data-role="log"></pre>
-            </section>
+            ${imageMarkup}
           </div>
         </section>
+
+        <details class="axon-probe-disclosure">
+          <summary>
+            <span>Diagnostics</span>
+            <span class="axon-probe-disclosure-note">Environment, protocol details, and the session log.</span>
+          </summary>
+          <div class="axon-probe-disclosure-body">
+            <div class="axon-probe-diagnostics-grid">
+              <section class="axon-probe-panel">
+                <div class="axon-probe-panel-header">
+                  <h2 class="axon-probe-panel-title">Environment</h2>
+                  <span class="axon-probe-panel-note">Runtime snapshot</span>
+                </div>
+                <div data-role="environment"></div>
+              </section>
+
+              <section class="axon-probe-panel">
+                <div class="axon-probe-panel-header">
+                  <h2 class="axon-probe-panel-title">${options.devicePanelTitle}</h2>
+                  <span class="axon-probe-panel-note">Enumerated through the active transport</span>
+                </div>
+                <div data-role="devices"></div>
+              </section>
+
+              <section class="axon-probe-panel">
+                <div class="axon-probe-panel-header">
+                  <h2 class="axon-probe-panel-title">Protocol Details</h2>
+                  <span class="axon-probe-panel-note">Latest parsed reply plus raw bytes</span>
+                </div>
+                <div data-role="latest"></div>
+              </section>
+
+              <section class="axon-probe-panel">
+                <div class="axon-probe-panel-header">
+                  <h2 class="axon-probe-panel-title">Session Log</h2>
+                  <span class="axon-probe-panel-note">Shown on demand instead of on first glance.</span>
+                </div>
+                <pre class="axon-probe-pre axon-probe-log" data-role="log"></pre>
+              </section>
+            </div>
+          </div>
+        </details>
       </div>
     </main>
   `;
@@ -1012,6 +1395,21 @@ export function mountProbeApp(options: ProbeUiOptions): void {
     '[data-role="latest"]',
     "Axon probe UI failed to initialize the latest region.",
   );
+  const currentEl = requireElement<HTMLElement>(
+    options.root,
+    '[data-role="current"]',
+    "Axon probe UI failed to initialize the current region.",
+  );
+  const tasksEl = requireElement<HTMLElement>(
+    options.root,
+    '[data-role="tasks"]',
+    "Axon probe UI failed to initialize the tasks region.",
+  );
+  const connectionEl = requireElement<HTMLElement>(
+    options.root,
+    '[data-role="connection"]',
+    "Axon probe UI failed to initialize the connection region.",
+  );
   const logEl = requireElement<HTMLElement>(
     options.root,
     '[data-role="log"]',
@@ -1037,20 +1435,24 @@ export function mountProbeApp(options: ProbeUiOptions): void {
   function renderInventory(next: ProbeInventory) {
     inventoryState = next;
     renderInventoryPanel(document, devicesEl, inventoryState, options.emptyDeviceText);
+    renderConnectionPanel(document, connectionEl, inventoryState);
     updateButtons();
     rerenderSummary();
+    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
   }
 
   function renderEnvironment(next: unknown) {
     environmentState = next;
     renderEnvironmentPanel(document, environmentEl, environmentState);
     rerenderSummary();
+    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
   }
 
   function renderLatest(value: unknown) {
     latestState = value;
     renderLatestPanel(document, latestEl, latestState);
     rerenderSummary();
+    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
   }
 
   function updateButtons() {
@@ -1176,6 +1578,9 @@ export function mountProbeApp(options: ProbeUiOptions): void {
 
   updateButtons();
   rerenderSummary();
+  renderTaskPanel(document, tasksEl);
+  renderConnectionPanel(document, connectionEl, inventoryState);
+  renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
 
   void (async () => {
     try {

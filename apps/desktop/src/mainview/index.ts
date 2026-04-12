@@ -44,43 +44,43 @@ if (!(root instanceof HTMLElement)) {
 
 mountProbeApp({
   root,
-  eyebrow: "Desktop Probe",
-  title: "Axon Electrobun PoC",
+  eyebrow: "Electrobun Lab",
+  title: "Axon Servo Programmer",
   description:
-    "A desktop control surface for the Axon V1.3 HID adapter. The interface is shared with the browser probe, while HID traffic stays in the Bun main process through the node-hid transport.",
+    "A clean desktop workspace for Axon V1.3 setup. Detect the adapter, identify the attached servo, and load the current profile before making mode or configuration changes.",
   bullets: [
     "Use this on the host OS with the adapter released from any VM such as Parallels.",
-    "This PoC mirrors the WebHID flow, but it does not depend on browser WebHID support.",
-    "It only enumerates, identifies, and reads config. It does not write or flash firmware.",
+    "The shared UI stays clean while HID traffic lives in the Bun main process.",
+    "Diagnostics stay tucked away until you open them.",
   ],
   referenceImage: {
-    src: "./legacy-programming-software.png",
-    alt: "Legacy Axon programming software reference screenshot",
+    src: "./mk2-programmer-reference.png",
+    alt: "Axon Programmer MK2 software reference screenshot",
     caption:
-      "Legacy vendor software. Useful as a workflow reference, but the point of this shell is to replace that cramped, opaque experience with something clearer.",
+      "Official Axon Programmer MK2 reference. The information hierarchy is better than the old tool, but the goal here is still a simpler and cleaner workspace.",
   },
   devicePanelTitle: "Visible Adapters",
   emptyDeviceText: "No adapter scan yet.",
   loadEnvironment: async (): Promise<RuntimeInfo> => unwrapResult(rpc.request.getRuntime()),
   loadInventory: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
   refreshInventory: {
-    label: "Refresh Visible Adapters",
+    label: "Scan Adapters",
     run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
   },
   openDevice: {
-    label: "Open First Visible Adapter",
+    label: "Connect",
     run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.openAdapter()),
   },
   closeDevice: {
-    label: "Close Adapter",
+    label: "Disconnect",
     run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.closeAdapter()),
   },
   identifyServo: {
-    label: "Identify",
+    label: "Detect Servo",
     run: async (): Promise<ProbeIdentifyInfo> => unwrapResult(rpc.request.identifyServo()),
   },
   readFullConfig: {
-    label: "Read Full Config",
+    label: "Load Settings",
     run: async (): Promise<ProbeConfigInfo> => unwrapResult(rpc.request.readFullConfig()),
   },
 });

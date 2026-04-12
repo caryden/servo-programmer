@@ -64,20 +64,20 @@ if (webHidSupported()) {
 
 mountProbeApp({
   root,
-  eyebrow: "Browser Probe",
-  title: "Axon WebHID PoC",
+  eyebrow: "WebHID Lab",
+  title: "Axon Servo Programmer",
   description:
-    "A browser-first control surface for the Axon V1.3 HID adapter. The interface is shared with the desktop probe, while device access stays on a dedicated WebHID transport.",
+    "A clean browser workspace for Axon V1.3 setup. Detect the adapter, identify the attached servo, and load the current profile before making mode or configuration changes.",
   bullets: [
     "Use a Chromium-based browser on https:// or http://localhost.",
-    "Make sure the adapter is owned by the host OS, not a VM such as Parallels.",
-    "This PoC enumerates, identifies, and reads config. It does not write or flash firmware.",
+    "Keep the adapter on the host OS, not inside a VM such as Parallels.",
+    "Diagnostics stay tucked away until you open them.",
   ],
   referenceImage: {
-    src: "./legacy-programming-software.png",
-    alt: "Legacy Axon programming software reference screenshot",
+    src: "./mk2-programmer-reference.png",
+    alt: "Axon Programmer MK2 software reference screenshot",
     caption:
-      "Legacy vendor software. Useful as a workflow reference, but the point of this shell is to replace that cramped, opaque experience with something clearer.",
+      "Official Axon Programmer MK2 reference. The information hierarchy is better than the old tool, but the goal here is still a simpler and cleaner workspace.",
   },
   devicePanelTitle: "Selected Device",
   emptyDeviceText: "No device selected.",
@@ -89,7 +89,7 @@ mountProbeApp({
   }),
   loadInventory: async () => currentInventory(),
   requestDevice: {
-    label: "Request Axon Adapter",
+    label: "Detect Adapter",
     run: async () => {
       await releaseHandle();
       const devices = await requestAxonDevices();
@@ -98,7 +98,7 @@ mountProbeApp({
     },
   },
   reconnectDevice: {
-    label: "Reuse Authorized Device",
+    label: "Use Authorized Adapter",
     run: async () => {
       await releaseHandle();
       const devices = await listAuthorizedAxonDevices();
@@ -107,7 +107,7 @@ mountProbeApp({
     },
   },
   openDevice: {
-    label: "Open Device",
+    label: "Connect",
     run: async () => {
       if (!selectedDevice) {
         throw new Error("No device selected.");
@@ -118,14 +118,14 @@ mountProbeApp({
     },
   },
   closeDevice: {
-    label: "Close Device",
+    label: "Disconnect",
     run: async () => {
       await releaseHandle();
       return currentInventory();
     },
   },
   identifyServo: {
-    label: "Identify",
+    label: "Detect Servo",
     run: async (): Promise<ProbeIdentifyInfo> => {
       const reply = await identify(requireHandle());
       const replyBytes = new Uint8Array(reply.rawRx);
@@ -140,7 +140,7 @@ mountProbeApp({
     },
   },
   readFullConfig: {
-    label: "Read Full Config",
+    label: "Load Settings",
     run: async (): Promise<ProbeConfigInfo> => {
       const config = await readFullConfig(requireHandle());
       const configBytes = new Uint8Array(config);
