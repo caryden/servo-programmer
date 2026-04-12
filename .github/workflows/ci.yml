@@ -44,17 +44,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
 
       - name: Install dependencies
-        working-directory: axon
         run: bun install --frozen-lockfile
 
       - name: Biome check
-        working-directory: axon
         run: bun run check
 
       - name: Typecheck
-        working-directory: axon
         run: bun run typecheck
 
       - name: Test
-        working-directory: axon
-        run: bun test
+        run: bun run test

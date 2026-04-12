@@ -2,5 +2,22 @@
   "name": "@axon/core",
   "version": "0.0.1",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./catalog": "./src/catalog.ts",
+    "./errors": "./src/errors.ts",
+    "./driver": "./src/driver/index.ts",
+    "./driver/protocol": "./src/driver/protocol.ts",
+    "./driver/transport": "./src/driver/transport.ts"
+  },
+  "scripts": {
+    "check": "bun x @biomejs/biome check src package.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
 }

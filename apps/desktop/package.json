@@ -1,17 +1,20 @@
 {
-  "name": "axon-electrobun-poc",
+  "name": "@axon/desktop-poc",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "bun x @biomejs/biome check src package.json electrobun.config.ts",
     "start": "electrobun dev",
     "dev": "electrobun dev --watch",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@axon/core": "workspace:*",
     "electrobun": "1.16.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
     "@types/bun": "latest",
     "@types/three": "^0.180.0",
     "typescript": "^5.9.3"

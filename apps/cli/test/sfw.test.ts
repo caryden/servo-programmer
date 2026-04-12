@@ -21,7 +21,7 @@ import {
 } from "../src/sfw.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "../..");
+const REPO_ROOT = join(__dirname, "../../..");
 const DOWNLOADS = join(REPO_ROOT, "downloads");
 const GROUND_TRUTH = join(REPO_ROOT, "research/decrypted-firmware");
 

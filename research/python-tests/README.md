@@ -2,7 +2,7 @@
 
 Every Python script we wrote during the reverse-engineering session,
 in roughly the order we wrote them. None are imported by the
-production CLI in `../axon/` — these are diagnostic / experiment
+production CLI in `../apps/cli/` — these are diagnostic / experiment
 scripts kept for reference and reproducibility.
 
 ## What each script proved (or disproved)

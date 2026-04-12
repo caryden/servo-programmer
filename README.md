@@ -76,9 +76,10 @@ Full command surface: [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md).
 curl -fsSL https://bun.sh/install | bash
 
 # 2. Clone, install dependencies, run from source
-git clone https://github.com/caryden/servo-programmer
-cd servo-programmer/axon
+git clone https://github.com/caryden/servo-programmer.git
+cd servo-programmer
 bun install
+cd apps/cli
 bun run src/cli.ts status
 ```
 
@@ -87,6 +88,7 @@ prints a compact status bar plus the model docs link. For scripts and
 agents, use JSON:
 
 ```bash
+cd apps/cli
 bun run src/cli.ts --json status
 ```
 
@@ -106,11 +108,20 @@ No `sudo` required on any platform.
 
 **Got an Axon Max, another Micro capture, or an unknown model?** Please
 help fill out the catalog. Plug it in, run
-`bun run src/cli.ts read --svo > my-model.svo`, and
+`cd apps/cli && bun run src/cli.ts read --svo > my-model.svo`, and
 [open an issue](https://github.com/caryden/servo-programmer/issues/new)
 with the file attached and the model ID string from `axon status`.
 I'll add the model/defaults to
 [`data/servo_catalog.json`](data/servo_catalog.json).
+
+## Repo layout
+
+The repo is now organized as a Bun workspace:
+
+- [`apps/cli/`](apps/cli/) — production `axon` CLI
+- [`apps/web/`](apps/web/) — browser WebHID PoC
+- [`apps/desktop/`](apps/desktop/) — Electrobun desktop PoC
+- [`packages/core/`](packages/core/) — shared transport-agnostic protocol/catalog logic
 
 ## Firmware files
 

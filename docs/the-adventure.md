@@ -383,7 +383,7 @@ tiny, sudo-free, cross-platform transport.
 
 ## 11. Building the CLI
 
-The production client is in [`axon/`](../axon/). Stack:
+The production client is in [`apps/cli/`](../apps/cli/). Stack:
 
 - **Bun** — fast TypeScript runtime with built-in bundler, produces
   single-file standalone binaries for Mac, Linux, and Windows.
@@ -394,13 +394,13 @@ The production client is in [`axon/`](../axon/). Stack:
 - **Vitest** — unit tests.
 
 The architecture is deliberately boring. A `DongleHandle` interface in
-[`axon/src/driver/transport.ts`](../axon/src/driver/transport.ts) has
+[`packages/core/src/driver/transport.ts`](../packages/core/src/driver/transport.ts) has
 three methods: `write`, `read`, `release`. The protocol layer in
-[`axon/src/driver/protocol.ts`](../axon/src/driver/protocol.ts) only
+[`packages/core/src/driver/protocol.ts`](../packages/core/src/driver/protocol.ts) only
 sees that interface, with no compile-time dependency on node-hid — so
 tests inject a `MockDongle` and validate the protocol without touching
 hardware. The real transport is in
-[`axon/src/driver/hid.ts`](../axon/src/driver/hid.ts) and does nothing
+[`apps/cli/src/driver/hid.ts`](../apps/cli/src/driver/hid.ts) and does nothing
 clever: open by VID/PID, write 64-byte output reports, read 64-byte
 input reports. No `dev.reset()` anywhere — node-hid doesn't even
 expose a reset primitive, so the footgun is impossible by construction.

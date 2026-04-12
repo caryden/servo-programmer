@@ -29,7 +29,10 @@ narrative version of the journey is in [the-adventure.md](the-adventure.md).
 
 | Path | What's there |
 |---|---|
-| [../axon/](../axon/) | The axon CLI source code. |
+| [../apps/cli/](../apps/cli/) | The axon CLI source code. |
+| [../apps/web/](../apps/web/) | The browser WebHID PoC. |
+| [../apps/desktop/](../apps/desktop/) | The Electrobun desktop PoC. |
+| [../packages/core/](../packages/core/) | Shared transport-agnostic catalog/protocol/error logic. |
 | [../data/servo_catalog.json](../data/servo_catalog.json) | Bundled servo metadata catalog. |
 | [../research/](../research/) | All the artifacts used during reverse engineering: captures, decompiled exe, Python test scripts. |
 | [../vendor/](../vendor/) | Vendor-supplied files (firmware, sample configs). Not our code. |

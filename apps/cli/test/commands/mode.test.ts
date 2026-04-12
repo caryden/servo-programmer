@@ -42,7 +42,7 @@ import { captureIO } from "../helpers/capture-io.ts";
 import { loadFixtureConfig, MockDongle } from "../mocks/mock-dongle.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "../../..");
+const REPO_ROOT = join(__dirname, "../../../..");
 const DOWNLOADS_DIR = join(REPO_ROOT, "downloads");
 const MINI_SERVO_SFW = join(DOWNLOADS_DIR, "Axon_Mini_Servo_Mode.sfw");
 const MINI_CR_SFW = MINI_SERVO_SFW.replace("Servo_Mode", "Modified_CR_Mode");

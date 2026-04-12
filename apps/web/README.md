@@ -27,7 +27,8 @@ and `http://localhost` qualifies.
 From the repo root:
 
 ```bash
-python3 -m http.server 8765 --directory research/webhid-poc
+cd apps/web
+python3 -m http.server 8765
 ```
 
 Then open:

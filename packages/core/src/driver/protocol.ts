@@ -135,8 +135,8 @@ export async function readFullConfig(handle: DongleHandle): Promise<Buffer> {
   const chunk0 = await readChunk(handle, 0x00, MAX_CHUNK);
   const chunk1 = await readChunk(handle, MAX_CHUNK, CONFIG_BLOCK_SIZE - MAX_CHUNK);
   const full = Buffer.alloc(CONFIG_BLOCK_SIZE);
-  chunk0.copy(full, 0);
-  chunk1.copy(full, MAX_CHUNK);
+  full.set(chunk0, 0);
+  full.set(chunk1, MAX_CHUNK);
   return full;
 }
 

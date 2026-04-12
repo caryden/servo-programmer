@@ -1,3 +1,5 @@
+type EmptySchema = Record<never, never>;
+
 export interface SerializedAxonError {
   message: string;
   code?: number;
@@ -72,10 +74,10 @@ export type DesktopPocSchema = {
       identifyServo: { params: undefined; response: RpcResult<IdentifyInfo> };
       readFullConfig: { params: undefined; response: RpcResult<ConfigInfo> };
     };
-    messages: {};
+    messages: EmptySchema;
   };
   webview: {
-    requests: {};
-    messages: {};
+    requests: EmptySchema;
+    messages: EmptySchema;
   };
 };

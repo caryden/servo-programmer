@@ -6,7 +6,7 @@ name: Release
 # Bun's cross-target build because GitHub no longer guarantees a
 # macOS 13 Intel runner on every plan.
 #
-# To cut a release, bump axon/package.json version, tag, and push:
+# To cut a release, bump apps/cli/package.json version, tag, and push:
 #   git tag v1.0.0 && git push origin v1.0.0
 #
 # The workflow_dispatch trigger lets you manually re-run a build
@@ -95,15 +95,15 @@ jobs:
         run: |
           ./scripts/build-release.sh \
             --target ${{ matrix.bun_target }} \
-            --outfile axon/dist/${{ matrix.artifact }}${{ matrix.ext }}
+            --outfile apps/cli/dist/${{ matrix.artifact }}${{ matrix.ext }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
-            axon/dist/${{ matrix.artifact }}${{ matrix.ext }}
-            axon/dist/${{ matrix.artifact }}${{ matrix.ext }}.sha256
+            apps/cli/dist/${{ matrix.artifact }}${{ matrix.ext }}
+            apps/cli/dist/${{ matrix.artifact }}${{ matrix.ext }}.sha256
           if-no-files-found: error
           retention-days: 30
 

@@ -1,17 +1,13 @@
-import { BrowserView, BrowserWindow } from "electrobun/bun";
-import { findModel, loadCatalog } from "../../../../packages/core/src/catalog.ts";
-import { AxonError } from "../../../../packages/core/src/errors.ts";
+import { findModel, loadCatalog } from "@axon/core/catalog";
 import {
-  listDongles,
-  openDongle,
-  type DongleDescriptor,
-} from "../../../../axon/src/driver/hid.ts";
-import {
+  type IdentifyReply,
   identify,
   modelIdFromConfig,
   readFullConfig,
-  type IdentifyReply,
-} from "../../../../packages/core/src/driver/protocol.ts";
+} from "@axon/core/driver/protocol";
+import { AxonError } from "@axon/core/errors";
+import { BrowserView, BrowserWindow } from "electrobun/bun";
+import { type DongleDescriptor, listDongles, openDongle } from "../../../cli/src/driver/hid.ts";
 import type {
   AdapterInfo,
   AdapterInventory,
@@ -27,9 +23,7 @@ const WINDOW_WIDTH = 960;
 const WINDOW_HEIGHT = 860;
 
 let activeDescriptor: DongleDescriptor | null = null;
-let activeHandle:
-  | Awaited<ReturnType<typeof openDongle>>
-  | null = null;
+let activeHandle: Awaited<ReturnType<typeof openDongle>> | null = null;
 
 function hex(value: number | undefined, width = 2): string | null {
   if (value === undefined) return null;

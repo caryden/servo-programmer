@@ -11,7 +11,7 @@ It answers one narrow question:
 
 ## Why this shape
 
-The browser PoC in [`../webhid-poc/`](../webhid-poc/) proved that a
+The browser PoC in [`../web/`](../web/) proved that a
 Chromium browser can talk to the adapter through WebHID. That is not a
 good desktop abstraction, though:
 
@@ -39,15 +39,14 @@ It does **not** attempt to write config or flash firmware.
 From the repo root, make sure the CLI dependencies are present:
 
 ```bash
-cd axon
+cd /Users/caryden/github/servo-programmer
 bun install
 ```
 
 Then start the Electrobun app:
 
 ```bash
-cd /Users/caryden/github/servo-programmer/research/electrobun-poc
-bun install
+cd /Users/caryden/github/servo-programmer/apps/desktop
 bun run start
 ```
 
@@ -55,7 +54,7 @@ bun run start
 
 This PoC now imports the shared catalog/protocol/error logic from
 [`../../packages/core/`](../../packages/core/) while still using the
-CLI's `node-hid` transport from [`../../axon/`](../../axon/). That is
+CLI's `node-hid` transport from [`../cli/`](../cli/). That is
 an intentional halfway step:
 
 - shared pure logic moves first

@@ -12,12 +12,12 @@ workflow matrix to build all platforms.
 Examples:
   scripts/build-release.sh
   scripts/build-release.sh --target bun-darwin-arm64
-  scripts/build-release.sh --target bun-linux-x64 --outfile axon/dist/axon-linux-x64
+  scripts/build-release.sh --target bun-linux-x64 --outfile apps/cli/dist/axon-linux-x64
 EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-axon_dir="${repo_root}/axon"
+cli_dir="${repo_root}/apps/cli"
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "error: bun is required to build release binaries" >&2
@@ -27,7 +27,7 @@ fi
 skip_checks=0
 target=""
 outfile=""
-outdir="${axon_dir}/dist"
+outdir="${cli_dir}/dist"
 allow_cross_target="${AXON_ALLOW_CROSS_TARGET:-0}"
 
 while [[ $# -gt 0 ]]; do
@@ -130,21 +130,19 @@ else
 fi
 
 (
-  cd "${axon_dir}"
+  cd "${repo_root}"
   bun install --frozen-lockfile
 )
 
 if [[ "${skip_checks}" -eq 0 ]]; then
   (
-    cd "${axon_dir}"
-    bun run check
-    bun run typecheck
-    bun test
+    cd "${repo_root}"
+    bun run ci
   )
 fi
 
 (
-  cd "${axon_dir}"
+  cd "${cli_dir}"
   bun build \
     --compile \
     --target="${target}" \

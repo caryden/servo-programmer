@@ -156,8 +156,9 @@ itself, clone and build:
 
 ```bash
 git clone https://github.com/caryden/servo-programmer.git
-cd servo-programmer/axon
+cd servo-programmer
 bun install
+cd apps/cli
 bun run build
 ./bin/axon --version
 ```
