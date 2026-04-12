@@ -90,7 +90,7 @@ class NodeHidDongle implements DongleHandle {
     this.device = device;
   }
 
-  async write(data: Buffer, _timeoutMs = 500): Promise<void> {
+  async write(data: Buffer): Promise<void> {
     if (this.released) {
       throw hidWriteError("handle was released");
     }
@@ -121,7 +121,6 @@ class NodeHidDongle implements DongleHandle {
       }
       return Buffer.from(bytes);
     } catch (e) {
-      if (e instanceof AxonError) throw e;
       throw hidReadError((e as Error).message ?? "unknown failure");
     }
   }
