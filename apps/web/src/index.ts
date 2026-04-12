@@ -64,14 +64,21 @@ if (webHidSupported()) {
 
 mountProbeApp({
   root,
+  eyebrow: "Browser Probe",
   title: "Axon WebHID PoC",
   description:
-    "Minimal browser probe for the Axon V1.3 HID adapter. The UI is shared with the desktop PoC, while device access comes from a dedicated WebHID transport.",
+    "A browser-first control surface for the Axon V1.3 HID adapter. The interface is shared with the desktop probe, while device access stays on a dedicated WebHID transport.",
   bullets: [
     "Use a Chromium-based browser on https:// or http://localhost.",
     "Make sure the adapter is owned by the host OS, not a VM such as Parallels.",
     "This PoC enumerates, identifies, and reads config. It does not write or flash firmware.",
   ],
+  referenceImage: {
+    src: "./legacy-programming-software.png",
+    alt: "Legacy Axon programming software reference screenshot",
+    caption:
+      "Legacy vendor software. Useful as a workflow reference, but the point of this shell is to replace that cramped, opaque experience with something clearer.",
+  },
   devicePanelTitle: "Selected Device",
   emptyDeviceText: "No device selected.",
   loadEnvironment: async () => ({

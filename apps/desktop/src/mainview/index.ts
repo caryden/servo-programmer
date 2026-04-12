@@ -44,14 +44,21 @@ if (!(root instanceof HTMLElement)) {
 
 mountProbeApp({
   root,
+  eyebrow: "Desktop Probe",
   title: "Axon Electrobun PoC",
   description:
-    "Minimal desktop probe for the Axon V1.3 HID adapter. The UI is shared with the WebHID PoC, while HID traffic stays in the Bun main process through the node-hid transport.",
+    "A desktop control surface for the Axon V1.3 HID adapter. The interface is shared with the browser probe, while HID traffic stays in the Bun main process through the node-hid transport.",
   bullets: [
     "Use this on the host OS with the adapter released from any VM such as Parallels.",
     "This PoC mirrors the WebHID flow, but it does not depend on browser WebHID support.",
     "It only enumerates, identifies, and reads config. It does not write or flash firmware.",
   ],
+  referenceImage: {
+    src: "./legacy-programming-software.png",
+    alt: "Legacy Axon programming software reference screenshot",
+    caption:
+      "Legacy vendor software. Useful as a workflow reference, but the point of this shell is to replace that cramped, opaque experience with something clearer.",
+  },
   devicePanelTitle: "Visible Adapters",
   emptyDeviceText: "No adapter scan yet.",
   loadEnvironment: async (): Promise<RuntimeInfo> => unwrapResult(rpc.request.getRuntime()),
