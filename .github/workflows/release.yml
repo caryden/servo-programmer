@@ -42,9 +42,11 @@ jobs:
             ext: ''
             # linux-arm64 uses a public-larger-runner image that not
             # every GH plan has enabled. We still try to build it,
-            # but a missing runner shouldn't block the rest of the
-            # release — the continue-on-error below lets the other
-            # four platforms ship even if this one fails.
+            # but the release job below still verifies the full asset
+            # set before drafting/publishing a release. continue-on-error
+            # keeps the matrix moving so we get the other artifacts and
+            # an explicit "missing asset" failure instead of aborting
+            # the whole workflow early.
           - os: ubuntu-24.04-arm
             target: linux-arm64
             bun_target: bun-linux-arm64
@@ -127,6 +129,36 @@ jobs:
           find artifacts -type f \( -name 'axon-*' -o -name '*.sha256' \) -exec cp {} release/ \;
           cp scripts/install.sh release/install.sh
           ls -la release/
+
+      - name: Verify expected release assets
+        shell: bash
+        run: |
+          expected=(
+            axon-darwin-arm64
+            axon-darwin-arm64.sha256
+            axon-darwin-x64
+            axon-darwin-x64.sha256
+            axon-linux-arm64
+            axon-linux-arm64.sha256
+            axon-linux-x64
+            axon-linux-x64.sha256
+            axon-windows-x64.exe
+            axon-windows-x64.exe.sha256
+            install.sh
+          )
+
+          missing=0
+          for asset in "${expected[@]}"; do
+            if [[ ! -f "release/${asset}" ]]; then
+              echo "error: missing release asset: ${asset}" >&2
+              missing=1
+            fi
+          done
+
+          if [[ "${missing}" -ne 0 ]]; then
+            echo "error: refusing to create a release with an incomplete asset set" >&2
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

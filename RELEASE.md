@@ -133,6 +133,7 @@ The release workflow has two jobs:
    - downloads those temporary artifacts
    - flattens them into one directory
    - adds `install.sh`
+   - verifies the full expected asset set is present
    - creates or updates a **draft** GitHub Release for the target tag
 
 Important distinction:
