@@ -1,9 +1,10 @@
 name: Release
 
 # Builds cross-platform `axon` binaries and publishes them as a
-# GitHub Release whenever a `v*` tag is pushed. Each runner builds
-# the binary natively because node-hid is a C++ addon — we cannot
-# cross-compile it from one runner to another.
+# GitHub Release whenever a `v*` tag is pushed. Most targets build
+# natively; the Intel macOS binary is built on Apple Silicon via
+# Bun's cross-target build because GitHub no longer guarantees a
+# macOS 13 Intel runner on every plan.
 #
 # To cut a release, bump axon/package.json version, tag, and push:
 #   git tag v1.0.0 && git push origin v1.0.0
@@ -55,16 +56,14 @@ jobs:
             bun_target: bun-darwin-arm64
             artifact: axon-darwin-arm64
             ext: ''
-          # macos-13 (Intel Mac x64) is opt-in — the free runner
-          # image was deprecated on some plans. Matches the ci.yml
-          # decision. allow_failure keeps the release flowing if
-          # the runner isn't available.
-          - os: macos-13
+          # Build the Intel macOS binary on macos-latest. The
+          # release build script skips smoke-executing foreign-arch
+          # binaries, so this does not require Rosetta.
+          - os: macos-latest
             target: darwin-x64
             bun_target: bun-darwin-x64
             artifact: axon-darwin-x64
             ext: ''
-            allow_failure: true
           - os: windows-latest
             target: windows-x64
             bun_target: bun-windows-x64
@@ -89,6 +88,8 @@ jobs:
 
       - name: Build standalone binary
         shell: bash
+        env:
+          AXON_ALLOW_CROSS_TARGET: 1
         run: |
           ./scripts/build-release.sh \
             --target ${{ matrix.bun_target }} \
@@ -129,8 +130,9 @@ jobs:
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           draft: true   # human-reviewed before publishing
           generate_release_notes: true
           files: |
