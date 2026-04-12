@@ -18,8 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CONTRIBUTING.md` at repo root with the contributor workflow.
 - `docs/wire-protocol.md` — polished public-audience reference for
   the USB HID and on-wire protocols, derived from `docs/FINDINGS.md`.
-- `.claude/skills/axon-cli-safety/SKILL.md` — bundled agent skill for
-  safely driving the axon CLI against connected hardware.
 
 ### Changed
 
@@ -29,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   material for the future blog post. All inbound links (in
   `README.md`, `axon/src/driver/protocol.ts`, and this changelog)
   now point to `docs/wire-protocol.md`.
-- `README.md` now points coding agents at the bundled
-  `.claude/skills/axon-cli-safety/` skill.
+- `README.md` now documents how agents should use the CLI directly:
+  `--help`, `--json`, stable error categories, and `axon doctor`.
 
 ### Documented
 

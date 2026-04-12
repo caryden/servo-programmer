@@ -420,10 +420,9 @@ axon mode set <name>        # flash a known firmware mode
 
 Today, `status`, `monitor`, `read`, and `write` are working. `get` /
 `set` with named parameters and `mode set` are the remaining v1.0
-items. There's also an [agent skill](../.claude/skills/axon-cli-safety/SKILL.md)
-so other Claude Code instances can drive the CLI themselves — the CLI
-exists because an agent helped me reverse-engineer the device, and now
-the agent knows how to use the CLI it helped build.
+items. The current direction is to make the CLI itself navigable for
+both humans and agents through `--help`, stable JSON output, and
+error messages that say what to do next.
 
 ## 12. Reflection: reverse-engineering closed systems
 
@@ -505,9 +504,7 @@ The v0.1 CLI — status, monitor, read, write — is working today. The
 v1.0 items on the
 [milestone](https://github.com/caryden/servo-programmer/milestones)
 are named parameters with unit conversion, firmware mode flashing,
-cross-compiled standalone binaries, and a polished
-[axon skill](../.claude/skills/axon-cli-safety/SKILL.md) for other
-Claude Code users.
+cross-compiled standalone binaries, and the remaining release polish.
 
 One request: **if you have an Axon Max, Mini, or Micro and you'd run
 the CLI against it and send me the output, I'd like to add your servo

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Axon CLI Safety"
-  short_description: "Safely drive the Axon CLI"
-  default_prompt: "Use $axon-cli-safety to inspect the adapter, read configs, and flash Axon servos safely."
-
-policy:
-  allow_implicit_invocation: true
