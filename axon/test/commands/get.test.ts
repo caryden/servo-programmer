@@ -44,6 +44,35 @@ function crModeHandle(inner: MockDongle): DongleHandle {
   };
 }
 
+/**
+ * Wrap a MockDongle such that identify replies report an unknown
+ * mode byte instead of the default servo mode byte.
+ */
+function unknownModeHandle(inner: MockDongle): DongleHandle {
+  return {
+    async write(data: Buffer, timeoutMs?: number): Promise<void> {
+      return inner.write(data, timeoutMs);
+    },
+    async read(timeoutMs?: number): Promise<Buffer> {
+      const rx = await inner.read(timeoutMs);
+      if (
+        rx[1] === 0x01 &&
+        rx[2] === 0x00 &&
+        (rx[5] === 0x03 || rx[5] === 0x04 || rx[5] === 0x09) &&
+        rx[7] === 0x01
+      ) {
+        const out = Buffer.from(rx);
+        out[5] = 0x09;
+        return out;
+      }
+      return rx;
+    },
+    async release(): Promise<void> {
+      return inner.release();
+    },
+  };
+}
+
 function expectAxonError(error: AxonError | undefined): AxonError {
   expect(error).toBeInstanceOf(AxonError);
   if (!(error instanceof AxonError)) {
@@ -84,6 +113,21 @@ describe("axon get (servo_mode)", () => {
     const angle = parsed.parameters.find((p: { name: string }) => p.name === "servo_angle");
     expect(angle).toBeDefined();
     expect(typeof angle.value).toBe("number");
+  });
+
+  test("get servo_neutral --json: value is physical and raw is preserved", async () => {
+    const mock = new MockDongle();
+    const code = await runGetWithHandle(mock, GLOBALS_JSON, {
+      param: "servo_neutral",
+      raw: false,
+      help: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    const parsed = JSON.parse(io.stdout);
+    expect(parsed.name).toBe("servo_neutral");
+    expect(parsed.unit).toBe("us");
+    expect(parsed.value).toBe(0);
+    expect(parsed.raw).toBe(0x80);
   });
 
   test("get servo_angle: returns the raw value", async () => {
@@ -205,6 +249,19 @@ describe("axon get error paths", () => {
     expect(error.code).toBe(ExitCode.ValidationError);
     expect(error.message).toContain("not available");
     expect(error.message.toLowerCase()).toContain("cr mode");
+  });
+
+  test("get no param in unknown mode: header falls back to unknown label", async () => {
+    const mock = new MockDongle();
+    const handle = unknownModeHandle(mock);
+    const code = await runGetWithHandle(handle, GLOBALS, {
+      param: undefined,
+      raw: false,
+      help: false,
+    });
+    expect(code).toBe(ExitCode.Ok);
+    expect(io.stdout).toContain("Unknown Mode");
+    expect(io.stdout).not.toContain("CR Mode");
   });
 
   test("get unknown_param: usage error", async () => {

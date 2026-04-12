@@ -112,9 +112,13 @@ export async function runGetWithHandle(
 // ---------------------------------------------------------------------
 
 function friendlyModeLabel(mode: ServoMode): string {
-  if (mode === "servo_mode") return "Servo Mode";
-  if (mode === "cr_mode") return "CR Mode";
-  return "unknown mode";
+  if (mode === "servo_mode") {
+    return findServoMode(3)?.name ?? "Servo Mode";
+  }
+  if (mode === "cr_mode") {
+    return findServoMode(4)?.name ?? "CR Mode";
+  }
+  return "Unknown Mode";
 }
 
 function listAllParamsForMode(
@@ -149,12 +153,11 @@ function listAllParamsForMode(
         status: "not_yet_mapped",
         reason: e.reason_blocked,
       }));
-    const modeSpec = findServoMode(mode === "servo_mode" ? 3 : 4);
     process.stdout.write(
       `${JSON.stringify(
         {
           mode,
-          mode_label: modeSpec?.name ?? friendlyModeLabel(mode),
+          mode_label: friendlyModeLabel(mode),
           parameters: rows,
           not_yet_mapped: unmapped,
         },
@@ -222,12 +225,8 @@ function emitSingle(
       vendor_label: spec.vendorLabel,
       unit: value.unit ?? spec.unit,
       value: local.raw ? value.raw : value.physical,
+      raw: value.raw,
     };
-    if (local.raw) {
-      obj.raw = value.raw;
-    } else {
-      obj.raw = value.raw;
-    }
     if (value.notes) obj.notes = value.notes;
     process.stdout.write(`${JSON.stringify(obj)}\n`);
     return;
