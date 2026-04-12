@@ -39,8 +39,10 @@ Pick the install method that matches how you work.
 
 - On **macOS**, `axon` uses the IOKit HID Manager. No permissions to
   configure. First-run Gatekeeper may flag the downloaded binary as
-  "unidentified developer" — `xattr -d com.apple.quarantine ./axon`
-  clears that, or right-click → Open in Finder once and accept.
+  "unidentified developer". The most reliable user path is
+  right-click → Open in Finder once and accept. Depending on the macOS
+  version, download metadata may be stored under different extended
+  attributes, so do not assume a single `xattr` name is always enough.
 - On **Windows**, `axon` uses HID.dll. No drivers to install.
 
 ## Direct download (all platforms)
@@ -119,8 +121,10 @@ The installer:
 1. Detects your platform and arch
 2. Downloads the latest published release binary from GitHub
 3. Verifies the SHA256 against the matching sidecar
-4. Installs to `${AXON_INSTALL_DIR:-/usr/local/bin}/axon`
-5. Prints a confirmation with the installed version
+4. Renames the selected platform asset to the stable command name
+   `axon`
+5. Installs it to `${AXON_INSTALL_DIR:-/usr/local/bin}/axon`
+6. Prints a confirmation with the installed version
 
 To install a specific release instead of the latest published one:
 

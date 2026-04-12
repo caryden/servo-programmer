@@ -154,6 +154,19 @@ fi
 
 chmod +x "${outfile}" 2>/dev/null || true
 
+if [[ "${host_os}" == "Darwin" && "${target}" == bun-darwin-* ]]; then
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "error: codesign is required to finalize macOS release binaries" >&2
+    exit 1
+  fi
+
+  # Bun standalone builds may not always leave a runner-portable signature
+  # blob in place. Replace it with a fresh ad-hoc signature and verify it
+  # before the artifact is uploaded or attached to a release.
+  codesign -s - -f "${outfile}"
+  codesign --verify --verbose=4 "${outfile}"
+fi
+
 if [[ "${target}" == "${default_target}" ]]; then
   if [[ "${artifact}" == *.exe ]]; then
     "${outfile}" --version

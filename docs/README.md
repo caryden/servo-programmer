@@ -23,6 +23,7 @@ narrative version of the journey is in [the-adventure.md](the-adventure.md).
 | [wire-protocol.md](wire-protocol.md) | Authoritative reference for the HID and on-wire protocols. |
 | [BYTE_MAPPING.md](BYTE_MAPPING.md) | Which byte of the 95-byte config block means what. |
 | [licenses.md](licenses.md) | Dependency license audit and project licensing notes. |
+| [../RELEASE.md](../RELEASE.md) | Maintainer release workflow: tag, build, draft release, validation, publish. |
 
 ## Where else to look
 
