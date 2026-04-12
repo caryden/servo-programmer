@@ -10,12 +10,12 @@ Pick the install method that matches how you work.
 
 | You are on…                    | Do this                                                                                          |
 |-------------------------------|--------------------------------------------------------------------------------------------------|
-| macOS (Apple Silicon or Intel)| `brew install caryden/axon/axon` *(once the tap ships)*                                          |
-| Linux (x64 or arm64)          | Download `axon-linux-<arch>`, `chmod +x`, put it on `$PATH` *(see "Direct download" below)*      |
+| macOS (Apple Silicon or Intel)| `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
+| Linux (x64 or arm64)          | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
 | Windows (x64)                 | Download `axon-windows-x64.exe`, put it on `%PATH%`                                              |
 | "I already have a Node toolchain" | `npm install -g @caryden/axon` *(once published)*                                            |
 | "I already have a Bun toolchain"  | `bunx @caryden/axon` *(once published; runs without installing)*                             |
-| "I'm in CI and need a one-liner"  | `curl -fsSL https://raw.githubusercontent.com/caryden/servo-programmer/main/scripts/install.sh \| bash` *(once the script ships)* |
+| "I'm in CI and need a one-liner"  | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
 
 ## What you need on the target machine
 
@@ -81,12 +81,11 @@ Tap the formula and install:
 brew install caryden/axon/axon
 ```
 
-This is the recommended install on macOS because it handles the
-Gatekeeper signing hand-off and updates cleanly with `brew upgrade`.
+This will likely become the cleanest macOS install path once the tap
+exists because it handles updates with `brew upgrade`.
 
-> The Homebrew tap at `caryden/axon` is **not yet published**. See
-> [issue #TBD](https://github.com/caryden/servo-programmer/issues)
-> for the tap setup plan.
+> The Homebrew tap at `caryden/axon` is not published yet. For now,
+> use the direct download or the release-hosted `install.sh`.
 
 ## npm / Bun (for Node/Bun users)
 
@@ -112,20 +111,30 @@ bunx @caryden/axon status
 For CI and for people who just want a one-liner:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/caryden/servo-programmer/main/scripts/install.sh | bash
+curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | bash
 ```
 
 The installer:
 
 1. Detects your platform and arch
-2. Downloads the latest release binary from GitHub
+2. Downloads the latest published release binary from GitHub
 3. Verifies the SHA256 against the matching sidecar
 4. Installs to `${AXON_INSTALL_DIR:-/usr/local/bin}/axon`
 5. Prints a confirmation with the installed version
 
-> The installer script is **not yet written**. See
-> [issue #TBD](https://github.com/caryden/servo-programmer/issues)
-> for the plan.
+To install a specific release instead of the latest published one:
+
+```bash
+curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | \
+  AXON_VERSION=v1.0.0 bash
+```
+
+For a no-sudo install:
+
+```bash
+curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | \
+  AXON_INSTALL_DIR="$HOME/.local/bin" bash
+```
 
 ## Scoop (Windows, planned)
 

@@ -31,6 +31,8 @@ ENV/
 # Node / Bun
 node_modules/
 *.log
+axon/bin/
+axon/dist/
 
 # Capture files (large binary data)
 captures/*.sal
