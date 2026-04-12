@@ -160,9 +160,11 @@ if [[ "${host_os}" == "Darwin" && "${target}" == bun-darwin-* ]]; then
     exit 1
   fi
 
-  # Bun standalone builds may not always leave a runner-portable signature
-  # blob in place. Replace it with a fresh ad-hoc signature and verify it
-  # before the artifact is uploaded or attached to a release.
+  # Bun standalone builds may leave a signature blob that verifies on the
+  # runner that produced it but fails verification after download on a
+  # different machine. Strip any existing signature, then replace it with
+  # a fresh ad-hoc signature and verify it before upload.
+  codesign --remove-signature "${outfile}" 2>/dev/null || true
   codesign -s - -f "${outfile}"
   codesign --verify --verbose=4 "${outfile}"
 fi
