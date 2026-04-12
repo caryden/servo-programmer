@@ -2,8 +2,8 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "axon-electrobun-poc",
-    identifier: "com.caryden.axon.electrobun-poc",
+    name: "Axon Servo Programmer",
+    identifier: "com.caryden.axon.servo-programmer",
     version: "0.0.1",
   },
   build: {
@@ -15,12 +15,13 @@ export default {
     copy: {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
-      "src/mainview/mk2-programmer-reference.png": "views/mainview/mk2-programmer-reference.png",
     },
     mac: {
+      icons: "icon.iconset",
       bundleCEF: false,
     },
     linux: {
+      icon: "assets/icon.png",
       bundleCEF: false,
     },
     win: {

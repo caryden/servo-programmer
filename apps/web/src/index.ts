@@ -73,12 +73,6 @@ mountProbeApp({
     "Keep the adapter on the host OS, not inside a VM such as Parallels.",
     "Diagnostics stay tucked away until you open them.",
   ],
-  referenceImage: {
-    src: "./mk2-programmer-reference.png",
-    alt: "Axon Programmer MK2 software reference screenshot",
-    caption:
-      "Official Axon Programmer MK2 reference. The information hierarchy is better than the old tool, but the goal here is still a simpler and cleaner workspace.",
-  },
   devicePanelTitle: "Selected Device",
   emptyDeviceText: "No device selected.",
   loadEnvironment: async () => ({

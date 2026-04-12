@@ -52,12 +52,6 @@ export interface ProbeUiAction<T> {
   run: () => Promise<T>;
 }
 
-export interface ProbeUiImage {
-  src: string;
-  alt: string;
-  caption: string;
-}
-
 export interface ProbeUiOptions {
   root: HTMLElement;
   title: string;
@@ -66,7 +60,6 @@ export interface ProbeUiOptions {
   devicePanelTitle: string;
   emptyDeviceText: string;
   eyebrow?: string;
-  referenceImage?: ProbeUiImage;
   loadEnvironment: () => Promise<unknown>;
   loadInventory: () => Promise<ProbeInventory>;
   refreshInventory?: ProbeUiAction<ProbeInventory>;
@@ -466,33 +459,6 @@ function installStyles(document: Document) {
       display: grid;
       gap: 18px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .axon-probe-reference {
-      margin: 0;
-      display: grid;
-      gap: 0;
-      overflow: hidden;
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: var(--probe-bg-elevated);
-    }
-
-    .axon-probe-reference-image {
-      width: 100%;
-      height: auto;
-      object-fit: cover;
-      object-position: top center;
-      background: var(--probe-bg-muted);
-    }
-
-    .axon-probe-reference-caption {
-      margin: 0;
-      padding: 12px 14px;
-      color: var(--probe-text-muted);
-      font-size: 0.92rem;
-      border-top: 1px solid var(--probe-border);
-      background: rgba(8, 11, 12, 0.88);
     }
 
     .axon-probe-empty {
@@ -1250,23 +1216,6 @@ export function mountProbeApp(options: ProbeUiOptions): void {
   const document = options.root.ownerDocument;
   installStyles(document);
 
-  const imageMarkup = options.referenceImage
-    ? `
-        <details class="axon-probe-disclosure">
-          <summary>
-            <span>Axon MK2 Reference</span>
-            <span class="axon-probe-disclosure-note">Branding and interaction baseline</span>
-          </summary>
-          <div class="axon-probe-disclosure-body">
-            <figure class="axon-probe-reference">
-              <img class="axon-probe-reference-image" src="${options.referenceImage.src}" alt="${options.referenceImage.alt}" />
-              <figcaption class="axon-probe-reference-caption">${options.referenceImage.caption}</figcaption>
-            </figure>
-          </div>
-        </details>
-      `
-    : "";
-
   options.root.innerHTML = `
     <main class="axon-probe-app">
       <div class="axon-probe-shell">
@@ -1320,8 +1269,6 @@ export function mountProbeApp(options: ProbeUiOptions): void {
               </div>
               <div data-role="connection"></div>
             </section>
-
-            ${imageMarkup}
           </div>
         </section>
 

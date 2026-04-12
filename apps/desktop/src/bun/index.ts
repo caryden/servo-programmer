@@ -8,7 +8,7 @@ import {
 import { AxonError } from "@axon/core/errors";
 import { type DongleDescriptor, listDongles, openDongle } from "@axon/transport-nodehid";
 import type { ProbeConfigInfo, ProbeDeviceInfo, ProbeIdentifyInfo, ProbeInventory } from "@axon/ui";
-import { BrowserView, BrowserWindow } from "electrobun/bun";
+import { ApplicationMenu, BrowserView, BrowserWindow, Utils } from "electrobun/bun";
 import type {
   DesktopPocSchema,
   RpcResult,
@@ -18,6 +18,9 @@ import type {
 
 const WINDOW_WIDTH = 960;
 const WINDOW_HEIGHT = 860;
+const APP_NAME = "Axon Servo Programmer";
+const APP_DOCS_URL = "https://docs.axon-robotics.com/archive/programmer";
+const PROGRAMMER_MK2_URL = "https://docs.axon-robotics.com/servos/programmer";
 
 let activeDescriptor: DongleDescriptor | null = null;
 let activeHandle: Awaited<ReturnType<typeof openDongle>> | null = null;
@@ -175,7 +178,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
 });
 
 const mainWindow = new BrowserWindow({
-  title: "Axon Electrobun PoC",
+  title: APP_NAME,
   url: "views://mainview/index.html",
   rpc,
   frame: {
@@ -187,8 +190,97 @@ const mainWindow = new BrowserWindow({
   renderer: "native",
 });
 
+ApplicationMenu.setApplicationMenu([
+  {
+    label: APP_NAME,
+    submenu: [
+      { role: "about" },
+      { type: "divider" },
+      { role: "hide" },
+      { role: "hideOthers" },
+      { role: "showAll" },
+      { type: "divider" },
+      {
+        label: `Quit ${APP_NAME}`,
+        action: "app-quit",
+        accelerator: "CommandOrControl+Q",
+      },
+    ],
+  },
+  {
+    label: "File",
+    submenu: [{ role: "close" }],
+  },
+  {
+    label: "Edit",
+    submenu: [
+      { role: "undo" },
+      { role: "redo" },
+      { type: "divider" },
+      { role: "cut" },
+      { role: "copy" },
+      { role: "paste" },
+      { role: "selectAll" },
+    ],
+  },
+  {
+    label: "View",
+    submenu: [
+      {
+        label: "Reload",
+        action: "view-reload",
+        accelerator: "CommandOrControl+R",
+      },
+      {
+        label: "Toggle Developer Tools",
+        action: "view-toggle-devtools",
+        accelerator: "Alt+CommandOrControl+I",
+      },
+    ],
+  },
+  {
+    label: "Window",
+    submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "bringAllToFront" }],
+  },
+  {
+    label: "Help",
+    submenu: [
+      { label: "Legacy Programmer Guide", action: "help-legacy-programmer" },
+      { label: "Programmer MK2 Guide", action: "help-programmer-mk2" },
+    ],
+  },
+]);
+
+ApplicationMenu.on("application-menu-clicked", (event) => {
+  const action = (event as { data?: { action?: string } })?.data?.action;
+
+  switch (action) {
+    case "app-quit":
+      void releaseActiveHandle().finally(() => {
+        Utils.quit();
+      });
+      break;
+    case "view-reload":
+      if (mainWindow.url) {
+        mainWindow.webview.loadURL(mainWindow.url);
+      }
+      break;
+    case "view-toggle-devtools":
+      mainWindow.webview.toggleDevTools();
+      break;
+    case "help-legacy-programmer":
+      Utils.openExternal(APP_DOCS_URL);
+      break;
+    case "help-programmer-mk2":
+      Utils.openExternal(PROGRAMMER_MK2_URL);
+      break;
+    default:
+      break;
+  }
+});
+
 process.on("beforeExit", async () => {
   await releaseActiveHandle();
 });
 
-console.log(`Axon Electrobun PoC started (window ${mainWindow.id})`);
+console.log(`${APP_NAME} started (window ${mainWindow.id})`);
