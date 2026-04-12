@@ -30,5 +30,6 @@ narrative version of the journey is in [the-adventure.md](the-adventure.md).
 |---|---|
 | [../axon/](../axon/) | The axon CLI source code. |
 | [../data/servo_catalog.json](../data/servo_catalog.json) | Bundled servo metadata catalog. |
+| [../.claude/skills/axon-cli-safety/](../.claude/skills/axon-cli-safety/) | Bundled agent skill for safely driving the axon CLI. |
 | [../research/](../research/) | All the artifacts used during reverse engineering: captures, decompiled exe, Python test scripts. |
 | [../vendor/](../vendor/) | Vendor-supplied files (firmware, sample configs). Not our code. |

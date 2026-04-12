@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0]
+
 ### Added
 
 - `LICENSE` (MIT, copyright 2026 Carl Ryden) at repo root.
@@ -16,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CONTRIBUTING.md` at repo root with the contributor workflow.
 - `docs/wire-protocol.md` — polished public-audience reference for
   the USB HID and on-wire protocols, derived from `docs/FINDINGS.md`.
+- `.claude/skills/axon-cli-safety/SKILL.md` — bundled agent skill for
+  safely driving the axon CLI against connected hardware.
 
 ### Changed
 
@@ -25,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   material for the future blog post. All inbound links (in
   `README.md`, `axon/src/driver/protocol.ts`, and this changelog)
   now point to `docs/wire-protocol.md`.
+- `README.md` now points coding agents at the bundled
+  `.claude/skills/axon-cli-safety/` skill.
 
 ### Documented
 
@@ -97,5 +103,6 @@ this revision — but the working CLI runs from source.
   rule is **adapter first, then servo**. `dev.reset()` (libusb)
   wipes primed state and is therefore destructive — never call it.
 
-[Unreleased]: https://github.com/caryden/servo-programmer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/caryden/servo-programmer/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/caryden/servo-programmer/releases/tag/v0.1.0

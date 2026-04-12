@@ -206,8 +206,8 @@ exit codes, and
 [docs/wire-protocol.md](docs/wire-protocol.md) if you need transport
 details. When setup or USB ownership is unclear, start with
 `axon --json doctor`; it reports stable per-check IDs and categories.
-A dedicated bundled agent skill is tracked in
-[issue #16](https://github.com/caryden/servo-programmer/issues/16).
+The bundled agent skill for safe CLI driving lives in
+[.claude/skills/axon-cli-safety/SKILL.md](.claude/skills/axon-cli-safety/SKILL.md).
 
 ## Contributing
 
