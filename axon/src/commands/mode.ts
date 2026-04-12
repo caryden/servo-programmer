@@ -201,14 +201,7 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
   // Map identify-byte mode → catalog firmware key heuristically:
   // "servo_mode" → "standard", "cr_mode" → "continuous" are the
   // conventions used by the catalog today.
-  let matchingCatalogKey: string | null = null;
-  if (model) {
-    const modeKeyGuess =
-      id.mode === "servo_mode" ? "standard" : id.mode === "cr_mode" ? "continuous" : null;
-    if (modeKeyGuess && Object.hasOwn(model.bundled_firmware, modeKeyGuess)) {
-      matchingCatalogKey = modeKeyGuess;
-    }
-  }
+  const matchingCatalogKey = matchingCatalogModeKey(model, id.mode);
 
   if (global.json) {
     process.stdout.write(
@@ -241,6 +234,19 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
     process.stdout.write(`catalog  ${matchingCatalogKey}\n`);
   }
   return ExitCode.Ok;
+}
+
+export function matchingCatalogModeKey(
+  model: Pick<ServoModel, "bundled_firmware"> | undefined,
+  mode: ServoMode,
+): string | null {
+  if (!model) return null;
+  const modeKeyGuess =
+    mode === "servo_mode" ? "standard" : mode === "cr_mode" ? "continuous" : null;
+  if (modeKeyGuess && Object.hasOwn(model.bundled_firmware, modeKeyGuess)) {
+    return modeKeyGuess;
+  }
+  return null;
 }
 
 function lookupServoMode(mode: ServoMode): ServoModeSpec | null {
