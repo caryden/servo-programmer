@@ -53,7 +53,11 @@ bun run start
 
 ## Current implementation tradeoff
 
-This PoC imports the existing Axon modules directly from `../../axon/`
-instead of moving code into shared packages first. That is intentional.
-The purpose here is to prove the transport and UI boundary before doing
-any Turborepo or monorepo restructuring.
+This PoC now imports the shared catalog/protocol/error logic from
+[`../../packages/core/`](../../packages/core/) while still using the
+CLI's `node-hid` transport from [`../../axon/`](../../axon/). That is
+an intentional halfway step:
+
+- shared pure logic moves first
+- platform transports stay where they currently live
+- bigger repo reshaping can happen after the boundaries are proven

@@ -1,6 +1,6 @@
 import { BrowserView, BrowserWindow } from "electrobun/bun";
-import { AxonError } from "../../../../axon/src/errors.ts";
-import { findModel, loadCatalog } from "../../../../axon/src/catalog.ts";
+import { findModel, loadCatalog } from "../../../../packages/core/src/catalog.ts";
+import { AxonError } from "../../../../packages/core/src/errors.ts";
 import {
   listDongles,
   openDongle,
@@ -11,7 +11,7 @@ import {
   modelIdFromConfig,
   readFullConfig,
   type IdentifyReply,
-} from "../../../../axon/src/driver/protocol.ts";
+} from "../../../../packages/core/src/driver/protocol.ts";
 import type {
   AdapterInfo,
   AdapterInventory,
