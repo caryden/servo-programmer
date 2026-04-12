@@ -89,6 +89,11 @@ export async function runSetWithHandle(
   if (!model) {
     throw AxonError.unknownModel(modelId);
   }
+  if (id.mode === "unknown") {
+    throw AxonError.validation(
+      "servo mode is unknown; cannot set parameters until the mode can be identified.",
+    );
+  }
 
   // Dispatch form. `local.positional.length === 0` was rejected above
   // so the first element is guaranteed to exist; cast to string to

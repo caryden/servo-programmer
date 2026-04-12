@@ -56,6 +56,31 @@ function crModeHandle(inner: MockDongle): DongleHandle {
   };
 }
 
+function unknownModeHandle(inner: MockDongle): DongleHandle {
+  return {
+    async write(data, timeoutMs) {
+      return inner.write(data, timeoutMs);
+    },
+    async read(timeoutMs) {
+      const rx = await inner.read(timeoutMs);
+      if (
+        rx[1] === 0x01 &&
+        rx[2] === 0x00 &&
+        (rx[5] === 0x03 || rx[5] === 0x04 || rx[5] === 0x09) &&
+        rx[7] === 0x01
+      ) {
+        const out = Buffer.from(rx);
+        out[5] = 0x09;
+        return out;
+      }
+      return rx;
+    },
+    async release() {
+      return inner.release();
+    },
+  };
+}
+
 describe("axon set (happy path)", () => {
   let io: CapturedIO;
   beforeEach(() => {
@@ -325,6 +350,24 @@ describe("axon set (error paths)", () => {
     });
     expect(code).toBe(ExitCode.Ok);
     expect(byteAt(mock.config, 0x25) & 0x60).toBe(0x00);
+  });
+
+  test("set servo_angle 180 in unknown mode is rejected once at the top level", async () => {
+    const mock = new MockDongle();
+    const handle = unknownModeHandle(mock);
+    let caught: AxonError | undefined;
+    try {
+      await runSetWithHandle(handle, GLOBALS, {
+        positional: ["servo_angle", "180"],
+        dryRun: false,
+      });
+    } catch (e) {
+      caught = e as AxonError;
+    }
+    const error = expectAxonError(caught);
+    expect(error.code).toBe(ExitCode.ValidationError);
+    expect(error.message.toLowerCase()).toContain("unknown");
+    expect(error.message.toLowerCase()).toContain("mode");
   });
 
   test("set dampening_factor 5 writes to all four mirror offsets", async () => {
