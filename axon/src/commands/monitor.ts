@@ -36,94 +36,98 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
   };
   process.on("SIGINT", cleanup);
 
-  while (!stopping) {
-    let adapterState: "connected" | "disconnected" | "busy" = "disconnected";
-    let servoName: string | null = null;
-    let mode: string | null = null;
+  try {
+    while (!stopping) {
+      let adapterState: "connected" | "disconnected" | "busy" = "disconnected";
+      let servoName: string | null = null;
+      let mode: string | null = null;
 
-    try {
-      if (handle === null) {
-        cachedModelName = null;
-        const dongles = listDongles();
-        if (dongles.length === 1) {
-          try {
-            handle = await openDongle(dongles[0]);
-          } catch (e) {
-            if (e instanceof AxonError && e.category === "adapter_busy") {
-              adapterState = "busy";
-            }
-            // claim failed — retry next tick
-          }
-        } else if (dongles.length > 1) {
-          adapterState = "busy";
-        }
-      }
-
-      if (handle !== null) {
-        adapterState = "connected";
-        try {
-          const id = await identify(handle);
-          if (id.present) {
-            mode = modeLabel(id.mode);
-            // Read model name once, cache it for subsequent ticks.
-            if (cachedModelName === null) {
-              try {
-                const config = await readFullConfig(handle);
-                const modelId = modelIdFromConfig(config);
-                const catalog = loadCatalog();
-                const model = findModel(catalog, modelId);
-                cachedModelName = model?.name ?? modelId;
-              } catch {
-                cachedModelName = "servo";
+      try {
+        if (handle === null) {
+          cachedModelName = null;
+          const dongles = listDongles();
+          if (dongles.length === 1) {
+            try {
+              handle = await openDongle(dongles[0]);
+            } catch (e) {
+              if (e instanceof AxonError && e.category === "adapter_busy") {
+                adapterState = "busy";
               }
+              // claim failed — retry next tick
             }
-            servoName = cachedModelName;
-          } else {
+          } else if (dongles.length > 1) {
+            adapterState = "busy";
+          }
+        }
+
+        if (handle !== null) {
+          adapterState = "connected";
+          try {
+            const id = await identify(handle);
+            if (id.present) {
+              mode = modeLabel(id.mode);
+              // Read model name once, cache it for subsequent ticks.
+              if (cachedModelName === null) {
+                try {
+                  const config = await readFullConfig(handle);
+                  const modelId = modelIdFromConfig(config);
+                  const catalog = loadCatalog();
+                  const model = findModel(catalog, modelId);
+                  cachedModelName = model?.name ?? modelId;
+                } catch {
+                  cachedModelName = "servo";
+                }
+              }
+              servoName = cachedModelName;
+            } else {
+              cachedModelName = null;
+            }
+          } catch {
+            try {
+              await handle.release();
+            } catch {}
+            handle = null;
+            adapterState = "disconnected";
             cachedModelName = null;
           }
-        } catch {
+        }
+      } catch {
+        if (handle !== null) {
           try {
             await handle.release();
           } catch {}
           handle = null;
-          adapterState = "disconnected";
-          cachedModelName = null;
+        }
+        cachedModelName = null;
+      }
+
+      if (flags.json) {
+        const obj = { adapter: adapterState, servo: servoName, mode };
+        const line = JSON.stringify(obj);
+        if (line !== lastLine) {
+          process.stdout.write(`${line}\n`);
+          lastLine = line;
+        }
+      } else {
+        const bar = renderStatusBar({
+          adapter: adapterState === "connected",
+          adapterLabel: adapterState === "busy" ? "Adapter Busy" : null,
+          servoName,
+          modeName: mode,
+        });
+        if (bar !== lastLine) {
+          if (isTTY && lastLine) {
+            process.stdout.write(`\r${CLEAR_LINE}`);
+          }
+          process.stdout.write(isTTY ? `\r${bar}` : `${bar}\n`);
+          lastLine = bar;
         }
       }
-    } catch {
-      if (handle !== null) {
-        try {
-          await handle.release();
-        } catch {}
-        handle = null;
-      }
-      cachedModelName = null;
-    }
 
-    if (flags.json) {
-      const obj = { adapter: adapterState, servo: servoName, mode };
-      const line = JSON.stringify(obj);
-      if (line !== lastLine) {
-        process.stdout.write(`${line}\n`);
-        lastLine = line;
-      }
-    } else {
-      const bar = renderStatusBar({
-        adapter: adapterState === "connected",
-        adapterLabel: adapterState === "busy" ? "Adapter Busy" : null,
-        servoName,
-        modeName: mode,
-      });
-      if (bar !== lastLine) {
-        if (isTTY && lastLine) {
-          process.stdout.write(`\r${CLEAR_LINE}`);
-        }
-        process.stdout.write(isTTY ? `\r${bar}` : `${bar}\n`);
-        lastLine = bar;
-      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
-
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  } finally {
+    process.off("SIGINT", cleanup);
   }
 
   if (handle !== null) {
