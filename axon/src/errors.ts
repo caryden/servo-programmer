@@ -143,14 +143,12 @@ export class AxonError extends Error {
     return new AxonError(ExitCode.UsageError, detail, undefined, "usage");
   }
 
-  // -- Deprecated aliases (kept for source compat with existing callers) ----
+  // -- Compatibility aliases (kept for source compat with existing callers) --
 
-  /** @deprecated use `AxonError.noAdapter` */
   static dongleNotFound(detail: string): AxonError {
     return AxonError.noAdapter(detail);
   }
 
-  /** @deprecated use `AxonError.noServo` */
   static notPrimed(): AxonError {
     return AxonError.noServo();
   }

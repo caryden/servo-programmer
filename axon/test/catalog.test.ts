@@ -7,7 +7,14 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { findModel, loadCatalog, parseModelId } from "../src/catalog.ts";
+import {
+  findModel,
+  loadCatalog,
+  loadNotYetMapped,
+  loadParameters,
+  loadServoModes,
+  parseModelId,
+} from "../src/catalog.ts";
 
 describe("catalog", () => {
   test("loadCatalog returns the embedded JSON", () => {
@@ -16,6 +23,13 @@ describe("catalog", () => {
     expect(catalog.version.length).toBeGreaterThan(0);
     expect(catalog.models).toBeInstanceOf(Map);
     expect(catalog.models.size).toBeGreaterThan(0);
+  });
+
+  test("catalog loaders memoize their parsed views", () => {
+    expect(loadCatalog()).toBe(loadCatalog());
+    expect(loadParameters()).toBe(loadParameters());
+    expect(loadServoModes()).toBe(loadServoModes());
+    expect(loadNotYetMapped()).toBe(loadNotYetMapped());
   });
 
   test("loadCatalog filters out _placeholder model entries", () => {

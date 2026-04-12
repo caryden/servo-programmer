@@ -127,6 +127,11 @@ const rawCatalog = catalogJson as unknown as {
   _not_yet_mapped: Record<string, unknown>;
 };
 
+let cachedCatalog: Catalog | undefined;
+let cachedParameters: CatalogParameterSpec[] | undefined;
+let cachedServoModes: ServoModeSpec[] | undefined;
+let cachedNotYetMapped: Record<string, NotYetMappedEntry> | undefined;
+
 /**
  * Parse the raw 8-byte model id from config offset 0x40..0x47 into a
  * clean ASCII string. Trailing '*' bytes are padding in the vendor
@@ -150,6 +155,7 @@ export function parseModelId(bytes: Uint8Array): string {
  * in the JSON (keys starting with "_") are filtered out.
  */
 export function loadCatalog(): Catalog {
+  if (cachedCatalog) return cachedCatalog;
   const models = new Map<string, ServoModel>();
   for (const [key, value] of Object.entries(rawCatalog.models)) {
     if (key.startsWith("_")) continue;
@@ -173,12 +179,13 @@ export function loadCatalog(): Catalog {
       bundled_firmware: v.bundled_firmware ?? {},
     });
   }
-  return {
+  cachedCatalog = {
     version: rawCatalog.catalog_version,
     source_docs: rawCatalog.source_docs,
     models,
     parameters: rawCatalog.parameters ?? {},
   };
+  return cachedCatalog;
 }
 
 export function findModel(catalog: Catalog, modelId: string): ServoModel | undefined {
@@ -195,6 +202,7 @@ export function findModel(catalog: Catalog, modelId: string): ServoModel | undef
  * are filtered out.
  */
 export function loadParameters(): CatalogParameterSpec[] {
+  if (cachedParameters) return cachedParameters;
   const out: CatalogParameterSpec[] = [];
   for (const [name, raw] of Object.entries(rawCatalog.parameters ?? {})) {
     if (name.startsWith("_")) continue;
@@ -224,7 +232,8 @@ export function loadParameters(): CatalogParameterSpec[] {
       implementation: v.implementation ?? {},
     });
   }
-  return out;
+  cachedParameters = out;
+  return cachedParameters;
 }
 
 export function findParameter(name: string): CatalogParameterSpec | undefined {
@@ -233,6 +242,7 @@ export function findParameter(name: string): CatalogParameterSpec | undefined {
 }
 
 export function loadServoModes(): ServoModeSpec[] {
+  if (cachedServoModes) return cachedServoModes;
   const out: ServoModeSpec[] = [];
   for (const [id, raw] of Object.entries(rawCatalog.servo_modes ?? {})) {
     if (id.startsWith("_")) continue;
@@ -254,7 +264,8 @@ export function loadServoModes(): ServoModeSpec[] {
       unavailable_parameters: v.unavailable_parameters,
     });
   }
-  return out;
+  cachedServoModes = out;
+  return cachedServoModes;
 }
 
 export function findServoMode(id_byte: number): ServoModeSpec | undefined {
@@ -262,6 +273,7 @@ export function findServoMode(id_byte: number): ServoModeSpec | undefined {
 }
 
 export function loadNotYetMapped(): Record<string, NotYetMappedEntry> {
+  if (cachedNotYetMapped) return cachedNotYetMapped;
   const out: Record<string, NotYetMappedEntry> = {};
   for (const [name, raw] of Object.entries(rawCatalog._not_yet_mapped ?? {})) {
     if (name.startsWith("_")) continue;
@@ -279,7 +291,8 @@ export function loadNotYetMapped(): Record<string, NotYetMappedEntry> {
       reason_blocked: v.implementation?.reason_blocked ?? "not yet mapped",
     };
   }
-  return out;
+  cachedNotYetMapped = out;
+  return cachedNotYetMapped;
 }
 
 export function isNotYetMapped(name: string): boolean {
