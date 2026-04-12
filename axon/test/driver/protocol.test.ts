@@ -171,6 +171,23 @@ describe("readChunk", () => {
     // length===0 short-circuits without any HID traffic.
     expect(mock.txHistory.length).toBe(0);
   });
+
+  test("rejects truncated replies before subarray()", async () => {
+    const rx = Buffer.alloc(8);
+    rx[0] = 0x04;
+    rx[1] = 0x01;
+    rx[2] = 0x00;
+
+    let caught: unknown;
+    try {
+      await readChunk(replyHandle(rx), 0x00, 8);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(AxonError);
+    expect((caught as AxonError).category).toBe("servo_io");
+    expect((caught as Error).message).toContain("need at least 13");
+  });
 });
 
 describe("readFullConfig", () => {

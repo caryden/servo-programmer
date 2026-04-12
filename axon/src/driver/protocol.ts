@@ -148,6 +148,9 @@ export async function readChunk(
   await handle.write(tx);
   await sleep(WIRE_REPLY_SETTLE_MS);
   const rx = await handle.read();
+  if (rx.length < 5 + length) {
+    throw AxonError.servoIo(`read reply is ${rx.length} bytes, need at least ${5 + length}`);
+  }
   if (rx[1] !== 0x01 || rx[2] !== 0x00) {
     // Distinguish "no servo" from other failures so the user gets a
     // useful recovery hint.

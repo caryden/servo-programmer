@@ -205,7 +205,7 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
   if (model) {
     const modeKeyGuess =
       id.mode === "servo_mode" ? "standard" : id.mode === "cr_mode" ? "continuous" : null;
-    if (modeKeyGuess && modeKeyGuess in model.bundled_firmware) {
+    if (modeKeyGuess && Object.hasOwn(model.bundled_firmware, modeKeyGuess)) {
       matchingCatalogKey = modeKeyGuess;
     }
   }

@@ -286,12 +286,18 @@ export async function main(argv: string[]): Promise<number> {
       }
       return e.code;
     }
-    process.stderr.write(`unexpected error: ${(e as Error).message}\n`);
+    emitUnexpectedError(e);
+    return ExitCode.ServoIoError;
+  }
+}
+
+export function emitUnexpectedError(e: unknown): void {
+  process.stderr.write(`unexpected error: ${(e as Error).message}\n`);
+  if (process.env.AXON_DEBUG === "1") {
     const stack = (e as Error).stack;
     if (stack) {
       process.stderr.write(`${stack}\n`);
     }
-    return ExitCode.ServoIoError;
   }
 }
 
