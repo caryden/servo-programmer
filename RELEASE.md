@@ -142,6 +142,31 @@ Important distinction:
 
 End users only care about the release assets.
 
+## Native HID packaging note
+
+The standalone binaries intentionally embed the platform-specific
+`node-hid` N-API prebuild selected by
+[axon/src/driver/nodehid.ts](axon/src/driver/nodehid.ts).
+
+That file exists for a specific reason: Bun standalone executables can
+embed `.node` addons when they are required directly, but the stock
+`node-hid` JS loader resolves the addon through `pkg-prebuilds` and a
+source-tree-relative `__dirname`. In a compiled release binary that
+turns into a build-machine path leak and breaks HID on other machines.
+
+Do not "simplify" this by switching the runtime back to:
+
+- `import HID from "node-hid"`
+- `createRequire(import.meta.url)` plus relative `.node` paths
+- `pkg-prebuilds`-driven addon lookup inside the compiled binary
+
+If the packaging model changes later, revalidate the full release path:
+
+1. build from a clean checkout
+2. run the produced binary from outside that checkout
+3. download the release asset from GitHub Releases
+4. run that downloaded asset against real hardware
+
 ## How the installed command becomes just `axon`
 
 The release assets are platform-specific:
