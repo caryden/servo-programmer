@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Standalone release binaries now embed the platform-specific `node-hid`
+  addon directly instead of relying on the package's dynamic
+  `pkg-prebuilds` lookup, so compiled `axon` binaries can enumerate HID
+  devices away from the build machine path.
+
 ## [1.0.0] — 2026-04-12
 
 ### Added

@@ -1,8 +1,8 @@
 /**
  * Tests for the production HID transport wrapper in `src/driver/hid.ts`.
  *
- * These use a mocked `node-hid` module so we can exercise the adapter
- * wrapping logic without requiring a physical programmer.
+ * These use a mocked local node-hid binding wrapper so we can exercise
+ * the adapter wrapping logic without requiring a physical programmer.
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -43,11 +43,11 @@ describe("hid transport", () => {
       close(): void {}
     }
 
-    await mock.module("node-hid", () => ({
-      default: {
+    await mock.module("../../src/driver/nodehid.ts", () => ({
+      getNodeHidBinding: () => ({
         devices: () => [device],
         HID: FakeHID,
-      },
+      }),
     }));
 
     const { listDongles, openDongle, REPORT_SIZE } = await import(

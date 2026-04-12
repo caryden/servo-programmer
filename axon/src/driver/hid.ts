@@ -18,15 +18,16 @@
  * was a libusb-era footgun.
  */
 
-import HID from "node-hid";
 import { AxonError } from "../errors.ts";
+import type { NodeHidDevice, NodeHidHandle } from "./nodehid.ts";
+import { getNodeHidBinding } from "./nodehid.ts";
 import type { DongleHandle } from "./transport.ts";
 
 export const VID = 0x0471;
 export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
 
-export type DongleDescriptor = HID.Device;
+export type DongleDescriptor = NodeHidDevice;
 
 /**
  * Wrap a raw node-hid failure in an AxonError so the top-level
@@ -64,7 +65,7 @@ function hidEnumerateError(detail: string): AxonError {
  */
 export function listDongles(): DongleDescriptor[] {
   try {
-    return HID.devices(VID, PID);
+    return getNodeHidBinding().devices(VID, PID);
   } catch (e) {
     throw hidEnumerateError((e as Error).message ?? "unknown failure");
   }
@@ -83,10 +84,10 @@ export function isDonglePresent(): boolean {
  * `openDongle()`.
  */
 class NodeHidDongle implements DongleHandle {
-  private device: HID.HID;
+  private device: NodeHidHandle;
   private released = false;
 
-  constructor(device: HID.HID) {
+  constructor(device: NodeHidHandle) {
     this.device = device;
   }
 
@@ -165,9 +166,9 @@ export async function openDongle(descriptor?: DongleDescriptor): Promise<DongleH
     );
   }
 
-  let device: HID.HID;
+  let device: NodeHidHandle;
   try {
-    device = new HID.HID(path);
+    device = new (getNodeHidBinding().HID)(path);
   } catch (e) {
     throw AxonError.adapterBusy((e as Error).message);
   }
