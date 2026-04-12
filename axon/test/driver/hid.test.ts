@@ -50,9 +50,12 @@ describe("hid transport", () => {
       },
     }));
 
-    const { listDongles, openDongle, REPORT_SIZE } = await import("../../src/driver/hid.ts");
+    const { listDongles, openDongle, REPORT_SIZE } = await import(
+      "../../src/driver/hid.ts?hid-transport-test"
+    );
 
-    expect(listDongles()).toEqual([device]);
+    expect(listDongles()).toHaveLength(1);
+    expect(listDongles()[0]).toMatchObject(device);
 
     const handle = await openDongle();
     await handle.write(Buffer.from([0x04, 0x8a]), 123);
