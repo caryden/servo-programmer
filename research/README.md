@@ -19,6 +19,7 @@ they're archaeology.
 | [`etw-capture/`](etw-capture/) | The Windows batch script that drives `logman` to set up a USB ETW trace from inside the Parallels VM | Run this from inside Windows to produce a fresh `axon-usb.etl` if you need a new trace. |
 | [`session-notes/`](session-notes/) | The original session diary: `REVERSE_ENGINEERING_GUIDE.md` (the early planning doc) and `SESSION_2026-04-09_VM_PROBE.md` (notes from the Parallels/ETW investigation) | Sources for the polished blog post in [`docs/the-adventure.md`](../docs/the-adventure.md). |
 | [`webhid-poc/`](webhid-poc/) | A minimal browser proof-of-concept for talking to the adapter over WebHID on `localhost` | Quick feasibility check for a future browser/WebHID path before any serious app architecture work. |
+| [`electrobun-poc/`](electrobun-poc/) | A minimal Electrobun desktop proof-of-concept that keeps HID in the Bun main process and talks to it over Electrobun RPC | Feasibility check for a desktop GUI path that can share frontend structure with the browser PoC without depending on WebHID support in the desktop renderer. |
 
 ## How to read the story
 

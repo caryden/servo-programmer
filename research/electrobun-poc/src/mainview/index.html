@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Axon Electrobun PoC</title>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Axon Electrobun PoC</h1>
+      <p>
+        Minimal desktop probe for the Axon V1.3 HID adapter. The UI runs in the Electrobun
+        WebView, but HID traffic stays in the Bun main process through the existing
+        <code>node-hid</code> transport and Axon protocol code.
+      </p>
+
+      <ul>
+        <li>Use this on the host OS with the adapter released from any VM such as Parallels.</li>
+        <li>This PoC mirrors the WebHID flow, but it does not depend on browser WebHID support.</li>
+        <li>It only enumerates, identifies, and reads config. It does not write or flash firmware.</li>
+      </ul>
+
+      <div class="row">
+        <button id="refreshAdapters">Refresh Visible Adapters</button>
+        <button id="openAdapter">Open First Visible Adapter</button>
+        <button id="identifyServo" disabled>Identify</button>
+        <button id="readConfig" disabled>Read Full Config</button>
+        <button id="closeAdapter" disabled>Close Adapter</button>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Environment</h2>
+          <pre id="environment">Loading runtime info...</pre>
+        </section>
+        <section class="panel">
+          <h2>Visible Adapters</h2>
+          <pre id="deviceInfo">No adapter scan yet.</pre>
+        </section>
+        <section class="panel">
+          <h2>Latest Reply</h2>
+          <pre id="latestReply">No traffic yet.</pre>
+        </section>
+      </div>
+
+      <section>
+        <h2>Log</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="index.js"></script>
+  </body>
+</html>

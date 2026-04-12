@@ -1,0 +1,19 @@
+{
+  "name": "axon-electrobun-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "electrobun dev",
+    "dev": "electrobun dev --watch",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "electrobun": "1.16.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/three": "^0.180.0",
+    "typescript": "^5.9.3"
+  }
+}
