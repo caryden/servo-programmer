@@ -310,14 +310,14 @@ function nowLabel(): string {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function modeShort(mode: "servo_mode" | "cr_mode" | "unknown"): string {
-  if (mode === "cr_mode") return "CR";
-  if (mode === "servo_mode") return "SERVO";
-  return "--";
-}
-
 function modeLabel(mode: ServoMode): string {
   return mode === "cr_mode" ? "CR" : "Servo";
+}
+
+function modeLong(mode: "servo_mode" | "cr_mode" | "unknown"): string {
+  if (mode === "cr_mode") return "Continuous Rotation";
+  if (mode === "servo_mode") return "Servo";
+  return "--";
 }
 
 function lossLabel(loss: LossBehavior): string {
@@ -703,16 +703,22 @@ function powerChart(
 function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup): string {
   const width = 430;
   const height = 330;
-  const bodyX = 145;
-  const bodyY = 68;
+  const bodyX = 163;
+  const bodyY = 82;
   const axisX = bodyX + spec.bodyWidth / 2;
   const axisY = bodyY + spec.axisInsetY;
-  const armLength = Math.round(spec.bodyWidth * 0.95);
-  const sweepRadius = armLength + 18;
-  const directionArrow =
-    draft.direction === "cw" ? "M 228 24 Q 270 6 300 38" : "M 300 24 Q 258 6 228 38";
-  const arrowHead =
-    draft.direction === "cw" ? "M 287 24 L 300 38 L 280 34" : "M 240 24 L 228 38 L 248 34";
+  const armLength = Math.round(spec.bodyWidth * 0.84);
+  const sweepRadius = armLength + 16;
+  const arrowRadius = sweepRadius + 42;
+  const arcStartDeg = -74;
+  const arcEndDeg = 74;
+  const pointAt = (degrees: number, radius: number): { x: number; y: number } => ({
+    x: axisX + Math.sin((degrees * Math.PI) / 180) * radius,
+    y: axisY - Math.cos((degrees * Math.PI) / 180) * radius,
+  });
+  const arrowStart = pointAt(draft.direction === "cw" ? arcStartDeg : arcEndDeg, arrowRadius);
+  const arrowEnd = pointAt(draft.direction === "cw" ? arcEndDeg : arcStartDeg, arrowRadius);
+  const directionArc = `M ${arrowStart.x.toFixed(1)} ${arrowStart.y.toFixed(1)} A ${arrowRadius} ${arrowRadius} 0 0 ${draft.direction === "cw" ? "1" : "0"} ${arrowEnd.x.toFixed(1)} ${arrowEnd.y.toFixed(1)}`;
   const minLineEndX = axisX + Math.sin((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
   const minLineEndY = axisY - Math.cos((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
   const maxLineEndX = axisX + Math.sin((point.maxAngleDeg * Math.PI) / 180) * sweepRadius;
@@ -722,15 +728,19 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup):
 
   return `
     <svg viewBox="0 0 ${width} ${height}" class="servo-svg" aria-label="servo operating sketch">
-      <path d="${directionArrow}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" />
-      <path d="${arrowHead}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+      <defs>
+        <marker id="dir-head" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="#b9bbc0" />
+        </marker>
+      </defs>
+      <path d="${directionArc}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" marker-end="url(#dir-head)" />
       <line x1="${axisX}" y1="${axisY}" x2="${minLineEndX.toFixed(1)}" y2="${minLineEndY.toFixed(1)}" stroke="#25a244" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
       <line x1="${axisX}" y1="${axisY}" x2="${maxLineEndX.toFixed(1)}" y2="${maxLineEndY.toFixed(1)}" stroke="#ff3a38" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
       <rect x="${bodyX}" y="${bodyY}" width="${spec.bodyWidth}" height="${spec.bodyHeight}" rx="28" ry="28" fill="#ffffff" stroke="#111111" stroke-width="2" />
       <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
       <circle cx="${axisX}" cy="${axisY}" r="17" fill="#ffffff" stroke="#111111" stroke-width="2" />
       <circle cx="${axisX}" cy="${axisY}" r="5" fill="${draft.direction === "cw" ? "#25a244" : "#ff3a38"}" />
-      <text x="${axisX}" y="${axisY + 52}" text-anchor="middle" fill="#7eb4f5" font-size="28" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
+      <text x="${axisX}" y="${axisY + 42}" text-anchor="middle" fill="#7eb4f5" font-size="20" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
     </svg>
   `;
 }
@@ -940,6 +950,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       !state.busyAction;
 
     const operating = buildOperatingPoint(state.config, state.draft, state.sweepPhase);
+    const voltageDetents = Array.from(
+      new Set(operating.spec.points.map((sample) => sample.voltage.toFixed(1))),
+    );
     const point = operating.point;
     const xMax = operating.torqueMax;
     const speedMax = Math.max(1, operating.noLoadRpm);
@@ -1024,8 +1037,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border-radius: 8px;
           background: #161616;
           color: #f7f7f7;
-          font-family:
-            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
 
         .toolbar {
@@ -1078,14 +1089,30 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         }
 
         .state {
-          display: inline-flex;
-          gap: 8px;
-          align-items: center;
+          display: grid;
+          gap: 2px;
           min-width: 0;
           padding: 8px 10px;
           border-radius: 8px;
           border: 1px solid #2d2d2d;
           background: #1b1b1b;
+        }
+
+        .state-label {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          color: #9ca3af;
+          font-size: 10px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .state-value {
+          min-width: 0;
+          color: #f7f7f7;
+          font-size: 12px;
+          font-weight: 700;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -1115,7 +1142,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .workspace {
           display: grid;
-          grid-template-columns: 320px minmax(0, 1fr);
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           gap: 12px;
         }
 
@@ -1224,22 +1251,33 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           accent-color: #1f6ed4;
         }
 
-        .switch {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+        .toggle-setting {
+          display: grid;
           gap: 8px;
-          min-height: 42px;
-          padding: 0 12px;
-          border: 1px solid #d4d9e0;
-          border-radius: 8px;
-          background: #fafaf8;
         }
 
-        .switch input {
-          width: 16px;
-          height: 16px;
-          accent-color: #111111;
+        .toggle-pills {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .toggle-pill {
+          min-height: 42px;
+          padding: 0 10px;
+          border-radius: 999px;
+          border: 1px solid #d4d9e0;
+          background: #fafaf8;
+          color: #111111;
+          font-size: 13px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+
+        .toggle-pill[data-selected="true"] {
+          background: #ffffff;
+          border-color: #111111;
+          box-shadow: inset 0 0 0 1px #111111;
         }
 
         .load-save-row {
@@ -1278,8 +1316,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .sim-grid {
           display: grid;
-          grid-template-columns: minmax(360px, 1fr) 340px;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           gap: 18px;
+          align-items: start;
         }
 
         .sim-left {
@@ -1297,10 +1336,13 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border: 1px solid #dbe2ea;
           border-radius: 8px;
           background: linear-gradient(180deg, #ffffff 0%, #fbfbf9 100%);
+          display: flex;
+          justify-content: center;
         }
 
         .servo-svg {
           width: 100%;
+          max-width: 340px;
           height: auto;
           display: block;
         }
@@ -1443,6 +1485,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           .mode-row,
           .direction-row,
           .load-save-row,
+          .toggle-pills,
           .mini-row {
             grid-template-columns: 1fr;
           }
@@ -1453,25 +1496,30 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           <div class="topline">
             <div class="toolbar">
               <span class="brand" aria-hidden="true"></span>
-              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse an already approved browser device.">USB</button>
-              <button class="tool" data-command="link" ${!canLink ? "disabled" : ""} title="Open or release the adapter for this app.">Link</button>
-              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its live setup into the sim.">Sync</button>
+              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse an already approved browser device.">Find Adapter</button>
+              <button class="tool" data-command="link" ${!canLink ? "disabled" : ""} title="Open or release the adapter for this app.">${connected ? "Disconnect" : "Connect"}</button>
+              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its live setup into the sim.">Use Live Setup</button>
             </div>
             <div class="statebar">
               <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
-                <span class="state-dot"></span><span>${connected ? "USB OK" : visible ? "USB" : "USB --"}</span>
+                <span class="state-label"><span class="state-dot"></span>Adapter</span>
+                <span class="state-value">${connected ? "Connected" : visible ? "Detected" : "Not Found"}</span>
               </div>
               <div class="state ${servoPresent ? "ok" : connected ? "warn" : ""}" title="Servo state">
-                <span class="state-dot"></span><span>${servoPresent ? "SRV OK" : "SRV --"}</span>
+                <span class="state-label"><span class="state-dot"></span>Servo</span>
+                <span class="state-value">${servoPresent ? "Detected" : connected ? "Not Detected" : "Waiting"}</span>
               </div>
               <div class="state ${modelId ? "ok" : ""}" title="Model id">
-                <span class="state-dot"></span><span>${escapeHtml(textForState(modelId))}</span>
+                <span class="state-label"><span class="state-dot"></span>Model</span>
+                <span class="state-value">${escapeHtml(textForState(modelId))}</span>
               </div>
               <div class="state ${mode !== "unknown" ? "ok" : ""}" title="Mode">
-                <span class="state-dot"></span><span>${escapeHtml(modeShort(mode))}</span>
+                <span class="state-label"><span class="state-dot"></span>Mode</span>
+                <span class="state-value">${escapeHtml(modeLong(mode))}</span>
               </div>
               <div class="state ${dirty ? "live" : state.config ? "ok" : ""}" title="Draft versus live servo">
-                <span class="state-dot"></span><span>${dirty ? "DIRTY" : state.config ? "LIVE" : "--"}</span>
+                <span class="state-label"><span class="state-dot"></span>Draft</span>
+                <span class="state-value">${dirty ? "Changes Pending" : state.config ? "Matches Live" : "--"}</span>
               </div>
             </div>
             <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Make the attached servo match the sim. Not wired yet.">Apply</button>
@@ -1513,9 +1561,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                 </div>
               </div>
 
-              <div class="switch">
-                <span class="setting-label">Ramp ${help("Ease into motion instead of slamming to the target.")}</span>
-                <input data-toggle="softStart" type="checkbox" ${state.draft.softStart ? "checked" : ""} />
+              <div class="toggle-setting">
+                <div class="setting-head">
+                  <span class="setting-label">Ramp ${help("Ease into motion instead of slamming to the target.")}</span>
+                </div>
+                <div class="toggle-pills">
+                  <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="false" data-selected="${!state.draft.softStart}">Off</button>
+                  <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="true" data-selected="${state.draft.softStart}">On</button>
+                </div>
               </div>
 
               <div class="setting">
@@ -1572,9 +1625,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                   ${
                     state.draft.mode === "servo_mode"
                       ? `
-                        <div class="switch">
-                          <span class="setting-label">Sweep ${help("Animate from 500 us to 2500 us and back.")}</span>
-                          <input data-toggle="sweep" type="checkbox" ${state.draft.sweepEnabled ? "checked" : ""} />
+                        <div class="toggle-setting">
+                          <div class="setting-head">
+                            <span class="setting-label">Sweep ${help("Animate from 500 us to 2500 us and back.")}</span>
+                          </div>
+                          <div class="toggle-pills">
+                            <button class="toggle-pill" data-toggle-kind="sweep" data-toggle-value="false" data-selected="${!state.draft.sweepEnabled}">Manual</button>
+                            <button class="toggle-pill" data-toggle-kind="sweep" data-toggle-value="true" data-selected="${state.draft.sweepEnabled}">Sweep</button>
+                          </div>
                         </div>
                       `
                       : ""
@@ -1594,8 +1652,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                       <div class="mini-label">Voltage ${help("Supply voltage for the motor curves.")}</div>
                       <div>
                         <div class="mini-value">${state.draft.voltage.toFixed(1)} V</div>
-                        <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" />
-                        <div class="mini-range"><span>4.8</span><span>6.0</span><span>8.4</span></div>
+                        <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" list="voltage-detents" />
+                        <datalist id="voltage-detents">
+                          ${voltageDetents.map((value) => `<option value="${value}"></option>`).join("")}
+                        </datalist>
+                        <div class="mini-range">${voltageDetents.map((value) => `<span>${value}</span>`).join("")}</div>
                       </div>
                     </div>
 
@@ -1733,14 +1794,15 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       });
     });
 
-    options.root.querySelectorAll<HTMLInputElement>("[data-toggle]").forEach((input) => {
-      input.addEventListener("change", () => {
-        if (input.dataset.toggle === "softStart") {
-          state.draft.softStart = input.checked;
+    options.root.querySelectorAll<HTMLButtonElement>("[data-toggle-kind]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextValue = button.dataset.toggleValue === "true";
+        if (button.dataset.toggleKind === "softStart") {
+          state.draft.softStart = nextValue;
         }
-        if (input.dataset.toggle === "sweep") {
-          state.draft.sweepEnabled = input.checked;
-          if (input.checked) {
+        if (button.dataset.toggleKind === "sweep") {
+          state.draft.sweepEnabled = nextValue;
+          if (nextValue) {
             state.sweepPhase = 0;
           }
         }
