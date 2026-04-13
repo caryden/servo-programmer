@@ -89,29 +89,34 @@ interface LogEntry {
   message: string;
 }
 
+type ServoMode = "servo_mode" | "cr_mode";
+type LossBehavior = "release" | "hold" | "neutral";
+type Direction = "cw" | "ccw";
+
 interface ProfilePreset {
   id: string;
   label: string;
-  mode: "servo_mode" | "cr_mode";
+  mode: ServoMode;
   rangePercent: number;
   neutralUs: number;
-  reversed: boolean;
-  pwmLossBehavior: "release" | "hold" | "neutral";
+  direction: Direction;
+  pwmLossBehavior: LossBehavior;
   softStart: boolean;
   pwmUs: number;
 }
 
 interface DraftSetup {
   profileId: string;
-  mode: "servo_mode" | "cr_mode";
+  mode: ServoMode;
   rangePercent: number;
   neutralUs: number;
-  reversed: boolean;
-  pwmLossBehavior: "release" | "hold" | "neutral";
+  direction: Direction;
+  pwmLossBehavior: LossBehavior;
   softStart: boolean;
   pwmUs: number;
   voltage: number;
-  loadPercent: number;
+  loadKgcm: number;
+  sweepEnabled: boolean;
 }
 
 interface ProbeState {
@@ -124,22 +129,42 @@ interface ProbeState {
   error: string | null;
   logs: LogEntry[];
   diagnosticsOpen: boolean;
+  loadPanelOpen: boolean;
+  sweepPhase: number;
 }
 
 interface VoltagePoint {
   voltage: number;
   torqueKgcm: number;
   speedSec60: number;
-  idleMa: number;
-  stallMa: number;
+  idleA: number;
+  stallA: number;
 }
 
 interface ServoSpec {
   bodyWidth: number;
   bodyHeight: number;
-  bodyDepth: number;
+  axisInsetY: number;
   maxRangeDeg: number;
   points: VoltagePoint[];
+}
+
+interface CurvePoint {
+  torqueKgcm: number;
+  speedRpm: number;
+  currentA: number;
+  mechanicalPowerW: number;
+  electricalPowerW: number;
+  heatW: number;
+  efficiency: number;
+}
+
+interface OperatingPoint extends CurvePoint {
+  pwmUs: number;
+  hornAngleDeg: number;
+  minAngleDeg: number;
+  maxAngleDeg: number;
+  sweepDirection: 1 | -1;
 }
 
 const PROFILE_PRESETS: ProfilePreset[] = [
@@ -147,9 +172,9 @@ const PROFILE_PRESETS: ProfilePreset[] = [
     id: "claw",
     label: "Claw",
     mode: "servo_mode",
-    rangePercent: 34,
+    rangePercent: 30,
     neutralUs: 0,
-    reversed: false,
+    direction: "cw",
     pwmLossBehavior: "hold",
     softStart: true,
     pwmUs: 1900,
@@ -160,7 +185,7 @@ const PROFILE_PRESETS: ProfilePreset[] = [
     mode: "cr_mode",
     rangePercent: 100,
     neutralUs: 0,
-    reversed: false,
+    direction: "cw",
     pwmLossBehavior: "release",
     softStart: false,
     pwmUs: 2000,
@@ -171,7 +196,7 @@ const PROFILE_PRESETS: ProfilePreset[] = [
     mode: "servo_mode",
     rangePercent: 22,
     neutralUs: 0,
-    reversed: false,
+    direction: "ccw",
     pwmLossBehavior: "neutral",
     softStart: true,
     pwmUs: 1700,
@@ -180,9 +205,9 @@ const PROFILE_PRESETS: ProfilePreset[] = [
     id: "arm",
     label: "Arm",
     mode: "servo_mode",
-    rangePercent: 56,
+    rangePercent: 55,
     neutralUs: 10,
-    reversed: false,
+    direction: "cw",
     pwmLossBehavior: "hold",
     softStart: true,
     pwmUs: 1850,
@@ -190,41 +215,41 @@ const PROFILE_PRESETS: ProfilePreset[] = [
 ];
 
 const MINI_SPEC: ServoSpec = {
-  bodyWidth: 128,
-  bodyHeight: 82,
-  bodyDepth: 42,
+  bodyWidth: 130,
+  bodyHeight: 236,
+  axisInsetY: 44,
   maxRangeDeg: 355,
   points: [
-    { voltage: 4.8, torqueKgcm: 13, speedSec60: 0.16, idleMa: 140, stallMa: 2200 },
-    { voltage: 6.0, torqueKgcm: 16, speedSec60: 0.13, idleMa: 170, stallMa: 2600 },
-    { voltage: 7.4, torqueKgcm: 19, speedSec60: 0.11, idleMa: 190, stallMa: 3000 },
-    { voltage: 8.4, torqueKgcm: 21, speedSec60: 0.1, idleMa: 210, stallMa: 3200 },
+    { voltage: 4.8, torqueKgcm: 13, speedSec60: 0.16, idleA: 0.14, stallA: 2.2 },
+    { voltage: 6.0, torqueKgcm: 16, speedSec60: 0.13, idleA: 0.17, stallA: 2.6 },
+    { voltage: 7.4, torqueKgcm: 19, speedSec60: 0.11, idleA: 0.19, stallA: 3.0 },
+    { voltage: 8.4, torqueKgcm: 21, speedSec60: 0.1, idleA: 0.21, stallA: 3.2 },
   ],
 };
 
 const MICRO_SPEC: ServoSpec = {
-  bodyWidth: 96,
-  bodyHeight: 62,
-  bodyDepth: 34,
+  bodyWidth: 112,
+  bodyHeight: 214,
+  axisInsetY: 40,
   maxRangeDeg: 360,
   points: [
-    { voltage: 4.8, torqueKgcm: 4.2, speedSec60: 0.16, idleMa: 100, stallMa: 1000 },
-    { voltage: 6.0, torqueKgcm: 5.2, speedSec60: 0.13, idleMa: 120, stallMa: 1300 },
-    { voltage: 7.4, torqueKgcm: 6.5, speedSec60: 0.11, idleMa: 140, stallMa: 1600 },
-    { voltage: 8.4, torqueKgcm: 7.1, speedSec60: 0.1, idleMa: 160, stallMa: 1800 },
+    { voltage: 4.8, torqueKgcm: 4.2, speedSec60: 0.16, idleA: 0.1, stallA: 1.0 },
+    { voltage: 6.0, torqueKgcm: 5.2, speedSec60: 0.13, idleA: 0.12, stallA: 1.3 },
+    { voltage: 7.4, torqueKgcm: 6.5, speedSec60: 0.11, idleA: 0.14, stallA: 1.6 },
+    { voltage: 8.4, torqueKgcm: 7.1, speedSec60: 0.1, idleA: 0.16, stallA: 1.8 },
   ],
 };
 
 const MAX_SPEC: ServoSpec = {
-  bodyWidth: 150,
-  bodyHeight: 92,
-  bodyDepth: 46,
+  bodyWidth: 144,
+  bodyHeight: 246,
+  axisInsetY: 46,
   maxRangeDeg: 360,
   points: [
-    { voltage: 4.8, torqueKgcm: 28, speedSec60: 0.14, idleMa: 280, stallMa: 3600 },
-    { voltage: 6.0, torqueKgcm: 34, speedSec60: 0.115, idleMa: 320, stallMa: 4000 },
-    { voltage: 7.2, torqueKgcm: 39, speedSec60: 0.1, idleMa: 360, stallMa: 4300 },
-    { voltage: 8.4, torqueKgcm: 45, speedSec60: 0.085, idleMa: 400, stallMa: 4600 },
+    { voltage: 4.8, torqueKgcm: 28, speedSec60: 0.14, idleA: 0.28, stallA: 3.6 },
+    { voltage: 6.0, torqueKgcm: 34, speedSec60: 0.115, idleA: 0.32, stallA: 4.0 },
+    { voltage: 7.2, torqueKgcm: 39, speedSec60: 0.1, idleA: 0.36, stallA: 4.3 },
+    { voltage: 8.4, torqueKgcm: 45, speedSec60: 0.085, idleA: 0.4, stallA: 4.6 },
   ],
 };
 
@@ -250,8 +275,8 @@ function interpolatePoint(points: VoltagePoint[], voltage: number): VoltagePoint
         voltage,
         torqueKgcm: lerp(left.torqueKgcm, right.torqueKgcm, t),
         speedSec60: lerp(left.speedSec60, right.speedSec60, t),
-        idleMa: lerp(left.idleMa, right.idleMa, t),
-        stallMa: lerp(left.stallMa, right.stallMa, t),
+        idleA: lerp(left.idleA, right.idleA, t),
+        stallA: lerp(left.stallA, right.stallA, t),
       };
     }
   }
@@ -262,6 +287,14 @@ function interpolatePoint(points: VoltagePoint[], voltage: number): VoltagePoint
 function rpmFromSec60(speedSec60: number): number {
   if (speedSec60 <= 0) return 0;
   return 10 / speedSec60;
+}
+
+function kgcmToNm(value: number): number {
+  return value * 0.0980665;
+}
+
+function kgcmToOzIn(value: number): number {
+  return value * 13.887;
 }
 
 function escapeHtml(value: unknown): string {
@@ -283,10 +316,18 @@ function modeShort(mode: "servo_mode" | "cr_mode" | "unknown"): string {
   return "--";
 }
 
-function formatLoss(value: "release" | "hold" | "neutral"): string {
-  if (value === "release") return "Let go";
-  if (value === "hold") return "Hold";
-  return "Center";
+function modeLabel(mode: ServoMode): string {
+  return mode === "cr_mode" ? "CR" : "Servo";
+}
+
+function lossLabel(loss: LossBehavior): string {
+  if (loss === "release") return "Release";
+  if (loss === "hold") return "Hold";
+  return "Neutral";
+}
+
+function directionLabel(direction: Direction): string {
+  return direction === "cw" ? "CW" : "CCW";
 }
 
 function profileById(profileId: string): ProfilePreset {
@@ -300,34 +341,37 @@ function baseDraft(profileId = "claw"): DraftSetup {
     mode: profile.mode,
     rangePercent: profile.rangePercent,
     neutralUs: profile.neutralUs,
-    reversed: profile.reversed,
+    direction: profile.direction,
     pwmLossBehavior: profile.pwmLossBehavior,
     softStart: profile.softStart,
     pwmUs: profile.pwmUs,
     voltage: 6,
-    loadPercent: 15,
+    loadKgcm: profile.mode === "cr_mode" ? 4 : 6,
+    sweepEnabled: profile.mode === "servo_mode",
   };
 }
 
-function modeFromConfig(config: ProbeConfigInfo | null): "servo_mode" | "cr_mode" {
+function modeFromConfig(config: ProbeConfigInfo | null): ServoMode {
   return config?.mode === "cr_mode" ? "cr_mode" : "servo_mode";
 }
 
 function draftFromConfig(config: ProbeConfigInfo | null, current: DraftSetup): DraftSetup {
   if (!config?.setup) return current;
-  const suggestedProfile = config.mode === "cr_mode" ? "intake" : "claw";
+  const mode = modeFromConfig(config);
+  const profileId = mode === "cr_mode" ? "intake" : "claw";
   return {
     ...current,
-    profileId: suggestedProfile,
-    mode: modeFromConfig(config),
+    profileId,
+    mode,
     rangePercent: clamp(config.setup.rangePercent ?? current.rangePercent, 10, 100),
     neutralUs: clamp(config.setup.neutralUs ?? current.neutralUs, -127, 127),
-    reversed: config.setup.inversion === "reversed",
+    direction: config.setup.inversion === "reversed" ? "ccw" : "cw",
     pwmLossBehavior:
       config.setup.pwmLossBehavior === "hold" || config.setup.pwmLossBehavior === "neutral"
         ? config.setup.pwmLossBehavior
         : "release",
     softStart: config.setup.softStart ?? current.softStart,
+    sweepEnabled: mode === "servo_mode",
   };
 }
 
@@ -339,10 +383,12 @@ function selectProfile(profileId: string, current: DraftSetup): DraftSetup {
     mode: profile.mode,
     rangePercent: profile.rangePercent,
     neutralUs: profile.neutralUs,
-    reversed: profile.reversed,
+    direction: profile.direction,
     pwmLossBehavior: profile.pwmLossBehavior,
     softStart: profile.softStart,
     pwmUs: profile.pwmUs,
+    loadKgcm: profile.mode === "cr_mode" ? 4 : 6,
+    sweepEnabled: profile.mode === "servo_mode",
   };
 }
 
@@ -357,14 +403,12 @@ function lookupSpec(
   if ((modelId ?? "").startsWith("SA81") || (modelName ?? "").toLowerCase().includes("max")) {
     return MAX_SPEC;
   }
-
-  if (config?.setup?.rangeDegrees) {
+  if (config?.setup?.rangeDegrees && config.setup.rangeDegrees > MINI_SPEC.maxRangeDeg) {
     return {
       ...MINI_SPEC,
-      maxRangeDeg: Math.max(MINI_SPEC.maxRangeDeg, config.setup.rangeDegrees),
+      maxRangeDeg: config.setup.rangeDegrees,
     };
   }
-
   return MINI_SPEC;
 }
 
@@ -374,12 +418,17 @@ function nearlyEqual(a: number, b: number, epsilon = 1): boolean {
 
 function isDirty(config: ProbeConfigInfo | null, draft: DraftSetup): boolean {
   if (!config?.setup) return false;
+  const configDirection = config.setup.inversion === "reversed" ? "ccw" : "cw";
+  const configLoss =
+    config.setup.pwmLossBehavior === "hold" || config.setup.pwmLossBehavior === "neutral"
+      ? config.setup.pwmLossBehavior
+      : "release";
   return (
     config.mode !== draft.mode ||
     !nearlyEqual(config.setup.rangePercent ?? draft.rangePercent, draft.rangePercent) ||
     !nearlyEqual(config.setup.neutralUs ?? draft.neutralUs, draft.neutralUs) ||
-    (config.setup.inversion === "reversed") !== draft.reversed ||
-    (config.setup.pwmLossBehavior ?? "release") !== draft.pwmLossBehavior ||
+    configDirection !== draft.direction ||
+    configLoss !== draft.pwmLossBehavior ||
     (config.setup.softStart ?? false) !== draft.softStart
   );
 }
@@ -388,97 +437,302 @@ function toPrettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-function formatSignedUs(value: number): string {
-  if (value === 0) return "0";
-  return `${value > 0 ? "+" : ""}${value}`;
+function textForState(value: string | null): string {
+  return value && value.length > 0 ? value : "--";
 }
 
 function help(title: string): string {
   return `<span class="help" title="${escapeHtml(title)}">?</span>`;
 }
 
-function textForState(value: string | null): string {
-  return value && value.length > 0 ? value : "--";
+function formatSignedUs(value: number): string {
+  if (value === 0) return "0";
+  return `${value > 0 ? "+" : ""}${value}`;
 }
 
-interface SimValues {
-  spec: ServoSpec;
-  rangeDeg: number;
-  minAngle: number;
-  maxAngle: number;
-  hornAngle: number;
-  spinDirection: -1 | 0 | 1;
-  spinPeriod: number;
-  rpm: number;
-  torqueKgcm: number;
-  powerW: number;
-  efficiencyPercent: number;
-  heatW: number;
-  currentA: number;
-  voltagePoint: VoltagePoint;
-  powerLimit: number;
+function triangleWave(phase: number): number {
+  const wrapped = phase % 2;
+  return wrapped <= 1 ? wrapped : 2 - wrapped;
 }
 
-function deriveSimulation(config: ProbeConfigInfo | null, draft: DraftSetup): SimValues {
-  const spec = lookupSpec(config?.modelId ?? null, config?.modelName ?? null, config);
-  const voltagePoint = interpolatePoint(spec.points, draft.voltage);
-  const noLoadRpm = rpmFromSec60(voltagePoint.speedSec60);
-  const loadRatio = clamp(draft.loadPercent / 100, 0, 1);
-  const powerLimit = clamp((config?.setup?.pwmPowerPercent ?? 85) / 100, 0.2, 1);
-  const rangeDeg = Math.round((spec.maxRangeDeg * draft.rangePercent) / 100);
-
-  let hornAngle = 0;
-  let spinDirection: -1 | 0 | 1 = 0;
-  let rpm = 0;
-
-  const centeredPwm = 1500 + draft.neutralUs;
-
-  if (draft.mode === "servo_mode") {
-    const command = clamp((draft.pwmUs - centeredPwm) / 1000, -1, 1);
-    const travel = (rangeDeg / 2) * command;
-    hornAngle = draft.reversed ? -travel : travel;
-    rpm = noLoadRpm * Math.abs(command) * 0.32 * powerLimit * Math.max(0.18, 1 - loadRatio * 0.72);
-  } else {
-    const drive = clamp((draft.pwmUs - centeredPwm) / 1000, -1, 1);
-    const signedDrive = draft.reversed ? -drive : drive;
-    spinDirection = signedDrive === 0 ? 0 : signedDrive > 0 ? 1 : -1;
-    hornAngle = signedDrive > 0 ? 18 : signedDrive < 0 ? -18 : 0;
-    rpm = noLoadRpm * Math.abs(signedDrive) * powerLimit * Math.max(0, 1 - loadRatio);
+function effectivePwm(draft: DraftSetup, sweepPhase: number): number {
+  if (draft.mode === "servo_mode" && draft.sweepEnabled) {
+    return Math.round(500 + 2000 * triangleWave(sweepPhase));
   }
+  return draft.pwmUs;
+}
 
-  const torqueKgcm =
-    voltagePoint.torqueKgcm * loadRatio * powerLimit * (draft.mode === "servo_mode" ? 0.82 : 1);
-  const torqueNm = torqueKgcm * 0.0980665;
-  const omega = (rpm * 2 * Math.PI) / 60;
-  const powerW = torqueNm * omega;
-  const currentA =
-    (voltagePoint.idleMa +
-      (voltagePoint.stallMa - voltagePoint.idleMa) *
-        clamp(loadRatio * 0.85 + Math.abs(draft.pwmUs - centeredPwm) / 2000, 0, 1) *
-        powerLimit) /
-    1000;
-  const electricalW = currentA * draft.voltage;
-  const efficiencyPercent = clamp(electricalW > 0 ? (powerW / electricalW) * 100 : 0, 0, 92);
-  const heatW = Math.max(0, electricalW - powerW);
-  const spinPeriod = rpm > 1 ? clamp(60 / rpm, 0.35, 8) : 9;
+function buildOperatingPoint(
+  config: ProbeConfigInfo | null,
+  draft: DraftSetup,
+  sweepPhase: number,
+): {
+  spec: ServoSpec;
+  base: VoltagePoint;
+  point: OperatingPoint;
+  curves: CurvePoint[];
+  torqueMax: number;
+  noLoadRpm: number;
+} {
+  const spec = lookupSpec(config?.modelId ?? null, config?.modelName ?? null, config);
+  const base = interpolatePoint(spec.points, draft.voltage);
+  const noLoadRpm = rpmFromSec60(base.speedSec60);
+  const pwmPowerLimit = clamp((config?.setup?.pwmPowerPercent ?? 85) / 100, 0.2, 1);
+  const torqueMax = Math.max(0.1, base.torqueKgcm * pwmPowerLimit);
+  const currentPwmUs = effectivePwm(draft, sweepPhase);
+  const centeredPwm = 1500 + draft.neutralUs;
+  const command = clamp((currentPwmUs - centeredPwm) / 1000, -1, 1);
+  const signedCommand = draft.direction === "cw" ? command : -command;
+  const rangeDeg = (spec.maxRangeDeg * draft.rangePercent) / 100;
+  const minAngleDeg = -rangeDeg / 2;
+  const maxAngleDeg = rangeDeg / 2;
+  const hornAngleDeg =
+    draft.mode === "servo_mode"
+      ? clamp(signedCommand * (rangeDeg / 2), minAngleDeg, maxAngleDeg)
+      : signedCommand * 18;
+
+  const torqueKgcm = clamp(draft.loadKgcm, 0, torqueMax);
+  const torqueRatio = clamp(torqueKgcm / torqueMax, 0, 1);
+  const currentA = base.idleA + (base.stallA - base.idleA) * torqueRatio;
+  const currentRpm = Math.max(0, noLoadRpm * (1 - torqueRatio));
+  const mechanicalPowerW = kgcmToNm(torqueKgcm) * ((currentRpm * 2 * Math.PI) / 60);
+  const electricalPowerW = draft.voltage * currentA;
+  const heatW = Math.max(0, electricalPowerW - mechanicalPowerW);
+  const efficiency = electricalPowerW > 0 ? mechanicalPowerW / electricalPowerW : 0;
+
+  const curves: CurvePoint[] = [];
+  for (let index = 0; index <= 48; index++) {
+    const sampleTorque = (torqueMax * index) / 48;
+    const sampleRatio = clamp(sampleTorque / torqueMax, 0, 1);
+    const sampleCurrentA = base.idleA + (base.stallA - base.idleA) * sampleRatio;
+    const sampleSpeedRpm = Math.max(0, noLoadRpm * (1 - sampleRatio));
+    const sampleMechanicalPowerW = kgcmToNm(sampleTorque) * ((sampleSpeedRpm * 2 * Math.PI) / 60);
+    const sampleElectricalPowerW = draft.voltage * sampleCurrentA;
+    const sampleHeatW = Math.max(0, sampleElectricalPowerW - sampleMechanicalPowerW);
+    const sampleEfficiency =
+      sampleElectricalPowerW > 0 ? sampleMechanicalPowerW / sampleElectricalPowerW : 0;
+
+    curves.push({
+      torqueKgcm: sampleTorque,
+      speedRpm: sampleSpeedRpm,
+      currentA: sampleCurrentA,
+      mechanicalPowerW: sampleMechanicalPowerW,
+      electricalPowerW: sampleElectricalPowerW,
+      heatW: sampleHeatW,
+      efficiency: sampleEfficiency,
+    });
+  }
 
   return {
     spec,
-    rangeDeg,
-    minAngle: -rangeDeg / 2,
-    maxAngle: rangeDeg / 2,
-    hornAngle,
-    spinDirection,
-    spinPeriod,
-    rpm,
-    torqueKgcm,
-    powerW,
-    efficiencyPercent,
-    heatW,
-    currentA,
-    voltagePoint,
-    powerLimit,
+    base,
+    torqueMax,
+    noLoadRpm,
+    curves,
+    point: {
+      torqueKgcm,
+      speedRpm: currentRpm,
+      currentA,
+      mechanicalPowerW,
+      electricalPowerW,
+      heatW,
+      efficiency,
+      pwmUs: currentPwmUs,
+      hornAngleDeg,
+      minAngleDeg,
+      maxAngleDeg,
+      sweepDirection: draft.direction === "cw" ? 1 : -1,
+    },
   };
+}
+
+function svgPathFromSeries(
+  values: CurvePoint[],
+  xValue: (point: CurvePoint) => number,
+  yValue: (point: CurvePoint) => number,
+  xMax: number,
+  yMax: number,
+  width: number,
+  height: number,
+): string {
+  return values
+    .map((point, index) => {
+      const x = (xValue(point) / xMax) * width;
+      const y = height - (yValue(point) / yMax) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function chartDiamond(x: number, y: number, tooltip: string, color = "#5aa5ff"): string {
+  const size = 8;
+  return `
+    <g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
+      <title>${escapeHtml(tooltip)}</title>
+      <path d="M 0 -${size} L ${size} 0 L 0 ${size} L -${size} 0 Z" fill="${color}" stroke="#2d78d0" stroke-width="1.5" />
+    </g>
+  `;
+}
+
+function formatOperatingTooltip(
+  point: OperatingPoint,
+  kind: "speed" | "current" | "power" | "efficiency",
+): string {
+  const lines = [
+    `Torque: ${point.torqueKgcm.toFixed(1)} kgf*cm`,
+    `Torque: ${kgcmToNm(point.torqueKgcm).toFixed(2)} N*m`,
+    `Torque: ${kgcmToOzIn(point.torqueKgcm).toFixed(1)} oz*in`,
+  ];
+
+  if (kind === "speed") {
+    lines.push(`Speed: ${point.speedRpm.toFixed(0)} rpm`);
+    lines.push(`Speed: ${(point.speedRpm * 6).toFixed(0)} deg/s`);
+  }
+  if (kind === "current") {
+    lines.push(`Current: ${point.currentA.toFixed(2)} A`);
+    lines.push(`Electrical power: ${point.electricalPowerW.toFixed(1)} W`);
+  }
+  if (kind === "power") {
+    lines.push(`Mechanical power: ${point.mechanicalPowerW.toFixed(1)} W`);
+    lines.push(`Heat: ${point.heatW.toFixed(1)} W`);
+  }
+  if (kind === "efficiency") {
+    lines.push(`Efficiency: ${(point.efficiency * 100).toFixed(0)} %`);
+    lines.push(`Mechanical power: ${point.mechanicalPowerW.toFixed(1)} W`);
+    lines.push(`Electrical power: ${point.electricalPowerW.toFixed(1)} W`);
+    lines.push(`Heat: ${point.heatW.toFixed(1)} W`);
+  }
+
+  return lines.join("\n");
+}
+
+function lineChart(
+  title: string,
+  subtitle: string,
+  xMax: number,
+  leftMax: number,
+  rightMax: number | null,
+  primaryPath: string,
+  secondaryPath: string | null,
+  operatingX: number,
+  primaryY: number,
+  secondaryY: number | null,
+  primaryTooltip: string,
+  secondaryTooltip: string | null,
+  leftLabel: string,
+  rightLabel: string | null,
+): string {
+  const width = 280;
+  const height = 120;
+  const x = (operatingX / xMax) * width;
+
+  return `
+    <div class="chart-card">
+      <div class="chart-head">
+        <span>${escapeHtml(title)}</span>
+        <span>${escapeHtml(subtitle)}</span>
+      </div>
+      <svg viewBox="0 0 320 152" class="chart-svg" aria-label="${escapeHtml(title)}">
+        <line x1="28" y1="8" x2="28" y2="128" stroke="#3c7ce7" stroke-width="1.6" />
+        <line x1="28" y1="128" x2="308" y2="128" stroke="#111111" stroke-width="1.2" />
+        ${rightLabel ? `<line x1="308" y1="8" x2="308" y2="128" stroke="#3c7ce7" stroke-width="1.6" />` : ""}
+        <line x1="${(28 + x).toFixed(1)}" y1="8" x2="${(28 + x).toFixed(1)}" y2="128" stroke="#88bfff" stroke-width="1.2" stroke-dasharray="4 8" />
+        <path d="${primaryPath}" fill="none" stroke="#111111" stroke-width="2.2" transform="translate(28 8)" />
+        ${secondaryPath ? `<path d="${secondaryPath}" fill="none" stroke="#ff3a38" stroke-width="2.2" transform="translate(28 8)" />` : ""}
+        ${chartDiamond(28 + x, 8 + (height - (primaryY / leftMax) * height), primaryTooltip)}
+        ${
+          secondaryY != null && rightLabel != null && rightMax
+            ? chartDiamond(
+                28 + x,
+                8 + (height - (secondaryY / rightMax) * height),
+                secondaryTooltip ?? "",
+              )
+            : ""
+        }
+        <text x="28" y="145" class="chart-axis">0</text>
+        <text x="308" y="145" text-anchor="end" class="chart-axis">${xMax.toFixed(1)}</text>
+        <text x="22" y="24" text-anchor="end" class="chart-axis">${leftMax.toFixed(0)}</text>
+        ${rightLabel && rightMax ? `<text x="314" y="24" class="chart-axis">${rightMax.toFixed(1)}</text>` : ""}
+        <text x="10" y="74" transform="rotate(-90 10 74)" class="chart-label">${escapeHtml(leftLabel)}</text>
+        ${
+          rightLabel
+            ? `<text x="318" y="74" transform="rotate(-90 318 74)" class="chart-label">${escapeHtml(rightLabel)}</text>`
+            : ""
+        }
+        <text x="165" y="150" text-anchor="middle" class="chart-label">torque (kgf*cm)</text>
+      </svg>
+    </div>
+  `;
+}
+
+function powerChart(
+  title: string,
+  xMax: number,
+  yMax: number,
+  path: string,
+  operatingX: number,
+  operatingY: number,
+  tooltip: string,
+  yLabel: string,
+): string {
+  const width = 280;
+  const height = 120;
+  const x = (operatingX / xMax) * width;
+  const y = 8 + (height - (operatingY / yMax) * height);
+  return `
+    <div class="chart-card">
+      <div class="chart-head">
+        <span>${escapeHtml(title)}</span>
+      </div>
+      <svg viewBox="0 0 320 152" class="chart-svg" aria-label="${escapeHtml(title)}">
+        <line x1="28" y1="8" x2="28" y2="128" stroke="#3c7ce7" stroke-width="1.6" />
+        <line x1="28" y1="128" x2="308" y2="128" stroke="#111111" stroke-width="1.2" />
+        <line x1="${(28 + x).toFixed(1)}" y1="8" x2="${(28 + x).toFixed(1)}" y2="128" stroke="#88bfff" stroke-width="1.2" stroke-dasharray="4 8" />
+        <path d="${path}" fill="none" stroke="#8fc2f8" stroke-width="3" transform="translate(28 8)" />
+        ${chartDiamond(28 + x, y, tooltip)}
+        <text x="28" y="145" class="chart-axis">0</text>
+        <text x="308" y="145" text-anchor="end" class="chart-axis">${xMax.toFixed(1)}</text>
+        <text x="22" y="24" text-anchor="end" class="chart-axis">${yMax.toFixed(1)}</text>
+        <text x="10" y="74" transform="rotate(-90 10 74)" class="chart-label">${escapeHtml(yLabel)}</text>
+        <text x="165" y="150" text-anchor="middle" class="chart-label">torque (kgf*cm)</text>
+      </svg>
+    </div>
+  `;
+}
+
+function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup): string {
+  const width = 430;
+  const height = 330;
+  const bodyX = 145;
+  const bodyY = 68;
+  const axisX = bodyX + spec.bodyWidth / 2;
+  const axisY = bodyY + spec.axisInsetY;
+  const armLength = Math.round(spec.bodyWidth * 0.95);
+  const sweepRadius = armLength + 18;
+  const directionArrow =
+    draft.direction === "cw" ? "M 228 24 Q 270 6 300 38" : "M 300 24 Q 258 6 228 38";
+  const arrowHead =
+    draft.direction === "cw" ? "M 287 24 L 300 38 L 280 34" : "M 240 24 L 228 38 L 248 34";
+  const minLineEndX = axisX + Math.sin((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
+  const minLineEndY = axisY - Math.cos((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
+  const maxLineEndX = axisX + Math.sin((point.maxAngleDeg * Math.PI) / 180) * sweepRadius;
+  const maxLineEndY = axisY - Math.cos((point.maxAngleDeg * Math.PI) / 180) * sweepRadius;
+  const hornEndX = axisX + Math.sin((point.hornAngleDeg * Math.PI) / 180) * armLength;
+  const hornEndY = axisY - Math.cos((point.hornAngleDeg * Math.PI) / 180) * armLength;
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="servo-svg" aria-label="servo operating sketch">
+      <path d="${directionArrow}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" />
+      <path d="${arrowHead}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+      <line x1="${axisX}" y1="${axisY}" x2="${minLineEndX.toFixed(1)}" y2="${minLineEndY.toFixed(1)}" stroke="#25a244" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
+      <line x1="${axisX}" y1="${axisY}" x2="${maxLineEndX.toFixed(1)}" y2="${maxLineEndY.toFixed(1)}" stroke="#ff3a38" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
+      <rect x="${bodyX}" y="${bodyY}" width="${spec.bodyWidth}" height="${spec.bodyHeight}" rx="28" ry="28" fill="#ffffff" stroke="#111111" stroke-width="2" />
+      <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
+      <circle cx="${axisX}" cy="${axisY}" r="17" fill="#ffffff" stroke="#111111" stroke-width="2" />
+      <circle cx="${axisX}" cy="${axisY}" r="5" fill="${draft.direction === "cw" ? "#25a244" : "#ff3a38"}" />
+      <text x="${axisX}" y="${axisY + 52}" text-anchor="middle" fill="#7eb4f5" font-size="28" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
+    </svg>
+  `;
 }
 
 export function mountProbeApp(options: MountProbeAppOptions): void {
@@ -492,11 +746,15 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     error: null,
     logs: [],
     diagnosticsOpen: false,
+    loadPanelOpen: false,
+    sweepPhase: 0,
   };
+
+  let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   function log(message: string): void {
     state.logs.unshift({ timestamp: nowLabel(), message });
-    state.logs = state.logs.slice(0, 14);
+    state.logs = state.logs.slice(0, 16);
   }
 
   function updateInventory(inventory: ProbeInventory): void {
@@ -507,22 +765,36 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
+  function updateSweepTimer(): void {
+    const shouldRun = state.draft.mode === "servo_mode" && state.draft.sweepEnabled;
+    if (shouldRun && !sweepTimer) {
+      sweepTimer = setInterval(() => {
+        state.sweepPhase = (state.sweepPhase + 0.04) % 2;
+        render();
+      }, 90);
+    }
+    if (!shouldRun && sweepTimer) {
+      clearInterval(sweepTimer);
+      sweepTimer = null;
+    }
+  }
+
   async function runAction<T>(
-    name: string,
+    actionName: string,
     task: () => Promise<T>,
     onSuccess: (result: T) => void,
   ): Promise<void> {
     if (state.busyAction) return;
-    state.busyAction = name;
+    state.busyAction = actionName;
     state.error = null;
     render();
     try {
       const result = await task();
       onSuccess(result);
-      log(name);
+      log(actionName);
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log(`${name} failed`);
+      log(`${actionName} failed`);
     } finally {
       state.busyAction = null;
       render();
@@ -560,9 +832,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   }
 
   async function doSync(): Promise<void> {
-    const readAction = options.readFullConfig;
-    if (!readAction) return;
-    await runAction("Sync", readAction.run, (config) => {
+    if (!options.readFullConfig) return;
+    await runAction("Sync", options.readFullConfig.run, (config) => {
       state.config = config;
       state.identify = {
         present: true,
@@ -573,7 +844,86 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         rawRx: state.identify?.rawRx ?? "",
       };
       state.draft = draftFromConfig(config, state.draft);
+      state.loadPanelOpen = false;
+      state.sweepPhase = 0;
+      updateSweepTimer();
     });
+  }
+
+  function triggerSave(): void {
+    const payload = {
+      kind: "axon-sim-draft",
+      version: 1,
+      savedAt: new Date().toISOString(),
+      draft: state.draft,
+      modelId: state.config?.modelId ?? null,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `axon-${state.config?.modelId ?? "draft"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    log("Save");
+  }
+
+  function applyLoadedDraft(value: unknown): void {
+    if (!value || typeof value !== "object") {
+      throw new Error("Unsupported file format.");
+    }
+    const payload = value as { draft?: Partial<DraftSetup> };
+    if (!payload.draft) {
+      throw new Error("Missing draft payload.");
+    }
+
+    state.draft = {
+      ...state.draft,
+      ...payload.draft,
+      mode: payload.draft.mode === "cr_mode" ? "cr_mode" : "servo_mode",
+      direction: payload.draft.direction === "ccw" ? "ccw" : "cw",
+      pwmLossBehavior:
+        payload.draft.pwmLossBehavior === "hold" || payload.draft.pwmLossBehavior === "neutral"
+          ? payload.draft.pwmLossBehavior
+          : "release",
+      sweepEnabled:
+        payload.draft.sweepEnabled !== undefined
+          ? Boolean(payload.draft.sweepEnabled)
+          : state.draft.mode === "servo_mode",
+      profileId:
+        typeof payload.draft.profileId === "string"
+          ? payload.draft.profileId
+          : state.draft.profileId,
+      rangePercent: clamp(Number(payload.draft.rangePercent ?? state.draft.rangePercent), 10, 100),
+      neutralUs: clamp(Number(payload.draft.neutralUs ?? state.draft.neutralUs), -127, 127),
+      pwmUs: clamp(Number(payload.draft.pwmUs ?? state.draft.pwmUs), 500, 2500),
+      voltage: clamp(Number(payload.draft.voltage ?? state.draft.voltage), 4.8, 8.4),
+      loadKgcm: clamp(Number(payload.draft.loadKgcm ?? state.draft.loadKgcm), 0, 999),
+    };
+    state.loadPanelOpen = false;
+    state.sweepPhase = 0;
+    updateSweepTimer();
+    render();
+    log("Load");
+  }
+
+  function handleFile(file: File): void {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      state.error = "Could not read file.";
+      render();
+    };
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result ?? ""));
+        applyLoadedDraft(parsed);
+      } catch (error) {
+        state.error = error instanceof Error ? error.message : String(error);
+        render();
+      }
+    };
+    reader.readAsText(file);
   }
 
   function render(): void {
@@ -581,14 +931,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const visible = state.inventory.devices.length > 0;
     const servoPresent = state.identify?.present ?? Boolean(state.config);
     const dirty = isDirty(state.config, state.draft);
-    const sim = deriveSimulation(state.config, state.draft);
-    const bodyWidthPx = sim.spec.bodyWidth;
-    const bodyDepthPx = Math.max(56, Math.round(sim.spec.bodyDepth * 1.7));
-    const shaftOffsetX = Math.round(bodyWidthPx * 0.2);
-    const shaftOffsetY = Math.round(bodyDepthPx * 0.5);
-    const sweepDiameter = Math.max(240, Math.round(bodyWidthPx * 1.85));
-    const assemblyWidth = bodyWidthPx + Math.round(sweepDiameter * 0.7);
-    const assemblyHeight = Math.max(bodyDepthPx + 120, sweepDiameter * 0.9);
     const modelId = state.config?.modelId ?? null;
     const mode = state.config?.mode ?? state.identify?.mode ?? state.draft.mode;
     const canSync = connected && Boolean(options.readFullConfig) && !state.busyAction;
@@ -597,38 +939,78 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       Boolean(options.requestDevice ?? options.refreshInventory ?? options.reconnectDevice) &&
       !state.busyAction;
 
-    const hornStyle =
-      state.draft.mode === "cr_mode" && sim.spinDirection !== 0
-        ? `transform: rotate(${sim.hornAngle}deg); animation: spin ${sim.spinPeriod}s linear infinite; animation-direction: ${sim.spinDirection > 0 ? "normal" : "reverse"};`
-        : `transform: rotate(${sim.hornAngle}deg);`;
+    const operating = buildOperatingPoint(state.config, state.draft, state.sweepPhase);
+    const point = operating.point;
+    const xMax = operating.torqueMax;
+    const speedMax = Math.max(1, operating.noLoadRpm);
+    const currentMax = Math.max(0.1, operating.base.stallA);
+    const powerMax = Math.max(0.1, ...operating.curves.map((curve) => curve.mechanicalPowerW));
+    const efficiencyMax = 1;
+
+    const speedPath = svgPathFromSeries(
+      operating.curves,
+      (curve) => curve.torqueKgcm,
+      (curve) => curve.speedRpm,
+      xMax,
+      speedMax,
+      280,
+      120,
+    );
+    const currentPath = svgPathFromSeries(
+      operating.curves,
+      (curve) => curve.torqueKgcm,
+      (curve) => curve.currentA,
+      xMax,
+      currentMax,
+      280,
+      120,
+    );
+    const powerPath = svgPathFromSeries(
+      operating.curves,
+      (curve) => curve.torqueKgcm,
+      (curve) => curve.mechanicalPowerW,
+      xMax,
+      powerMax,
+      280,
+      120,
+    );
+    const efficiencyPath = svgPathFromSeries(
+      operating.curves,
+      (curve) => curve.torqueKgcm,
+      (curve) => curve.efficiency,
+      xMax,
+      efficiencyMax,
+      280,
+      120,
+    );
 
     const diagnostics = {
       environment: state.environment,
       inventory: state.inventory,
       identify: state.identify,
       config: state.config,
-      logs: state.logs,
       draft: state.draft,
+      point,
+      logs: state.logs,
     };
 
     options.root.innerHTML = `
       <style>
         * { box-sizing: border-box; }
         body { margin: 0; }
-
         :root { color-scheme: light; }
 
         .shell {
           min-height: 100vh;
           padding: 12px;
-          background: #f3f3f1;
+          background: #f8f8f6;
           color: #111111;
           font-family:
             Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
         .frame {
-          max-width: 1380px;
+          max-width: 1480px;
           margin: 0 auto;
         }
 
@@ -638,21 +1020,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           gap: 10px;
           align-items: center;
           margin-bottom: 12px;
-          padding: 10px 12px;
+          padding: 8px 10px;
           border-radius: 8px;
-          background: #121212;
-          color: #f8fafc;
+          background: #161616;
+          color: #f7f7f7;
           font-family:
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-        }
-
-        .brand {
-          width: 12px;
-          height: 12px;
-          border-radius: 2px;
-          background: #e40014;
-          box-shadow: 10px 0 0 #f8fafc;
-          margin-right: 10px;
         }
 
         .toolbar {
@@ -661,15 +1034,30 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           align-items: center;
         }
 
-        .tool {
+        .brand {
+          width: 12px;
+          height: 12px;
+          border-radius: 2px;
+          background: #e40014;
+          box-shadow: 10px 0 0 #ffffff;
+          margin-right: 8px;
+        }
+
+        .tool,
+        .apply {
           height: 32px;
           padding: 0 12px;
           border-radius: 8px;
           border: 1px solid #333333;
-          background: #191919;
-          color: #f8fafc;
+          background: #1e1e1e;
+          color: inherit;
           font: inherit;
           cursor: pointer;
+        }
+
+        .apply {
+          border-color: #6d000c;
+          background: #9e0814;
         }
 
         .tool:hover:not(:disabled),
@@ -679,8 +1067,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .tool:disabled,
         .apply:disabled {
-          cursor: default;
           opacity: 0.5;
+          cursor: default;
         }
 
         .statebar {
@@ -696,8 +1084,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           min-width: 0;
           padding: 8px 10px;
           border-radius: 8px;
-          background: #171717;
-          border: 1px solid #2c2c2c;
+          border: 1px solid #2d2d2d;
+          background: #1b1b1b;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -707,7 +1095,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           width: 8px;
           height: 8px;
           border-radius: 999px;
-          background: #707070;
+          background: #676767;
           flex: 0 0 auto;
         }
 
@@ -715,85 +1103,76 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         .warn .state-dot { background: #f99c00; }
         .live .state-dot { background: #e40014; }
 
-        .apply {
-          height: 32px;
-          padding: 0 16px;
-          border-radius: 8px;
-          border: 1px solid #6d000c;
-          background: #e40014;
-          color: #ffffff;
-          font: inherit;
-          cursor: pointer;
-        }
-
         .error {
           margin-bottom: 12px;
           padding: 10px 12px;
           border: 1px solid #f0b5bc;
           border-radius: 8px;
-          background: #fff2f3;
-          color: #8f1020;
+          background: #fff1f2;
+          color: #8c101e;
           font-size: 13px;
-          line-height: 1.35;
         }
 
         .workspace {
           display: grid;
-          grid-template-columns: 360px minmax(0, 1fr);
+          grid-template-columns: 320px minmax(0, 1fr);
           gap: 12px;
         }
 
         .pane {
-          border: 1px solid #d7d7d2;
+          border: 1px solid #dcded9;
           border-radius: 8px;
           background: #ffffff;
           overflow: hidden;
         }
 
-        .settings {
+        .config-pane {
+          position: relative;
           padding: 14px;
           display: grid;
           gap: 14px;
         }
 
-        .chip-row,
+        .config-pane.dragging {
+          background: #f7fafc;
+          border-color: #5aa5ff;
+        }
+
         .mode-row,
-        .loss-row {
+        .direction-row {
           display: grid;
           gap: 8px;
-        }
-
-        .chip-row {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-        }
-
-        .mode-row {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .loss-row {
+          display: grid;
+          gap: 8px;
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
-        .chip,
         .mode-button,
-        .loss-button {
+        .direction-button,
+        .loss-button,
+        .load-save-button,
+        .profile-chip {
           min-height: 42px;
           padding: 0 10px;
           border-radius: 8px;
-          border: 1px solid #d5d8de;
-          background: #f8f8f6;
+          border: 1px solid #d4d9e0;
+          background: #fafaf8;
           color: #111111;
           font-size: 13px;
-          font-weight: 600;
+          font-weight: 650;
           cursor: pointer;
         }
 
-        .chip[data-selected="true"],
         .mode-button[data-selected="true"],
-        .loss-button[data-selected="true"] {
-          border-color: #111111;
+        .direction-button[data-selected="true"],
+        .loss-button[data-selected="true"],
+        .profile-chip[data-selected="true"] {
           background: #ffffff;
+          border-color: #111111;
           box-shadow: inset 0 0 0 1px #111111;
         }
 
@@ -806,14 +1185,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          gap: 10px;
+          gap: 12px;
         }
 
         .setting-label {
           display: inline-flex;
           gap: 6px;
           align-items: center;
-          color: #4b5563;
+          color: #4c5664;
           font-size: 12px;
           font-weight: 700;
           text-transform: uppercase;
@@ -832,228 +1211,175 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           width: 16px;
           height: 16px;
           border-radius: 999px;
-          border: 1px solid #c9ced6;
-          color: #69707d;
+          border: 1px solid #ccd2d9;
+          color: #737c89;
           font-size: 11px;
           line-height: 1;
           cursor: help;
-          background: #ffffff;
+        }
+
+        .slider {
+          width: 100%;
+          margin: 0;
+          accent-color: #1f6ed4;
         }
 
         .switch {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          gap: 10px;
-          min-height: 44px;
+          gap: 8px;
+          min-height: 42px;
           padding: 0 12px;
-          border: 1px solid #d5d8de;
+          border: 1px solid #d4d9e0;
           border-radius: 8px;
-          background: #f8f8f6;
+          background: #fafaf8;
         }
 
         .switch input {
-          width: 18px;
-          height: 18px;
+          width: 16px;
+          height: 16px;
           accent-color: #111111;
         }
 
-        .slider {
-          width: 100%;
-          margin: 0;
-          accent-color: #e40014;
+        .load-save-row {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
         }
 
-        .sim {
+        .drop-hint {
+          margin-top: -4px;
+          color: #95a0ae;
+          font-size: 11px;
+          text-align: center;
+        }
+
+        .load-panel {
+          padding: 10px;
+          border: 1px solid #dbe2ea;
+          border-radius: 8px;
+          background: #f7f9fb;
+          display: grid;
+          gap: 8px;
+        }
+
+        .profile-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .sim-pane {
           padding: 14px;
           display: grid;
           gap: 12px;
         }
 
-        .servo-stage {
-          position: relative;
-          min-height: 440px;
+        .sim-grid {
+          display: grid;
+          grid-template-columns: minmax(360px, 1fr) 340px;
+          gap: 18px;
+        }
+
+        .sim-left {
+          display: grid;
+          gap: 12px;
+        }
+
+        .sim-right {
+          display: grid;
+          gap: 12px;
+        }
+
+        .servo-card {
+          padding: 14px;
+          border: 1px solid #dbe2ea;
           border-radius: 8px;
-          border: 1px solid #e0e3e8;
-          background:
-            radial-gradient(circle at 50% 44%, #ffffff 0%, #f7f7f4 58%, #efefeb 100%);
-          overflow: hidden;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfbf9 100%);
         }
 
-        .sim-meta {
-          position: absolute;
-          top: 14px;
-          left: 14px;
-          right: 14px;
-          display: flex;
-          justify-content: space-between;
+        .servo-svg {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+
+        .sim-sliders {
+          display: grid;
+          gap: 14px;
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .mini-row {
+          display: grid;
           gap: 10px;
-          pointer-events: none;
+          grid-template-columns: 104px minmax(0, 1fr);
+          align-items: center;
         }
 
-        .meta-pill {
-          padding: 6px 8px;
-          border-radius: 999px;
-          background: rgba(255, 255, 255, 0.92);
-          border: 1px solid #dde1e6;
+        .mini-label {
+          display: inline-flex;
+          gap: 6px;
+          align-items: center;
+          color: #202734;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .mini-value {
+          margin-bottom: 6px;
           font-family:
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-size: 12px;
           font-weight: 700;
         }
 
-        .servo-assembly {
-          position: absolute;
-          left: 50%;
-          top: 55%;
-          transform: translate(-50%, -50%);
-        }
-
-        .servo-sweep {
-          position: absolute;
-          border-radius: 999px;
-          border: 1px solid #dfe3e8;
-          background:
-            radial-gradient(circle at center, transparent 0 26px, #ffffff 26px 30px, transparent 30px),
-            radial-gradient(circle at center, transparent 0 84px, #e6e9ef 84px 86px, transparent 86px);
-          opacity: 0.98;
-        }
-
-        .limit,
-        .horn {
-          position: absolute;
-          left: 0;
-          top: 0;
-          transform-origin: 0 50%;
-        }
-
-        .limit {
-          width: 112px;
-          height: 4px;
-          margin-top: -2px;
-          border-radius: 999px;
-          background: #b7bec9;
-        }
-
-        .horn {
-          width: 124px;
-          height: 6px;
-          margin-top: -3px;
-          border-radius: 999px;
-          background: #e40014;
-          box-shadow: 0 0 0 1px rgba(228, 0, 20, 0.08);
-          transition: transform 240ms ease;
-        }
-
-        .hub {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 24px;
-          height: 24px;
-          margin-left: -12px;
-          margin-top: -12px;
-          border-radius: 999px;
-          background: #111111;
-          box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.94);
-        }
-
-        .servo-body {
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          border-radius: 8px;
-          background:
-            linear-gradient(180deg, #1b1b1b 0%, #0f0f0f 100%);
-          border: 1px solid #2f2f2f;
-          box-shadow: 0 18px 30px rgba(17, 17, 17, 0.16);
-        }
-
-        .servo-top-plate {
-          position: absolute;
-          border-radius: 8px;
-          border: 1px solid #2b2b2b;
-          background: #1a1a1a;
-        }
-
-        .servo-front {
-          position: absolute;
-          width: 26px;
-          height: 34px;
-          border-radius: 8px 0 0 8px;
-          background: #111111;
-          border: 1px solid #2b2b2b;
-        }
-
-        .servo-wire {
-          position: absolute;
-          border-top: 3px solid #4b5563;
-          border-right: 3px solid #4b5563;
-          border-radius: 0 18px 0 0;
-        }
-
-        .sim-bottom {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 236px;
-          gap: 12px;
-        }
-
-        .metrics {
-          display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 8px;
-        }
-
-        .metric {
-          min-height: 74px;
-          padding: 10px;
-          border: 1px solid #d7d7d2;
-          border-radius: 8px;
-          background: #ffffff;
-          display: grid;
-          align-content: space-between;
-        }
-
-        .metric-value {
-          font-family:
-            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size: 20px;
-          font-weight: 700;
-          line-height: 1;
-        }
-
-        .metric-unit {
-          color: #69707d;
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-
-        .metric-top {
-          display: flex;
-          justify-content: flex-end;
-        }
-
-        .driver {
-          display: grid;
-          gap: 12px;
-          padding: 12px;
-          border: 1px solid #d7d7d2;
-          border-radius: 8px;
-          background: #ffffff;
-        }
-
-        .ticks {
+        .mini-range {
           display: flex;
           justify-content: space-between;
           gap: 8px;
-          color: #69707d;
+          color: #a0a7b1;
           font-size: 11px;
           font-weight: 700;
-          text-transform: uppercase;
           font-family:
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        .chart-card {
+          padding: 10px;
+          border: 1px solid #dbe2ea;
+          border-radius: 8px;
+          background: #ffffff;
+        }
+
+        .chart-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 6px;
+          color: #9aa3af;
+          font-size: 11px;
+          font-weight: 600;
+        }
+
+        .chart-svg {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+
+        .chart-axis {
+          fill: #9aa3af;
+          font-size: 11px;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        .chart-label {
+          fill: #9aa3af;
+          font-size: 11px;
         }
 
         details.debug {
@@ -1068,12 +1394,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           justify-content: center;
         }
 
-        details.debug > summary::-webkit-details-marker { display: none; }
+        details.debug > summary::-webkit-details-marker {
+          display: none;
+        }
 
         .debug-panel {
           margin-top: 8px;
           padding: 12px;
-          border: 1px solid #d7d7d2;
+          border: 1px solid #dcded9;
           border-radius: 8px;
           background: #ffffff;
         }
@@ -1083,51 +1411,40 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           overflow: auto;
           white-space: pre-wrap;
           word-break: break-word;
-          color: #1f2937;
           font-size: 12px;
           line-height: 1.4;
+          color: #1f2937;
           font-family:
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
 
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        @media (max-width: 1180px) {
+        @media (max-width: 1160px) {
           .workspace,
-          .sim-bottom {
+          .sim-grid {
             grid-template-columns: 1fr;
-          }
-
-          .metrics {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
         }
 
         @media (max-width: 760px) {
-          .shell { padding: 10px; }
+          .shell {
+            padding: 10px;
+          }
 
           .topline {
             grid-template-columns: 1fr;
           }
 
           .statebar,
-          .chip-row,
-          .mode-row,
-          .loss-row,
-          .metrics {
+          .profile-grid,
+          .loss-row {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .servo-stage {
-            min-height: 360px;
-          }
-
-          .servo-assembly {
-            transform: translate(-50%, -50%) scale(0.82);
-            transform-origin: center;
+          .mode-row,
+          .direction-row,
+          .load-save-row,
+          .mini-row {
+            grid-template-columns: 1fr;
           }
         }
       </style>
@@ -1136,9 +1453,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           <div class="topline">
             <div class="toolbar">
               <span class="brand" aria-hidden="true"></span>
-              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse a remembered browser device.">USB</button>
+              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse an already approved browser device.">USB</button>
               <button class="tool" data-command="link" ${!canLink ? "disabled" : ""} title="Open or release the adapter for this app.">Link</button>
-              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its setup into the sim.">Sync</button>
+              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its live setup into the sim.">Sync</button>
             </div>
             <div class="statebar">
               <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
@@ -1153,197 +1470,185 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               <div class="state ${mode !== "unknown" ? "ok" : ""}" title="Mode">
                 <span class="state-dot"></span><span>${escapeHtml(modeShort(mode))}</span>
               </div>
-              <div class="state ${dirty ? "live" : state.config ? "ok" : ""}" title="Draft vs live">
+              <div class="state ${dirty ? "live" : state.config ? "ok" : ""}" title="Draft versus live servo">
                 <span class="state-dot"></span><span>${dirty ? "DIRTY" : state.config ? "LIVE" : "--"}</span>
               </div>
             </div>
-            <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Write the draft back to the servo. Not wired in this probe yet.">Apply</button>
+            <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Make the attached servo match the sim. Not wired yet.">Apply</button>
           </div>
 
           ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
 
           <div class="workspace">
-            <section class="pane settings">
-              <div class="chip-row">
-                ${PROFILE_PRESETS.map(
-                  (profile) => `
-                    <button class="chip" data-profile-id="${escapeHtml(profile.id)}" data-selected="${profile.id === state.draft.profileId}" title="Profile">
-                      ${escapeHtml(profile.label)}
-                    </button>
-                  `,
-                ).join("")}
-              </div>
-
+            <section class="pane config-pane" data-dropzone="config">
               <div class="mode-row">
-                <button class="mode-button" data-mode="servo_mode" data-selected="${state.draft.mode === "servo_mode"}" title="Position control mode">Servo</button>
-                <button class="mode-button" data-mode="cr_mode" data-selected="${state.draft.mode === "cr_mode"}" title="Continuous rotation mode">CR</button>
+                <button class="mode-button" data-mode="servo_mode" data-selected="${state.draft.mode === "servo_mode"}">Servo</button>
+                <button class="mode-button" data-mode="cr_mode" data-selected="${state.draft.mode === "cr_mode"}">CR</button>
               </div>
 
               <div class="setting">
                 <div class="setting-head">
-                  <span class="setting-label">Range ${help("How much of the servo travel is active.")}</span>
-                  <span class="setting-value">${sim.rangeDeg}&deg;</span>
+                  <span class="setting-label">Range ${help("Active sweep from the green limit to the red limit.")}</span>
+                  <span class="setting-value">${Math.round((operating.spec.maxRangeDeg * state.draft.rangePercent) / 100)} deg</span>
                 </div>
                 <input class="slider" data-slider="range" type="range" min="10" max="100" step="1" value="${state.draft.rangePercent}" />
               </div>
 
               <div class="setting">
                 <div class="setting-head">
-                  <span class="setting-label">Center ${help("Trim the PWM center point around 1500 us.")}</span>
+                  <span class="setting-label">Center ${help("Trim relative to the 1500 us center point.")}</span>
                   <span class="setting-value">${escapeHtml(formatSignedUs(state.draft.neutralUs))} us</span>
                 </div>
                 <input class="slider" data-slider="neutral" type="range" min="-127" max="127" step="1" value="${state.draft.neutralUs}" />
               </div>
 
-              <div class="switch" title="Reverse direction">
-                <span class="setting-label">Dir ${help("Reverse the simulated direction.")}</span>
-                <input data-toggle="reversed" type="checkbox" ${state.draft.reversed ? "checked" : ""} />
+              <div class="setting">
+                <div class="setting-head">
+                  <span class="setting-label">Direction ${help("Clockwise or counterclockwise positive motion.")}</span>
+                  <span class="setting-value">${escapeHtml(directionLabel(state.draft.direction))}</span>
+                </div>
+                <div class="direction-row">
+                  <button class="direction-button" data-direction="cw" data-selected="${state.draft.direction === "cw"}">CW</button>
+                  <button class="direction-button" data-direction="ccw" data-selected="${state.draft.direction === "ccw"}">CCW</button>
+                </div>
               </div>
 
-              <div class="switch" title="Soft start">
-                <span class="setting-label">Ramp ${help("Ease into motion instead of snapping immediately.")}</span>
+              <div class="switch">
+                <span class="setting-label">Ramp ${help("Ease into motion instead of slamming to the target.")}</span>
                 <input data-toggle="softStart" type="checkbox" ${state.draft.softStart ? "checked" : ""} />
               </div>
 
-              <div class="loss-row">
-                ${(["release", "hold", "neutral"] as const)
-                  .map(
-                    (modeValue) => `
-                      <button
-                        class="loss-button"
-                        data-loss="${modeValue}"
-                        data-selected="${state.draft.pwmLossBehavior === modeValue}"
-                        title="PWM loss behavior"
-                      >
-                        ${escapeHtml(formatLoss(modeValue))}
-                      </button>
-                    `,
-                  )
-                  .join("")}
+              <div class="setting">
+                <div class="setting-head">
+                  <span class="setting-label">On signal loss ${help("Behavior when PWM goes away.")}</span>
+                </div>
+                <div class="loss-row">
+                  ${(["hold", "release", "neutral"] as const)
+                    .map(
+                      (loss) => `
+                        <button class="loss-button" data-loss="${loss}" data-selected="${state.draft.pwmLossBehavior === loss}">
+                          ${escapeHtml(lossLabel(loss))}
+                        </button>
+                      `,
+                    )
+                    .join("")}
+                </div>
               </div>
+
+              <div class="load-save-row">
+                <button class="load-save-button" data-command="load">Load</button>
+                <button class="load-save-button" data-command="save">Save</button>
+              </div>
+              <div class="drop-hint">drop JSON</div>
+
+              ${
+                state.loadPanelOpen
+                  ? `
+                    <div class="load-panel">
+                      <div class="profile-grid">
+                        ${PROFILE_PRESETS.map(
+                          (profile) => `
+                            <button class="profile-chip" data-profile-id="${escapeHtml(profile.id)}" data-selected="${profile.id === state.draft.profileId}">
+                              ${escapeHtml(profile.label)}
+                            </button>
+                          `,
+                        ).join("")}
+                      </div>
+                      <button class="load-save-button" data-command="file">File</button>
+                      <input type="file" accept="application/json,.json" data-file-input hidden />
+                    </div>
+                  `
+                  : ""
+              }
             </section>
 
-            <section class="pane sim">
-              <div class="servo-stage">
-                <div class="sim-meta">
-                  <span class="meta-pill" title="Attached model">${escapeHtml(textForState(state.config?.modelName ?? null))}</span>
-                  <span class="meta-pill" title="Power limit from current config">${Math.round(sim.powerLimit * 100)}%</span>
-                </div>
-
-                <div
-                  class="servo-assembly"
-                  style="width:${assemblyWidth}px; height:${assemblyHeight}px;"
-                >
-                  <div
-                    class="servo-sweep"
-                    style="left:${shaftOffsetX - sweepDiameter / 2}px; top:${shaftOffsetY - sweepDiameter / 2}px; width:${sweepDiameter}px; height:${sweepDiameter}px;"
-                  ></div>
-                  <div
-                    class="servo-body"
-                    style="width:${bodyWidthPx}px; height:${bodyDepthPx}px;"
-                    title="${escapeHtml(state.config?.modelName ?? "Servo proxy")}"
-                  ></div>
-                  <div
-                    class="servo-top-plate"
-                    style="left:${Math.round(bodyWidthPx * 0.28)}px; top:${Math.round(bodyDepthPx * 0.18)}px; width:${Math.round(bodyWidthPx * 0.48)}px; height:${Math.round(bodyDepthPx * 0.64)}px;"
-                  ></div>
-                  <div
-                    class="servo-front"
-                    style="left:${Math.round(bodyWidthPx - 18)}px; top:${Math.round((bodyDepthPx - 34) / 2)}px;"
-                  ></div>
-                  <div
-                    class="limit"
-                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; transform: rotate(${sim.minAngle}deg);"
-                  ></div>
-                  <div
-                    class="limit"
-                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; transform: rotate(${sim.maxAngle}deg);"
-                  ></div>
-                  <div
-                    class="horn"
-                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; ${hornStyle}"
-                  ></div>
-                  <div
-                    class="hub"
-                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px;"
-                  ></div>
-                  <div
-                    class="servo-wire"
-                    style="left:${bodyWidthPx - 4}px; top:${Math.round(bodyDepthPx / 2) - 10}px; width:132px; height:28px;"
-                    aria-hidden="true"
-                  ></div>
-                </div>
-              </div>
-
-              <div class="sim-bottom">
-                <div>
-                  <div class="setting">
-                    <div class="setting-head">
-                      <span class="setting-label">PWM ${help("Drive signal from 500 us to 2500 us with center at 1500 us.")}</span>
-                      <span class="setting-value">${state.draft.pwmUs} us</span>
-                    </div>
-                    <input class="slider" data-slider="pwm" type="range" min="500" max="2500" step="10" value="${state.draft.pwmUs}" />
-                    <div class="ticks"><span>500</span><span>1500</span><span>2500</span></div>
+            <section class="pane sim-pane">
+              <div class="sim-grid">
+                <div class="sim-left">
+                  <div class="servo-card">
+                    ${servoSketch(operating.spec, point, state.draft)}
                   </div>
 
-                  <div class="metrics">
-                    <div class="metric" title="Output speed">
-                      <div class="metric-top">${help("No-load and loaded speed estimate at the chosen voltage.")}</div>
-                      <div class="metric-value">${Math.round(sim.rpm)}</div>
-                      <div class="metric-unit">rpm</div>
+                  ${
+                    state.draft.mode === "servo_mode"
+                      ? `
+                        <div class="switch">
+                          <span class="setting-label">Sweep ${help("Animate from 500 us to 2500 us and back.")}</span>
+                          <input data-toggle="sweep" type="checkbox" ${state.draft.sweepEnabled ? "checked" : ""} />
+                        </div>
+                      `
+                      : ""
+                  }
+
+                  <div class="sim-sliders">
+                    <div class="mini-row">
+                      <div class="mini-label">PWM ${help("500 us to 2500 us drive command.")}</div>
+                      <div>
+                        <div class="mini-value">${point.pwmUs} us</div>
+                        <input class="slider" data-slider="pwm" type="range" min="500" max="2500" step="10" value="${point.pwmUs}" />
+                        <div class="mini-range"><span>500</span><span>1500</span><span>2500</span></div>
+                      </div>
                     </div>
-                    <div class="metric" title="Torque">
-                      <div class="metric-top">${help("Load torque estimate.")}</div>
-                      <div class="metric-value">${sim.torqueKgcm.toFixed(1)}</div>
-                      <div class="metric-unit">kg.cm</div>
+
+                    <div class="mini-row">
+                      <div class="mini-label">Voltage ${help("Supply voltage for the motor curves.")}</div>
+                      <div>
+                        <div class="mini-value">${state.draft.voltage.toFixed(1)} V</div>
+                        <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" />
+                        <div class="mini-range"><span>4.8</span><span>6.0</span><span>8.4</span></div>
+                      </div>
                     </div>
-                    <div class="metric" title="Electrical power">
-                      <div class="metric-top">${help("Voltage times current.")}</div>
-                      <div class="metric-value">${sim.powerW.toFixed(1)}</div>
-                      <div class="metric-unit">W mech</div>
-                    </div>
-                    <div class="metric" title="Heat">
-                      <div class="metric-top">${help("Estimated electrical loss not turned into motion.")}</div>
-                      <div class="metric-value">${sim.heatW.toFixed(1)}</div>
-                      <div class="metric-unit">W heat</div>
-                    </div>
-                    <div class="metric" title="Efficiency">
-                      <div class="metric-top">${help("Mechanical power divided by electrical power.")}</div>
-                      <div class="metric-value">${Math.round(sim.efficiencyPercent)}</div>
-                      <div class="metric-unit">%</div>
+
+                    <div class="mini-row">
+                      <div class="mini-label">Load ${help("Operating load in the same units as the servo data sheet.")}</div>
+                      <div>
+                        <div class="mini-value">${state.draft.loadKgcm.toFixed(1)} kgf*cm</div>
+                        <input class="slider" data-slider="load" type="range" min="0" max="${operating.torqueMax.toFixed(1)}" step="0.1" value="${state.draft.loadKgcm.toFixed(1)}" />
+                        <div class="mini-range"><span>0.0</span><span>${operating.torqueMax.toFixed(1)}</span></div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="driver">
-                  <div class="setting">
-                    <div class="setting-head">
-                      <span class="setting-label">V ${help("Operating voltage.")}</span>
-                      <span class="setting-value">${state.draft.voltage.toFixed(1)} V</span>
-                    </div>
-                    <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" />
-                  </div>
+                <div class="sim-right">
+                  ${lineChart(
+                    "speed / current",
+                    `${modeLabel(state.draft.mode)} @ ${state.draft.voltage.toFixed(1)}V`,
+                    xMax,
+                    speedMax,
+                    currentMax,
+                    speedPath,
+                    currentPath,
+                    point.torqueKgcm,
+                    point.speedRpm,
+                    point.currentA,
+                    formatOperatingTooltip(point, "speed"),
+                    formatOperatingTooltip(point, "current"),
+                    "speed (rpm)",
+                    "current (A)",
+                  )}
 
-                  <div class="setting">
-                    <div class="setting-head">
-                      <span class="setting-label">Load ${help("Mechanical load as a percent of stall torque.")}</span>
-                      <span class="setting-value">${state.draft.loadPercent}%</span>
-                    </div>
-                    <input class="slider" data-slider="load" type="range" min="0" max="100" step="1" value="${state.draft.loadPercent}" />
-                  </div>
+                  ${powerChart(
+                    "mechanical power",
+                    xMax,
+                    powerMax,
+                    powerPath,
+                    point.torqueKgcm,
+                    point.mechanicalPowerW,
+                    formatOperatingTooltip(point, "power"),
+                    "power (W)",
+                  )}
 
-                  <div class="metrics">
-                    <div class="metric" title="Current">
-                      <div class="metric-top">${help("Current draw estimate.")}</div>
-                      <div class="metric-value">${sim.currentA.toFixed(2)}</div>
-                      <div class="metric-unit">A</div>
-                    </div>
-                    <div class="metric" title="Stall torque at current voltage">
-                      <div class="metric-top">${help("Interpolated from the model spec.")}</div>
-                      <div class="metric-value">${sim.voltagePoint.torqueKgcm.toFixed(0)}</div>
-                      <div class="metric-unit">stall</div>
-                    </div>
-                  </div>
+                  ${powerChart(
+                    "efficiency",
+                    xMax,
+                    efficiencyMax,
+                    efficiencyPath,
+                    point.torqueKgcm,
+                    point.efficiency,
+                    formatOperatingTooltip(point, "efficiency"),
+                    "efficiency",
+                  )}
                 </div>
               </div>
             </section>
@@ -1362,6 +1667,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     options.root.querySelectorAll<HTMLButtonElement>("[data-profile-id]").forEach((button) => {
       button.addEventListener("click", () => {
         state.draft = selectProfile(button.dataset.profileId ?? "claw", state.draft);
+        state.sweepPhase = 0;
+        updateSweepTimer();
         render();
       });
     });
@@ -1369,20 +1676,32 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     options.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
       button.addEventListener("click", () => {
         state.draft.mode = button.dataset.mode === "cr_mode" ? "cr_mode" : "servo_mode";
-        if (state.draft.mode === "cr_mode" && state.draft.profileId === "claw") {
-          state.draft.profileId = "intake";
+        if (state.draft.mode === "cr_mode") {
+          state.draft.sweepEnabled = false;
+          state.draft.profileId =
+            state.draft.profileId === "claw" ? "intake" : state.draft.profileId;
+        } else if (!state.draft.sweepEnabled) {
+          state.draft.sweepEnabled = true;
         }
+        state.sweepPhase = 0;
+        updateSweepTimer();
+        render();
+      });
+    });
+
+    options.root.querySelectorAll<HTMLButtonElement>("[data-direction]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.draft.direction = button.dataset.direction === "ccw" ? "ccw" : "cw";
         render();
       });
     });
 
     options.root.querySelectorAll<HTMLButtonElement>("[data-loss]").forEach((button) => {
       button.addEventListener("click", () => {
-        const next =
+        state.draft.pwmLossBehavior =
           button.dataset.loss === "hold" || button.dataset.loss === "neutral"
             ? button.dataset.loss
             : "release";
-        state.draft.pwmLossBehavior = next;
         render();
       });
     });
@@ -1398,31 +1717,66 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
             break;
           case "pwm":
             state.draft.pwmUs = clamp(Number(input.value), 500, 2500);
+            state.draft.sweepEnabled = false;
             break;
           case "voltage":
             state.draft.voltage = clamp(Number(input.value), 4.8, 8.4);
             break;
           case "load":
-            state.draft.loadPercent = clamp(Number(input.value), 0, 100);
+            state.draft.loadKgcm = clamp(Number(input.value), 0, operating.torqueMax);
             break;
           default:
             break;
         }
+        updateSweepTimer();
         render();
       });
     });
 
     options.root.querySelectorAll<HTMLInputElement>("[data-toggle]").forEach((input) => {
       input.addEventListener("change", () => {
-        if (input.dataset.toggle === "reversed") {
-          state.draft.reversed = input.checked;
-        }
         if (input.dataset.toggle === "softStart") {
           state.draft.softStart = input.checked;
         }
+        if (input.dataset.toggle === "sweep") {
+          state.draft.sweepEnabled = input.checked;
+          if (input.checked) {
+            state.sweepPhase = 0;
+          }
+        }
+        updateSweepTimer();
         render();
       });
     });
+
+    const fileInput = options.root.querySelector<HTMLInputElement>("[data-file-input]");
+    if (fileInput) {
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files?.[0];
+        if (file) {
+          handleFile(file);
+        }
+      });
+    }
+
+    const dropzone = options.root.querySelector<HTMLElement>("[data-dropzone='config']");
+    if (dropzone) {
+      dropzone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        dropzone.classList.add("dragging");
+      });
+      dropzone.addEventListener("dragleave", () => {
+        dropzone.classList.remove("dragging");
+      });
+      dropzone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("dragging");
+        const file = event.dataTransfer?.files?.[0];
+        if (file) {
+          handleFile(file);
+        }
+      });
+    }
 
     const details = options.root.querySelector<HTMLDetailsElement>("details.debug");
     if (details) {
@@ -1437,6 +1791,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         if (command === "usb") void doUsb();
         if (command === "link") void doLink();
         if (command === "sync") void doSync();
+        if (command === "load") {
+          state.loadPanelOpen = !state.loadPanelOpen;
+          render();
+        }
+        if (command === "file") {
+          fileInput?.click();
+        }
+        if (command === "save") {
+          triggerSave();
+        }
         if (command === "apply") {
           state.error = "Apply is not wired in this probe yet.";
           log("Apply pending");
@@ -1461,6 +1825,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       state.error = error instanceof Error ? error.message : String(error);
       log("Boot failed");
     }
+    updateSweepTimer();
     render();
   }
 
