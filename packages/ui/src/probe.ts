@@ -582,6 +582,13 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const servoPresent = state.identify?.present ?? Boolean(state.config);
     const dirty = isDirty(state.config, state.draft);
     const sim = deriveSimulation(state.config, state.draft);
+    const bodyWidthPx = sim.spec.bodyWidth;
+    const bodyDepthPx = Math.max(56, Math.round(sim.spec.bodyDepth * 1.7));
+    const shaftOffsetX = Math.round(bodyWidthPx * 0.2);
+    const shaftOffsetY = Math.round(bodyDepthPx * 0.5);
+    const sweepDiameter = Math.max(240, Math.round(bodyWidthPx * 1.85));
+    const assemblyWidth = bodyWidthPx + Math.round(sweepDiameter * 0.7);
+    const assemblyHeight = Math.max(bodyDepthPx + 120, sweepDiameter * 0.9);
     const modelId = state.config?.modelId ?? null;
     const mode = state.config?.mode ?? state.identify?.mode ?? state.draft.mode;
     const canSync = connected && Boolean(options.readFullConfig) && !state.busyAction;
@@ -895,33 +902,34 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           font-weight: 700;
         }
 
-        .dial {
+        .servo-assembly {
           position: absolute;
           left: 50%;
-          top: 54%;
-          width: 340px;
-          height: 340px;
-          margin-left: -170px;
-          margin-top: -170px;
+          top: 55%;
+          transform: translate(-50%, -50%);
+        }
+
+        .servo-sweep {
+          position: absolute;
           border-radius: 999px;
-          border: 1px solid #dde1e6;
+          border: 1px solid #dfe3e8;
           background:
-            radial-gradient(circle at center, transparent 0 58px, #ffffff 58px 62px, transparent 62px),
-            radial-gradient(circle at center, transparent 0 118px, #e6e8ed 118px 120px, transparent 120px);
+            radial-gradient(circle at center, transparent 0 26px, #ffffff 26px 30px, transparent 30px),
+            radial-gradient(circle at center, transparent 0 84px, #e6e9ef 84px 86px, transparent 86px);
+          opacity: 0.98;
         }
 
         .limit,
         .horn {
           position: absolute;
-          left: 50%;
-          top: 50%;
+          left: 0;
+          top: 0;
           transform-origin: 0 50%;
         }
 
         .limit {
-          width: 116px;
+          width: 112px;
           height: 4px;
-          margin-left: 0;
           margin-top: -2px;
           border-radius: 999px;
           background: #b7bec9;
@@ -939,8 +947,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .hub {
           position: absolute;
-          left: 50%;
-          top: 50%;
+          left: 0;
+          top: 0;
           width: 24px;
           height: 24px;
           margin-left: -12px;
@@ -952,9 +960,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .servo-body {
           position: absolute;
-          left: 50%;
-          bottom: 64px;
-          transform: translateX(-50%);
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
           border-radius: 8px;
           background:
             linear-gradient(180deg, #1b1b1b 0%, #0f0f0f 100%);
@@ -962,28 +970,27 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           box-shadow: 0 18px 30px rgba(17, 17, 17, 0.16);
         }
 
-        .servo-cap {
+        .servo-top-plate {
           position: absolute;
-          left: 50%;
-          bottom: 64px;
-          transform: translateX(-50%);
-          width: 38px;
-          height: 26px;
-          border-radius: 8px 8px 0 0;
-          background: #191919;
+          border-radius: 8px;
           border: 1px solid #2b2b2b;
-          border-bottom: 0;
+          background: #1a1a1a;
+        }
+
+        .servo-front {
+          position: absolute;
+          width: 26px;
+          height: 34px;
+          border-radius: 8px 0 0 8px;
+          background: #111111;
+          border: 1px solid #2b2b2b;
         }
 
         .servo-wire {
           position: absolute;
-          right: calc(50% - ${Math.round(sim.spec.bodyWidth / 2)}px);
-          bottom: 102px;
-          width: 132px;
-          height: 22px;
-          border-bottom: 3px solid #4b5563;
+          border-top: 3px solid #4b5563;
           border-right: 3px solid #4b5563;
-          border-radius: 0 0 18px 0;
+          border-radius: 0 18px 0 0;
         }
 
         .sim-bottom {
@@ -1118,11 +1125,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
             min-height: 360px;
           }
 
-          .dial {
-            width: 260px;
-            height: 260px;
-            margin-left: -130px;
-            margin-top: -130px;
+          .servo-assembly {
+            transform: translate(-50%, -50%) scale(0.82);
+            transform-origin: center;
           }
         }
       </style>
@@ -1225,23 +1230,49 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                   <span class="meta-pill" title="Power limit from current config">${Math.round(sim.powerLimit * 100)}%</span>
                 </div>
 
-                <div class="dial">
-                  <div class="limit" style="transform: rotate(${sim.minAngle}deg);"></div>
-                  <div class="limit" style="transform: rotate(${sim.maxAngle}deg);"></div>
-                  <div class="horn" style="${hornStyle}"></div>
-                  <div class="hub"></div>
+                <div
+                  class="servo-assembly"
+                  style="width:${assemblyWidth}px; height:${assemblyHeight}px;"
+                >
+                  <div
+                    class="servo-sweep"
+                    style="left:${shaftOffsetX - sweepDiameter / 2}px; top:${shaftOffsetY - sweepDiameter / 2}px; width:${sweepDiameter}px; height:${sweepDiameter}px;"
+                  ></div>
+                  <div
+                    class="servo-body"
+                    style="width:${bodyWidthPx}px; height:${bodyDepthPx}px;"
+                    title="${escapeHtml(state.config?.modelName ?? "Servo proxy")}"
+                  ></div>
+                  <div
+                    class="servo-top-plate"
+                    style="left:${Math.round(bodyWidthPx * 0.28)}px; top:${Math.round(bodyDepthPx * 0.18)}px; width:${Math.round(bodyWidthPx * 0.48)}px; height:${Math.round(bodyDepthPx * 0.64)}px;"
+                  ></div>
+                  <div
+                    class="servo-front"
+                    style="left:${Math.round(bodyWidthPx - 18)}px; top:${Math.round((bodyDepthPx - 34) / 2)}px;"
+                  ></div>
+                  <div
+                    class="limit"
+                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; transform: rotate(${sim.minAngle}deg);"
+                  ></div>
+                  <div
+                    class="limit"
+                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; transform: rotate(${sim.maxAngle}deg);"
+                  ></div>
+                  <div
+                    class="horn"
+                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px; ${hornStyle}"
+                  ></div>
+                  <div
+                    class="hub"
+                    style="left:${shaftOffsetX}px; top:${shaftOffsetY}px;"
+                  ></div>
+                  <div
+                    class="servo-wire"
+                    style="left:${bodyWidthPx - 4}px; top:${Math.round(bodyDepthPx / 2) - 10}px; width:132px; height:28px;"
+                    aria-hidden="true"
+                  ></div>
                 </div>
-
-                <div
-                  class="servo-body"
-                  style="width:${sim.spec.bodyWidth}px; height:${sim.spec.bodyHeight}px;"
-                  title="${escapeHtml(state.config?.modelName ?? "Servo proxy")}"
-                ></div>
-                <div
-                  class="servo-cap"
-                  style="bottom:${64 + sim.spec.bodyHeight - 8}px;"
-                ></div>
-                <div class="servo-wire" aria-hidden="true"></div>
               </div>
 
               <div class="sim-bottom">
