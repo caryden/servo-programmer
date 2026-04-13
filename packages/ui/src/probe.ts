@@ -1,13 +1,3 @@
-const STYLE_ID = "axon-probe-ui-style";
-
-export interface ProbeCollectionInfo {
-  usagePage: string;
-  usage: string;
-  inputReports: number[];
-  outputReports: number[];
-  featureReports: number[];
-}
-
 export interface ProbeDeviceInfo {
   id: string | null;
   vendorId: string | null;
@@ -18,8 +8,16 @@ export interface ProbeDeviceInfo {
   interface: number | null;
   usagePage: string | null;
   usage: string | null;
-  opened?: boolean;
+  opened: boolean;
   collections?: ProbeCollectionInfo[];
+}
+
+export interface ProbeCollectionInfo {
+  usagePage: string | null;
+  usage: string | null;
+  inputReports: number[];
+  outputReports: number[];
+  featureReports: number[];
 }
 
 export interface ProbeInventory {
@@ -32,8 +30,20 @@ export interface ProbeIdentifyInfo {
   statusHi: string;
   statusLo: string;
   modeByte: string | null;
-  mode: string;
+  mode: "servo_mode" | "cr_mode" | "unknown";
   rawRx: string;
+}
+
+export interface ProbeSetupInfo {
+  rangeDegrees: number | null;
+  rangePercent: number | null;
+  neutralUs: number | null;
+  neutralPercent: number | null;
+  pwmLossBehavior: string | null;
+  inversion: string | null;
+  softStart: boolean | null;
+  sensitivityLabel: string | null;
+  pwmPowerPercent: number | null;
 }
 
 export interface ProbeConfigInfo {
@@ -42,1511 +52,1212 @@ export interface ProbeConfigInfo {
   known: boolean;
   modelName: string | null;
   docsUrl: string | null;
+  mode: "servo_mode" | "cr_mode" | "unknown";
+  modeLabel: string;
+  setup: ProbeSetupInfo | null;
   rawHex: string;
   firstChunk: string;
   secondChunk: string;
 }
 
-export interface ProbeUiAction<T> {
+interface ProbeAction<T> {
   label: string;
   run: () => Promise<T>;
 }
 
-export interface ProbeUiOptions {
+export interface MountProbeAppOptions {
   root: HTMLElement;
-  title: string;
-  description: string;
-  bullets: string[];
-  devicePanelTitle: string;
-  emptyDeviceText: string;
   eyebrow?: string;
+  title: string;
+  description?: string;
+  bullets?: string[];
+  devicePanelTitle?: string;
+  emptyDeviceText?: string;
   loadEnvironment: () => Promise<unknown>;
   loadInventory: () => Promise<ProbeInventory>;
-  refreshInventory?: ProbeUiAction<ProbeInventory>;
-  requestDevice?: ProbeUiAction<ProbeInventory>;
-  reconnectDevice?: ProbeUiAction<ProbeInventory>;
-  openDevice: ProbeUiAction<ProbeInventory>;
-  closeDevice: ProbeUiAction<ProbeInventory>;
-  identifyServo: ProbeUiAction<ProbeIdentifyInfo>;
-  readFullConfig: ProbeUiAction<ProbeConfigInfo>;
+  requestDevice?: ProbeAction<ProbeInventory>;
+  reconnectDevice?: ProbeAction<ProbeInventory>;
+  refreshInventory?: ProbeAction<ProbeInventory>;
+  openDevice?: ProbeAction<ProbeInventory>;
+  closeDevice?: ProbeAction<ProbeInventory>;
+  identifyServo?: ProbeAction<ProbeIdentifyInfo>;
+  readFullConfig?: ProbeAction<ProbeConfigInfo>;
 }
 
-type SummaryTone = "neutral" | "good" | "warn" | "bad";
-
-interface SummaryItem {
-  label: string;
-  value: string;
-  tone: SummaryTone;
+interface LogEntry {
+  timestamp: string;
+  message: string;
 }
 
-interface ProbeSnapshot {
-  adapterDetected: boolean;
-  sessionOpen: boolean;
-  servoDetected: boolean | null;
-  modeLabel: string;
-  profileLabel: string;
-  adapterLabel: string;
-  nextStep: string;
+interface ProbeState {
+  environment: unknown | null;
+  inventory: ProbeInventory;
+  identify: ProbeIdentifyInfo | null;
+  config: ProbeConfigInfo | null;
+  busyAction: string | null;
+  error: string | null;
+  logs: LogEntry[];
+  diagnosticsOpen: boolean;
+  selectedProfileId: string;
 }
 
-function installStyles(document: Document) {
-  if (document.getElementById(STYLE_ID)) {
-    return;
-  }
-
-  const style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = `
-    :root {
-      color-scheme: dark;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --probe-bg: #0b0d10;
-      --probe-bg-elevated: #12161a;
-      --probe-bg-muted: #171c21;
-      --probe-border: #2a2f36;
-      --probe-border-strong: #404751;
-      --probe-text: #f4f5f7;
-      --probe-text-muted: #a7adb7;
-      --probe-accent: #ec4040;
-      --probe-accent-strong: #ff6565;
-      --probe-success: #7adf8f;
-      --probe-warn: #f2c86d;
-      --probe-danger: #ff7a6e;
-      --probe-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        linear-gradient(180deg, rgba(236, 64, 64, 0.12), transparent 18%),
-        radial-gradient(circle at top right, rgba(255, 101, 101, 0.08), transparent 28%),
-        linear-gradient(180deg, #101216 0%, #090b0d 100%);
-      color: var(--probe-text);
-      line-height: 1.45;
-    }
-
-    img {
-      display: block;
-      max-width: 100%;
-    }
-
-    a {
-      color: var(--probe-accent-strong);
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
-
-    .axon-probe-app {
-      width: 100%;
-      padding: 20px;
-    }
-
-    .axon-probe-shell {
-      max-width: 1320px;
-      margin: 0 auto;
-      display: grid;
-      gap: 18px;
-    }
-
-    .axon-probe-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-
-    .axon-probe-brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .axon-probe-brand-mark {
-      width: 12px;
-      height: 12px;
-      border-radius: 3px;
-      background: linear-gradient(180deg, var(--probe-accent-strong), var(--probe-accent));
-      box-shadow: 0 0 0 6px rgba(236, 64, 64, 0.12);
-      flex: 0 0 auto;
-    }
-
-    .axon-probe-brand-copy {
-      min-width: 0;
-    }
-
-    .axon-probe-brand-name {
-      margin: 0;
-      font-size: 0.9rem;
-      font-weight: 700;
-      letter-spacing: 0;
-    }
-
-    .axon-probe-brand-tag {
-      margin: 2px 0 0;
-      color: var(--probe-text-muted);
-      font-size: 0.82rem;
-    }
-
-    .axon-probe-top {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 18px;
-    }
-
-    .axon-probe-intro {
-      display: grid;
-      gap: 16px;
-      padding: 28px;
-      border: 1px solid var(--probe-border-strong);
-      border-radius: 8px;
-      background:
-        linear-gradient(135deg, rgba(236, 64, 64, 0.18), rgba(236, 64, 64, 0.03) 34%),
-        linear-gradient(180deg, rgba(18, 22, 26, 0.98), rgba(12, 14, 17, 0.98));
-      box-shadow: var(--probe-shadow);
-    }
-
-    .axon-probe-eyebrow {
-      margin: 0;
-      color: var(--probe-accent-strong);
-      font-size: 0.78rem;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-
-    .axon-probe-title {
-      margin: 0;
-      font-size: 2.7rem;
-      line-height: 1;
-      max-width: 12ch;
-    }
-
-    .axon-probe-description {
-      margin: 0;
-      max-width: 62ch;
-      color: var(--probe-text-muted);
-      font-size: 1.02rem;
-    }
-
-    .axon-probe-bullets {
-      margin: 0;
-      padding-left: 1.2rem;
-      display: grid;
-      gap: 8px;
-      color: var(--probe-text-muted);
-    }
-
-    .axon-probe-action-panel {
-      display: grid;
-      gap: 14px;
-    }
-
-    .axon-probe-summary {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .axon-probe-metric {
-      min-height: 92px;
-      padding: 14px;
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: rgba(11, 15, 17, 0.78);
-      display: grid;
-      align-content: start;
-      gap: 8px;
-    }
-
-    .axon-probe-metric-label {
-      font-size: 0.8rem;
-      color: var(--probe-text-muted);
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-
-    .axon-probe-metric-value {
-      font-size: 1.15rem;
-      font-weight: 700;
-      word-break: break-word;
-    }
-
-    .axon-probe-tone-neutral {
-      color: var(--probe-text);
-    }
-
-    .axon-probe-tone-good {
-      color: var(--probe-success);
-    }
-
-    .axon-probe-tone-warn {
-      color: var(--probe-warn);
-    }
-
-    .axon-probe-tone-bad {
-      color: var(--probe-danger);
-    }
-
-    .axon-probe-toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .axon-probe-toolbar button {
-      min-height: 46px;
-      padding: 0 16px;
-      border: 1px solid var(--probe-border-strong);
-      border-radius: 6px;
-      background: var(--probe-bg-elevated);
-      color: var(--probe-text);
-      cursor: pointer;
-      font: inherit;
-      font-weight: 700;
-      transition:
-        transform 120ms ease,
-        border-color 120ms ease,
-        background 120ms ease;
-    }
-
-    .axon-probe-toolbar button:hover:not(:disabled) {
-      transform: translateY(-1px);
-      border-color: var(--probe-accent-strong);
-      background: #1b2327;
-    }
-
-    .axon-probe-toolbar button[data-action="request"],
-    .axon-probe-toolbar button[data-action="refresh"],
-    .axon-probe-toolbar button[data-action="open"] {
-      background: linear-gradient(180deg, rgba(236, 64, 64, 0.24), rgba(16, 23, 24, 0.94));
-    }
-
-    .axon-probe-toolbar button[data-action="read"] {
-      border-color: #557a6a;
-    }
-
-    .axon-probe-toolbar button[data-action="close"] {
-      border-color: #664441;
-    }
-
-    .axon-probe-toolbar button:disabled {
-      cursor: not-allowed;
-      opacity: 0.42;
-      transform: none;
-    }
-
-    .axon-probe-grid {
-      display: grid;
-      gap: 18px;
-      grid-template-columns: minmax(0, 1.7fr) minmax(300px, 360px);
-    }
-
-    .axon-probe-panel {
-      padding: 18px;
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: rgba(18, 22, 25, 0.96);
-      min-width: 0;
-    }
-
-    .axon-probe-panel-primary {
-      padding: 22px;
-    }
-
-    .axon-probe-panel-header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .axon-probe-panel-title {
-      margin: 0;
-      font-size: 1.2rem;
-    }
-
-    .axon-probe-panel-note {
-      color: var(--probe-text-muted);
-      font-size: 0.86rem;
-    }
-
-    .axon-probe-stack {
-      display: grid;
-      gap: 18px;
-    }
-
-    .axon-probe-current {
-      display: grid;
-      gap: 16px;
-    }
-
-    .axon-probe-state-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .axon-probe-task-grid {
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .axon-probe-task {
-      padding: 14px;
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: rgba(9, 11, 14, 0.78);
-      display: grid;
-      gap: 10px;
-      align-content: start;
-      min-height: 168px;
-    }
-
-    .axon-probe-task-title {
-      margin: 0;
-      font-size: 1rem;
-    }
-
-    .axon-probe-task-body {
-      margin: 0;
-      color: var(--probe-text-muted);
-      font-size: 0.94rem;
-    }
-
-    .axon-probe-disclosure {
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: rgba(16, 19, 23, 0.92);
-      overflow: hidden;
-    }
-
-    .axon-probe-disclosure > summary {
-      list-style: none;
-      cursor: pointer;
-      padding: 16px 18px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .axon-probe-disclosure > summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .axon-probe-disclosure-note {
-      color: var(--probe-text-muted);
-      font-size: 0.86rem;
-      font-weight: 400;
-    }
-
-    .axon-probe-disclosure-body {
-      padding: 0 18px 18px;
-    }
-
-    .axon-probe-diagnostics-grid {
-      display: grid;
-      gap: 18px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .axon-probe-empty {
-      margin: 0;
-      color: var(--probe-text-muted);
-    }
-
-    .axon-probe-kv {
-      display: grid;
-      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
-      gap: 8px 14px;
-      margin: 0;
-    }
-
-    .axon-probe-kv dt {
-      margin: 0;
-      color: var(--probe-text-muted);
-      font-size: 0.84rem;
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-
-    .axon-probe-kv dd {
-      margin: 0;
-      word-break: break-word;
-    }
-
-    .axon-probe-device-list {
-      display: grid;
-      gap: 12px;
-    }
-
-    .axon-probe-device {
-      padding: 14px;
-      border: 1px solid var(--probe-border);
-      border-radius: 8px;
-      background: rgba(10, 14, 15, 0.78);
-      display: grid;
-      gap: 12px;
-    }
-
-    .axon-probe-device-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .axon-probe-device-name {
-      margin: 0;
-      font-size: 1rem;
-    }
-
-    .axon-probe-device-subtitle {
-      margin: 4px 0 0;
-      color: var(--probe-text-muted);
-      font-size: 0.9rem;
-    }
-
-    .axon-probe-chip-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .axon-probe-chip {
-      display: inline-flex;
-      align-items: center;
-      min-height: 26px;
-      padding: 0 10px;
-      border: 1px solid var(--probe-border-strong);
-      border-radius: 999px;
-      background: rgba(13, 18, 20, 0.76);
-      font-size: 0.82rem;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .axon-probe-chip.axon-probe-tone-good {
-      border-color: rgba(122, 223, 143, 0.45);
-    }
-
-    .axon-probe-chip.axon-probe-tone-warn {
-      border-color: rgba(242, 200, 109, 0.45);
-    }
-
-    .axon-probe-chip.axon-probe-tone-bad {
-      border-color: rgba(255, 122, 110, 0.42);
-    }
-
-    .axon-probe-subsection + .axon-probe-subsection {
-      padding-top: 14px;
-      border-top: 1px solid var(--probe-border);
-    }
-
-    .axon-probe-subsection-label {
-      margin: 0 0 10px;
-      font-size: 0.88rem;
-      color: var(--probe-text-muted);
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-
-    .axon-probe-pre {
-      margin: 0;
-      overflow: auto;
-      padding: 14px;
-      border: 1px solid var(--probe-border);
-      border-radius: 6px;
-      background: #0c1012;
-      color: #d8e0dd;
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: 0.86rem;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .axon-probe-log {
-      min-height: 220px;
-      max-height: 360px;
-    }
-
-    @media (max-width: 1080px) {
-      .axon-probe-summary {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .axon-probe-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .axon-probe-task-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .axon-probe-diagnostics-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 820px) {
-      .axon-probe-header {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-
-      .axon-probe-title {
-        font-size: 2rem;
-      }
-
-      .axon-probe-summary {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 560px) {
-      .axon-probe-app {
-        padding: 14px;
-      }
-
-      .axon-probe-intro,
-      .axon-probe-panel {
-        padding: 16px;
-      }
-
-      .axon-probe-summary {
-        grid-template-columns: 1fr;
-      }
-
-      .axon-probe-kv {
-        grid-template-columns: 1fr;
-      }
-    }
-  `;
-
-  document.head.appendChild(style);
+interface ProfilePreview {
+  id: string;
+  name: string;
+  mode: string;
+  summary: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+const PROFILE_PREVIEWS: ProfilePreview[] = [
+  {
+    id: "claw",
+    name: "Claw",
+    mode: "Servo",
+    summary: "Hold a target and keep the center easy to tune.",
+  },
+  {
+    id: "intake",
+    name: "Intake",
+    mode: "Continuous",
+    summary: "Start from a wheel-style setup that spins smoothly.",
+  },
+  {
+    id: "gate",
+    name: "Gate",
+    mode: "Servo",
+    summary: "Open and close with a tighter range and calm neutral.",
+  },
+  {
+    id: "arm",
+    name: "Arm Joint",
+    mode: "Servo",
+    summary: "Bias for controlled center and safer signal loss behavior.",
+  },
+];
+
+function clamp(value: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, value));
 }
 
-function startCase(value: string): string {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "—";
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
-  }
-
-  if (typeof value === "string" || typeof value === "number") {
-    return String(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.length === 0 ? "—" : value.map((entry) => formatValue(entry)).join(", ");
-  }
-
-  return JSON.stringify(value);
+function formatSignedUs(value: number | null): string {
+  if (value === null) return "Center unknown";
+  if (value === 0) return "Centered";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value} us`;
 }
 
-function isIdentifyInfo(value: unknown): value is ProbeIdentifyInfo {
-  return (
-    isRecord(value) &&
-    typeof value.present === "boolean" &&
-    typeof value.statusHi === "string" &&
-    typeof value.statusLo === "string" &&
-    typeof value.mode === "string" &&
-    typeof value.rawRx === "string"
-  );
+function formatRange(value: number | null): string {
+  if (value === null) return "--";
+  return `${value}&deg;`;
 }
 
-function isConfigInfo(value: unknown): value is ProbeConfigInfo {
-  return (
-    isRecord(value) &&
-    typeof value.length === "number" &&
-    typeof value.modelId === "string" &&
-    typeof value.rawHex === "string"
-  );
+function formatLoss(value: string | null): string {
+  if (value === "release") return "Let go";
+  if (value === "hold") return "Hold";
+  if (value === "neutral") return "Go to center";
+  return "Unknown";
 }
 
-function createElement<K extends keyof HTMLElementTagNameMap>(
-  document: Document,
-  tag: K,
-  className?: string,
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  if (className) {
-    element.className = className;
-  }
-  return element;
+function formatInversion(value: string | null): string {
+  if (value === "reversed") return "Reversed";
+  if (value === "normal") return "Normal";
+  return "Unknown";
 }
 
-function clear(node: Element) {
-  node.replaceChildren();
+function modeDisplay(mode: ProbeIdentifyInfo["mode"] | ProbeConfigInfo["mode"] | null): string {
+  if (mode === "servo_mode") return "Servo";
+  if (mode === "cr_mode") return "Continuous Rotation";
+  return "Unknown";
 }
 
-function createPre(
-  document: Document,
-  value: string,
-  className = "axon-probe-pre",
-): HTMLPreElement {
-  const pre = createElement(document, "pre", className);
-  pre.textContent = value;
-  return pre;
+function nowLabel(): string {
+  return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function createChip(
-  document: Document,
-  label: string,
-  tone: SummaryTone = "neutral",
-): HTMLSpanElement {
-  const chip = createElement(document, "span", `axon-probe-chip axon-probe-tone-${tone}`);
-  chip.textContent = label;
-  return chip;
-}
-
-function createKeyValueList(
-  document: Document,
-  rows: ReadonlyArray<readonly [string, string | Node]>,
-): HTMLDListElement {
-  const list = createElement(document, "dl", "axon-probe-kv");
-
-  for (const [label, value] of rows) {
-    const term = createElement(document, "dt");
-    term.textContent = label;
-
-    const detail = createElement(document, "dd");
-    if (typeof value === "string") {
-      detail.textContent = value;
-    } else {
-      detail.append(value);
-    }
-
-    list.append(term, detail);
-  }
-
-  return list;
-}
-
-function requireElement<T extends Element>(root: ParentNode, selector: string, message: string): T {
-  const element = root.querySelector<T>(selector);
-  if (!element) {
-    throw new Error(message);
-  }
-  return element;
-}
-
-function deriveSnapshot(
-  _environment: unknown,
-  inventory: ProbeInventory,
-  latest: unknown,
-): ProbeSnapshot {
-  const adapter = inventory.devices[0];
-  const adapterDetected = inventory.devices.length > 0;
-  const sessionOpen = inventory.openedId !== null;
-  const adapterLabel = adapter?.product ?? adapter?.manufacturer ?? "Adapter not detected";
-
-  if (!adapterDetected) {
-    return {
-      adapterDetected,
-      sessionOpen,
-      servoDetected: null,
-      modeLabel: "Awaiting probe",
-      profileLabel: "Load settings to identify the servo",
-      adapterLabel,
-      nextStep: "Detect the adapter on the host OS, then connect to it.",
-    };
-  }
-
-  if (!sessionOpen) {
-    return {
-      adapterDetected,
-      sessionOpen,
-      servoDetected: null,
-      modeLabel: "Awaiting connection",
-      profileLabel: "Connect before reading the servo",
-      adapterLabel,
-      nextStep: "Connect to the adapter, then detect the attached servo.",
-    };
-  }
-
-  if (isConfigInfo(latest)) {
-    return {
-      adapterDetected,
-      sessionOpen,
-      servoDetected: true,
-      modeLabel: latest.known ? "Servo settings loaded" : "Unknown profile loaded",
-      profileLabel: latest.modelName ?? (latest.modelId || "Unknown model"),
-      adapterLabel,
-      nextStep:
-        "Ready for mode changes and servo-mode tuning such as limits and PWM loss behavior.",
-    };
-  }
-
-  if (isIdentifyInfo(latest)) {
-    return {
-      adapterDetected,
-      sessionOpen,
-      servoDetected: latest.present,
-      modeLabel: startCase(latest.mode.replace(/_/g, " ")),
-      profileLabel: latest.present
-        ? "Read settings to load the current profile"
-        : "No servo detected",
-      adapterLabel,
-      nextStep: latest.present
-        ? "Load settings before changing range, neutral, or failsafe behavior."
-        : "Plug in a compatible servo, then run servo detection again.",
-    };
-  }
-
+function railGeometry(config: ProbeConfigInfo | null): {
+  start: number;
+  width: number;
+  pointer: number;
+} {
+  const rangePercent = clamp(config?.setup?.rangePercent ?? 50, 8, 100);
+  const neutralPercent = clamp(config?.setup?.neutralPercent ?? 50, 0, 100);
+  const start = clamp(neutralPercent - rangePercent / 2, 0, 100);
+  const end = clamp(neutralPercent + rangePercent / 2, 0, 100);
   return {
-    adapterDetected,
-    sessionOpen,
-    servoDetected: null,
-    modeLabel: "Connected",
-    profileLabel: "Settings not loaded yet",
-    adapterLabel,
-    nextStep: "Detect the attached servo, then load settings.",
+    start,
+    width: Math.max(6, end - start),
+    pointer: neutralPercent,
   };
 }
 
-function makeSummaryItems(
-  environment: unknown,
-  inventory: ProbeInventory,
-  latest: unknown,
-): SummaryItem[] {
-  const transport =
-    isRecord(environment) && typeof environment.transport === "string"
-      ? environment.transport
-      : "Programmer";
-  const snapshot = deriveSnapshot(environment, inventory, latest);
-
-  return [
-    {
-      label: "Transport",
-      value: transport,
-      tone: "neutral",
-    },
-    {
-      label: "Adapter",
-      value: snapshot.adapterDetected ? "Detected" : "Missing",
-      tone: snapshot.adapterDetected ? "good" : "warn",
-    },
-    {
-      label: "Session",
-      value: snapshot.sessionOpen ? "Connected" : "Idle",
-      tone: snapshot.sessionOpen ? "good" : "neutral",
-    },
-    {
-      label: "Servo",
-      value:
-        snapshot.servoDetected === null
-          ? "Not Checked"
-          : snapshot.servoDetected
-            ? "Detected"
-            : "Not Found",
-      tone: snapshot.servoDetected === null ? "neutral" : snapshot.servoDetected ? "good" : "warn",
-    },
-    {
-      label: "Profile",
-      value: snapshot.profileLabel,
-      tone: isConfigInfo(latest) && latest.known ? "good" : "neutral",
-    },
-  ];
+function currentMode(
+  state: ProbeState,
+): ProbeIdentifyInfo["mode"] | ProbeConfigInfo["mode"] | null {
+  return state.config?.mode ?? state.identify?.mode ?? null;
 }
 
-function renderSummary(
-  document: Document,
-  container: HTMLElement,
-  environment: unknown,
-  inventory: ProbeInventory,
-  latest: unknown,
-) {
-  clear(container);
-
-  const items = makeSummaryItems(environment, inventory, latest);
-  for (const item of items) {
-    const metric = createElement(document, "section", "axon-probe-metric");
-    const label = createElement(document, "p", "axon-probe-metric-label");
-    const value = createElement(
-      document,
-      "p",
-      `axon-probe-metric-value axon-probe-tone-${item.tone}`,
-    );
-    label.textContent = item.label;
-    value.textContent = item.value;
-    metric.append(label, value);
-    container.append(metric);
-  }
-}
-
-function renderCurrentPanel(
-  document: Document,
-  container: HTMLElement,
-  environment: unknown,
-  inventory: ProbeInventory,
-  latest: unknown,
-) {
-  clear(container);
-
-  const snapshot = deriveSnapshot(environment, inventory, latest);
-  const chips = createElement(document, "div", "axon-probe-state-row");
-  chips.append(
-    createChip(
-      document,
-      snapshot.adapterDetected ? "Adapter detected" : "Adapter missing",
-      snapshot.adapterDetected ? "good" : "warn",
-    ),
-    createChip(
-      document,
-      snapshot.sessionOpen ? "Connection open" : "Connection idle",
-      snapshot.sessionOpen ? "good" : "neutral",
-    ),
-    createChip(
-      document,
-      snapshot.servoDetected === null
-        ? "Servo not checked"
-        : snapshot.servoDetected
-          ? "Servo detected"
-          : "No servo detected",
-      snapshot.servoDetected === null ? "neutral" : snapshot.servoDetected ? "good" : "warn",
-    ),
+function adapterDescriptor(inventory: ProbeInventory): ProbeDeviceInfo | null {
+  return (
+    inventory.devices.find((device) => device.id === inventory.openedId) ??
+    inventory.devices[0] ??
+    null
   );
-
-  const docsValue =
-    isConfigInfo(latest) && latest.docsUrl
-      ? (() => {
-          const link = createElement(document, "a");
-          link.href = latest.docsUrl;
-          link.target = "_blank";
-          link.rel = "noreferrer";
-          link.textContent = latest.docsUrl;
-          return link;
-        })()
-      : "—";
-
-  const rows: ReadonlyArray<readonly [string, string | Node]> = [
-    ["Adapter", snapshot.adapterLabel],
-    ["Current Mode", snapshot.modeLabel],
-    ["Detected Servo", snapshot.profileLabel],
-    ["Docs", docsValue],
-    ["Next Step", snapshot.nextStep],
-  ];
-
-  const content = createElement(document, "div", "axon-probe-current");
-  content.append(chips, createKeyValueList(document, rows));
-  container.append(content);
 }
 
-function renderTaskPanel(document: Document, container: HTMLElement) {
-  clear(container);
-
-  const cards = [
-    {
-      title: "Switch Mode",
-      body: "The common path is switching between Servo Mode and Continuous Rotation Mode. Start by loading the current servo so the UI can present the right mode target clearly.",
-    },
-    {
-      title: "Tune Range",
-      body: "In Servo Mode, the key work is left and right travel plus neutral position. Those settings should be surfaced as the primary controls, not buried in diagnostics.",
-    },
-    {
-      title: "Handle Signal Loss",
-      body: "Kids need to choose what happens when PWM disappears: release, hold, or neutral. That belongs near the top-level setup flow with plain language and visible consequences.",
-    },
-  ] as const;
-
-  const grid = createElement(document, "div", "axon-probe-task-grid");
-  for (const card of cards) {
-    const item = createElement(document, "article", "axon-probe-task");
-    const title = createElement(document, "h3", "axon-probe-task-title");
-    const body = createElement(document, "p", "axon-probe-task-body");
-    const chipRow = createElement(document, "div", "axon-probe-chip-row");
-    title.textContent = card.title;
-    body.textContent = card.body;
-    chipRow.append(createChip(document, "Primary workflow", "good"));
-    item.append(title, body, chipRow);
-    grid.append(item);
-  }
-
-  container.append(grid);
+function toPrettyJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
 }
 
-function renderConnectionPanel(
-  document: Document,
-  container: HTMLElement,
-  inventory: ProbeInventory,
-) {
-  clear(container);
+export function mountProbeApp(options: MountProbeAppOptions): void {
+  const state: ProbeState = {
+    environment: null,
+    inventory: { devices: [], openedId: null },
+    identify: null,
+    config: null,
+    busyAction: null,
+    error: null,
+    logs: [],
+    diagnosticsOpen: false,
+    selectedProfileId: "claw",
+  };
 
-  if (inventory.devices.length === 0) {
-    const empty = createElement(document, "p", "axon-probe-empty");
-    empty.textContent =
-      "No adapter is visible yet. Keep the device on the host OS, then run the detect or scan action.";
-    container.append(empty);
-    return;
+  function log(message: string): void {
+    state.logs.unshift({ timestamp: nowLabel(), message });
+    state.logs = state.logs.slice(0, 14);
   }
 
-  const primary = inventory.devices[0];
-  const rows: ReadonlyArray<readonly [string, string]> = [
-    ["Adapter", primary.product ?? "Axon Adapter"],
-    ["Vendor / Product", `${primary.vendorId ?? "VID?"} / ${primary.productId ?? "PID?"}`],
-    ["Interface", formatValue(primary.interface)],
-    ["Status", primary.opened ? "Connected" : "Detected"],
-    ["Path", primary.id ?? "—"],
-  ];
-
-  container.append(createKeyValueList(document, rows));
-  if (inventory.devices.length > 1) {
-    const note = createElement(document, "p", "axon-probe-empty");
-    note.textContent = `${inventory.devices.length} adapters are visible. The first one is the active target.`;
-    container.append(note);
-  }
-}
-
-function renderEnvironmentPanel(document: Document, container: HTMLElement, environment: unknown) {
-  clear(container);
-
-  if (!isRecord(environment)) {
-    container.append(createPre(document, JSON.stringify(environment, null, 2)));
-    return;
-  }
-
-  const rows = Object.entries(environment).map(
-    ([key, value]) => [startCase(key), formatValue(value)] as const,
-  );
-  container.append(createKeyValueList(document, rows));
-}
-
-function renderInventoryPanel(
-  document: Document,
-  container: HTMLElement,
-  inventory: ProbeInventory,
-  emptyText: string,
-) {
-  clear(container);
-
-  if (inventory.devices.length === 0) {
-    const empty = createElement(document, "p", "axon-probe-empty");
-    empty.textContent = emptyText;
-    container.append(empty);
-    return;
-  }
-
-  const list = createElement(document, "div", "axon-probe-device-list");
-
-  for (const device of inventory.devices) {
-    const item = createElement(document, "article", "axon-probe-device");
-    const head = createElement(document, "div", "axon-probe-device-head");
-    const titleWrap = createElement(document, "div");
-    const title = createElement(document, "h3", "axon-probe-device-name");
-    const subtitle = createElement(document, "p", "axon-probe-device-subtitle");
-    const chipRow = createElement(document, "div", "axon-probe-chip-row");
-
-    title.textContent = device.product ?? "Axon Adapter";
-    subtitle.textContent = device.manufacturer ?? "HID-visible adapter";
-    chipRow.append(
-      createChip(document, `${device.vendorId ?? "VID?"} / ${device.productId ?? "PID?"}`),
-      createChip(document, device.opened ? "Open" : "Idle", device.opened ? "good" : "neutral"),
-    );
-
-    titleWrap.append(title, subtitle);
-    head.append(titleWrap, chipRow);
-
-    const rows: Array<[string, string]> = [
-      ["Endpoint", device.id ?? "—"],
-      ["Interface", formatValue(device.interface)],
-      ["Usage", device.usagePage && device.usage ? `${device.usagePage} / ${device.usage}` : "—"],
-      ["Serial", device.serialNumber ?? "—"],
-    ];
-
-    item.append(head, createKeyValueList(document, rows));
-
-    if (device.collections && device.collections.length > 0) {
-      const subsection = createElement(document, "div", "axon-probe-subsection");
-      const label = createElement(document, "p", "axon-probe-subsection-label");
-      label.textContent = "Collections";
-
-      const detail = createElement(document, "div", "axon-probe-chip-row");
-      for (const collection of device.collections) {
-        detail.append(
-          createChip(
-            document,
-            `${collection.usagePage} / ${collection.usage} · in ${collection.inputReports.length} · out ${collection.outputReports.length}`,
-          ),
-        );
-      }
-
-      subsection.append(label, detail);
-      item.append(subsection);
+  function updateInventory(inventory: ProbeInventory): void {
+    state.inventory = inventory;
+    if (!inventory.openedId) {
+      state.identify = null;
+      state.config = null;
     }
-
-    list.append(item);
   }
 
-  container.append(list);
-}
-
-function renderLatestPanel(document: Document, container: HTMLElement, latest: unknown) {
-  clear(container);
-
-  if (!latest) {
-    const empty = createElement(document, "p", "axon-probe-empty");
-    empty.textContent = "No exchange yet.";
-    container.append(empty);
-    return;
+  function setProfileSuggestion(): void {
+    const mode = currentMode(state);
+    if (mode === "cr_mode") {
+      state.selectedProfileId = "intake";
+      return;
+    }
+    if (mode === "servo_mode") {
+      state.selectedProfileId = "claw";
+    }
   }
 
-  if (isIdentifyInfo(latest)) {
-    const top = createElement(document, "div", "axon-probe-stack");
-    const chips = createElement(document, "div", "axon-probe-chip-row");
-    chips.append(
-      createChip(
-        document,
-        latest.present ? "Servo Present" : "No Servo",
-        latest.present ? "good" : "warn",
-      ),
-      createChip(document, startCase(latest.mode.replace(/_/g, " "))),
-      createChip(document, `${latest.statusHi} / ${latest.statusLo}`),
-    );
+  const runAction = async <T>(
+    actionName: string,
+    task: () => Promise<T>,
+    onSuccess: (result: T) => void,
+  ): Promise<void> => {
+    if (state.busyAction) return;
+    state.busyAction = actionName;
+    state.error = null;
+    render();
+    try {
+      const result = await task();
+      onSuccess(result);
+      log(`${actionName} done`);
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      log(`${actionName} failed`);
+    } finally {
+      state.busyAction = null;
+      render();
+    }
+  };
 
-    const details = createKeyValueList(document, [
-      ["Status High", latest.statusHi],
-      ["Status Low", latest.statusLo],
-      ["Mode Byte", latest.modeByte ?? "—"],
-      ["Mode", startCase(latest.mode.replace(/_/g, " "))],
-    ]);
-
-    const rawSection = createElement(document, "div", "axon-probe-subsection");
-    const rawLabel = createElement(document, "p", "axon-probe-subsection-label");
-    rawLabel.textContent = "Raw Reply";
-    rawSection.append(rawLabel, createPre(document, latest.rawRx));
-
-    top.append(chips, details, rawSection);
-    container.append(top);
-    return;
+  function renderActionButton(
+    actionId: string,
+    spec: ProbeAction<unknown> | undefined,
+    disabled: boolean,
+    tone: "primary" | "neutral" | "quiet",
+    caption: string,
+  ): string {
+    if (!spec) return "";
+    return `
+      <button class="action-button action-${tone}" data-action="${escapeHtml(actionId)}" ${disabled ? "disabled" : ""}>
+        <span class="action-label">${escapeHtml(spec.label)}</span>
+        <span class="action-caption">${escapeHtml(caption)}</span>
+      </button>
+    `;
   }
 
-  if (isConfigInfo(latest)) {
-    const stack = createElement(document, "div", "axon-probe-stack");
-    const chips = createElement(document, "div", "axon-probe-chip-row");
-    chips.append(
-      createChip(
-        document,
-        latest.known ? "Catalog Match" : "Unknown Model",
-        latest.known ? "good" : "warn",
-      ),
-      createChip(document, `${latest.length} Bytes`),
-      createChip(document, latest.modelId || "No Model ID"),
-    );
+  function render(): void {
+    const connected = Boolean(state.inventory.openedId);
+    const visible = state.inventory.devices.length > 0;
+    const servoPresent = state.identify?.present ?? Boolean(state.config);
+    const modelName = state.config?.modelName ?? null;
+    const modelId = state.config?.modelId ?? null;
+    const mode = currentMode(state);
+    const setup = state.config?.setup ?? null;
+    const descriptor = adapterDescriptor(state.inventory);
+    const rail = railGeometry(state.config);
 
-    const docsValue = latest.docsUrl
-      ? (() => {
-          const link = createElement(document, "a");
-          link.href = latest.docsUrl;
-          link.target = "_blank";
-          link.rel = "noreferrer";
-          link.textContent = latest.docsUrl;
-          return link;
-        })()
-      : "—";
+    const adapterTone = connected ? "ok" : visible ? "warn" : "idle";
+    const servoTone = servoPresent ? "ok" : connected ? "warn" : "idle";
+    const modeTone = mode && mode !== "unknown" ? "ok" : "idle";
+    const setupTone = setup ? "ok" : connected ? "warn" : "idle";
 
-    const details = createKeyValueList(document, [
-      ["Model", latest.modelName ?? "Unknown"],
-      ["Model ID", latest.modelId || "—"],
-      ["Known", latest.known ? "Yes" : "No"],
-      ["Docs", docsValue],
-    ]);
+    const selectedProfile =
+      PROFILE_PREVIEWS.find((profile) => profile.id === state.selectedProfileId) ??
+      PROFILE_PREVIEWS[0];
 
-    const chunks = createElement(document, "div", "axon-probe-stack");
+    const diagnostics = {
+      environment: state.environment,
+      inventory: state.inventory,
+      identify: state.identify,
+      config: state.config
+        ? {
+            modelId: state.config.modelId,
+            mode: state.config.modeLabel,
+            rawHex: state.config.rawHex,
+            firstChunk: state.config.firstChunk,
+            secondChunk: state.config.secondChunk,
+          }
+        : null,
+      logs: state.logs,
+    };
 
-    const chunkA = createElement(document, "div", "axon-probe-subsection");
-    const chunkALabel = createElement(document, "p", "axon-probe-subsection-label");
-    chunkALabel.textContent = "Chunk 0";
-    chunkA.append(chunkALabel, createPre(document, latest.firstChunk));
+    options.root.innerHTML = `
+      <style>
+        :root {
+          color-scheme: light;
+        }
 
-    const chunkB = createElement(document, "div", "axon-probe-subsection");
-    const chunkBLabel = createElement(document, "p", "axon-probe-subsection-label");
-    chunkBLabel.textContent = "Chunk 1";
-    chunkB.append(chunkBLabel, createPre(document, latest.secondChunk));
+        * {
+          box-sizing: border-box;
+        }
 
-    const rawSection = createElement(document, "div", "axon-probe-subsection");
-    const rawLabel = createElement(document, "p", "axon-probe-subsection-label");
-    rawLabel.textContent = "Full Block";
-    rawSection.append(rawLabel, createPre(document, latest.rawHex));
+        body {
+          margin: 0;
+        }
 
-    chunks.append(chunkA, chunkB, rawSection);
-    stack.append(chips, details, chunks);
-    container.append(stack);
-    return;
-  }
+        .probe-shell {
+          min-height: 100vh;
+          padding: 20px 20px 28px;
+          background:
+            linear-gradient(180deg, #fcfcfc 0%, #f4f5f7 100%);
+          color: #171717;
+          font-family:
+            Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
 
-  container.append(createPre(document, JSON.stringify(latest, null, 2)));
-}
+        .shell-inner {
+          max-width: 1260px;
+          margin: 0 auto;
+        }
 
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
+        .topbar {
+          display: grid;
+          gap: 16px;
+          align-items: end;
+          margin-bottom: 16px;
+        }
 
-  return String(error);
-}
+        .brand-row {
+          display: flex;
+          gap: 14px;
+          align-items: center;
+        }
 
-export function mountProbeApp(options: ProbeUiOptions): void {
-  const document = options.root.ownerDocument;
-  installStyles(document);
+        .brand-mark {
+          width: 18px;
+          height: 18px;
+          border-radius: 4px;
+          background: #e40014;
+          box-shadow: 12px 0 0 #171717;
+        }
 
-  options.root.innerHTML = `
-    <main class="axon-probe-app">
-      <div class="axon-probe-shell">
-        <header class="axon-probe-header">
-          <div class="axon-probe-brand">
-            <span class="axon-probe-brand-mark" aria-hidden="true"></span>
-            <div class="axon-probe-brand-copy">
-              <p class="axon-probe-brand-name">Axon Robotics</p>
-              <p class="axon-probe-brand-tag">Servo programmer workspace</p>
-            </div>
-          </div>
-        </header>
+        .brand-copy {
+          min-width: 0;
+        }
 
-        <section class="axon-probe-top">
-          <section class="axon-probe-intro axon-probe-panel-primary">
-            ${options.eyebrow ? `<p class="axon-probe-eyebrow">${options.eyebrow}</p>` : ""}
-            <h1 class="axon-probe-title">${options.title}</h1>
-            <p class="axon-probe-description">${options.description}</p>
-            <ul class="axon-probe-bullets">${options.bullets.map((bullet) => `<li>${bullet}</li>`).join("")}</ul>
-            <div class="axon-probe-summary" data-role="summary"></div>
-          </section>
-        </section>
+        .eyebrow {
+          margin: 0 0 4px;
+          color: #5f6773;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
 
-        <section class="axon-probe-panel axon-probe-action-panel">
-          <div class="axon-probe-panel-header">
-            <h2 class="axon-probe-panel-title">Primary Actions</h2>
-            <span class="axon-probe-panel-note">Detect hardware first, then load the current servo.</span>
-          </div>
-          <section class="axon-probe-toolbar" data-role="actions"></section>
-        </section>
+        .app-title {
+          margin: 0;
+          font-size: 32px;
+          line-height: 1.05;
+          font-weight: 700;
+        }
 
-        <section class="axon-probe-grid">
-          <section class="axon-probe-panel axon-probe-panel-primary">
-            <div class="axon-probe-panel-header">
-              <h2 class="axon-probe-panel-title">Current Setup</h2>
-              <span class="axon-probe-panel-note">Connection state and the next likely action.</span>
-            </div>
-            <div data-role="current"></div>
+        .app-subtitle {
+          margin: 6px 0 0;
+          color: #4b5563;
+          font-size: 15px;
+          line-height: 1.5;
+          max-width: 780px;
+        }
 
-            <div class="axon-probe-subsection">
-              <p class="axon-probe-subsection-label">Common Tasks</p>
-              <div data-role="tasks"></div>
-            </div>
-          </section>
+        .status-ribbon {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+        }
 
-          <div class="axon-probe-stack">
-            <section class="axon-probe-panel">
-              <div class="axon-probe-panel-header">
-                <h2 class="axon-probe-panel-title">Connection</h2>
-                <span class="axon-probe-panel-note">Clear hardware status before any settings work.</span>
+        .status-chip {
+          display: grid;
+          gap: 4px;
+          padding: 12px 14px;
+          border: 1px solid #d7dae0;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.86);
+          min-height: 74px;
+        }
+
+        .status-chip strong {
+          font-size: 16px;
+          line-height: 1.2;
+        }
+
+        .status-label {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          color: #5f6773;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .status-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 999px;
+          background: #bcc3cf;
+        }
+
+        .status-ok .status-dot {
+          background: #00a544;
+        }
+
+        .status-warn .status-dot {
+          background: #f99c00;
+        }
+
+        .action-row {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 18px;
+        }
+
+        .action-button {
+          display: grid;
+          gap: 4px;
+          min-height: 74px;
+          padding: 14px 16px;
+          text-align: left;
+          border-radius: 8px;
+          border: 1px solid #cfd4dc;
+          background: #fff;
+          color: #171717;
+          cursor: pointer;
+          transition:
+            transform 120ms ease,
+            border-color 120ms ease,
+            box-shadow 120ms ease;
+        }
+
+        .action-button:hover:not(:disabled) {
+          transform: translateY(-1px);
+          border-color: #aeb4bf;
+          box-shadow: 0 10px 22px rgba(23, 23, 23, 0.08);
+        }
+
+        .action-button:disabled {
+          cursor: default;
+          color: #9aa1ac;
+          background: #f3f4f6;
+        }
+
+        .action-primary {
+          border-color: #171717;
+        }
+
+        .action-quiet {
+          background: transparent;
+        }
+
+        .action-label {
+          font-size: 17px;
+          font-weight: 650;
+          line-height: 1.2;
+        }
+
+        .action-caption {
+          color: #5f6773;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .main-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
+          gap: 18px;
+        }
+
+        .panel {
+          border: 1px solid #d7dae0;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.92);
+        }
+
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: end;
+          padding: 18px 18px 0;
+        }
+
+        .panel-title {
+          margin: 0;
+          font-size: 24px;
+          line-height: 1.1;
+          font-weight: 700;
+        }
+
+        .panel-kicker {
+          margin: 0 0 4px;
+          color: #5f6773;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .panel-body {
+          padding: 18px;
+        }
+
+        .metric-row {
+          display: flex;
+          gap: 20px;
+          align-items: baseline;
+          flex-wrap: wrap;
+          margin-bottom: 18px;
+        }
+
+        .metric {
+          display: grid;
+          gap: 2px;
+        }
+
+        .metric-label {
+          color: #5f6773;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .metric-value {
+          font-size: 28px;
+          line-height: 1;
+          font-weight: 700;
+        }
+
+        .motion-rail {
+          position: relative;
+          height: 110px;
+          margin-bottom: 14px;
+        }
+
+        .motion-track,
+        .motion-track-center,
+        .motion-track-fill,
+        .motion-track-pointer {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+
+        .motion-track {
+          left: 0;
+          right: 0;
+          height: 16px;
+          border-radius: 999px;
+          background:
+            linear-gradient(90deg, #eceef2 0%, #f6f7f9 100%);
+          border: 1px solid #dce0e6;
+        }
+
+        .motion-track-center {
+          left: 50%;
+          width: 2px;
+          height: 48px;
+          background: #171717;
+        }
+
+        .motion-track-fill {
+          height: 16px;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #fdb7bc 0%, #e40014 100%);
+        }
+
+        .motion-track-pointer {
+          width: 18px;
+          height: 18px;
+          margin-left: -9px;
+          border-radius: 999px;
+          background: #171717;
+          box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.92);
+        }
+
+        .motion-legend {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          color: #69707d;
+          font-size: 13px;
+        }
+
+        .helper-copy {
+          margin: 16px 0 0;
+          color: #505866;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+
+        .right-stack {
+          display: grid;
+          gap: 18px;
+        }
+
+        .mode-strip,
+        .loss-strip {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 14px;
+        }
+
+        .loss-strip {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          margin-top: 12px;
+        }
+
+        .choice {
+          padding: 14px 12px;
+          border: 1px solid #d6dbe3;
+          border-radius: 8px;
+          background: #f7f8fa;
+        }
+
+        .choice strong {
+          display: block;
+          font-size: 16px;
+          line-height: 1.2;
+        }
+
+        .choice span {
+          display: block;
+          margin-top: 4px;
+          color: #5f6773;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .choice-active {
+          border-color: #171717;
+          background: #fff;
+          box-shadow: inset 0 0 0 1px #171717;
+        }
+
+        .trait-row {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 16px;
+        }
+
+        .trait {
+          padding: 10px 0 0;
+          border-top: 1px solid #e3e6eb;
+        }
+
+        .trait strong {
+          display: block;
+          font-size: 15px;
+          line-height: 1.2;
+        }
+
+        .trait span {
+          display: block;
+          margin-top: 4px;
+          color: #5f6773;
+          font-size: 12px;
+          line-height: 1.4;
+        }
+
+        .status-list {
+          display: grid;
+          gap: 12px;
+        }
+
+        .status-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          padding-bottom: 12px;
+          border-bottom: 1px solid #eceef2;
+        }
+
+        .status-row:last-child {
+          padding-bottom: 0;
+          border-bottom: 0;
+        }
+
+        .status-row strong {
+          font-size: 15px;
+          line-height: 1.25;
+        }
+
+        .status-row span {
+          color: #5f6773;
+          font-size: 13px;
+          line-height: 1.4;
+          text-align: right;
+        }
+
+        .profiles-panel {
+          margin-top: 18px;
+        }
+
+        .profiles-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .profile-tile {
+          border-radius: 8px;
+          border: 1px solid #d6dbe3;
+          background: #fff;
+          padding: 14px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .profile-tile:hover {
+          border-color: #aeb4bf;
+        }
+
+        .profile-tile[data-selected="true"] {
+          border-color: #171717;
+          box-shadow: inset 0 0 0 1px #171717;
+        }
+
+        .profile-mode {
+          display: inline-block;
+          margin-bottom: 10px;
+          padding: 4px 7px;
+          border-radius: 999px;
+          background: #f3f4f6;
+          color: #5f6773;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .profile-name {
+          margin: 0;
+          font-size: 17px;
+          line-height: 1.2;
+          font-weight: 700;
+        }
+
+        .profile-summary {
+          margin: 8px 0 0;
+          color: #535b68;
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        .profiles-note {
+          margin: 14px 0 0;
+          color: #5f6773;
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        .error-banner {
+          margin: 0 0 16px;
+          padding: 12px 14px;
+          border: 1px solid #f3b5bc;
+          border-radius: 8px;
+          background: #fff3f4;
+          color: #8a101d;
+          font-size: 14px;
+          line-height: 1.45;
+        }
+
+        details.diagnostics {
+          margin-top: 18px;
+          border: 1px solid #d7dae0;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.9);
+          overflow: hidden;
+        }
+
+        .diagnostics summary {
+          cursor: pointer;
+          padding: 14px 18px;
+          font-weight: 650;
+          list-style: none;
+        }
+
+        .diagnostics summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .diagnostics-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+          padding: 0 18px 18px;
+        }
+
+        .diag-block {
+          min-height: 160px;
+          border: 1px solid #e1e5eb;
+          border-radius: 8px;
+          background: #f7f8fa;
+          padding: 12px;
+        }
+
+        .diag-block h3 {
+          margin: 0 0 10px;
+          font-size: 13px;
+          text-transform: uppercase;
+          color: #5f6773;
+        }
+
+        .diag-block pre {
+          margin: 0;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-size: 12px;
+          line-height: 1.45;
+          color: #1f2937;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        @media (max-width: 1080px) {
+          .status-ribbon,
+          .action-row,
+          .profiles-grid,
+          .trait-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .main-grid,
+          .diagnostics-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 720px) {
+          .probe-shell {
+            padding: 16px 14px 24px;
+          }
+
+          .status-ribbon,
+          .action-row,
+          .mode-strip,
+          .loss-strip,
+          .profiles-grid,
+          .trait-row {
+            grid-template-columns: 1fr;
+          }
+
+          .app-title {
+            font-size: 28px;
+          }
+
+          .panel-title {
+            font-size: 21px;
+          }
+
+          .metric-value {
+            font-size: 24px;
+          }
+        }
+      </style>
+      <div class="probe-shell">
+        <div class="shell-inner">
+          <div class="topbar">
+            <div class="brand-row">
+              <div class="brand-mark" aria-hidden="true"></div>
+              <div class="brand-copy">
+                ${options.eyebrow ? `<p class="eyebrow">${escapeHtml(options.eyebrow)}</p>` : ""}
+                <h1 class="app-title">${escapeHtml(options.title)}</h1>
+                <p class="app-subtitle">See the adapter, identify the servo, then work from mode, center, range, and safe behavior.</p>
               </div>
-              <div data-role="connection"></div>
-            </section>
+            </div>
+            <div class="status-ribbon">
+              <div class="status-chip status-${adapterTone}">
+                <div class="status-label"><span class="status-dot"></span> Adapter</div>
+                <strong>${connected ? "Connected" : visible ? "Found on USB" : "Not detected"}</strong>
+                <span>${escapeHtml(descriptor?.product ?? "Connect the Axon adapter on the host machine.")}</span>
+              </div>
+              <div class="status-chip status-${servoTone}">
+                <div class="status-label"><span class="status-dot"></span> Servo</div>
+                <strong>${servoPresent ? "Servo detected" : connected ? "Not found yet" : "Waiting for adapter"}</strong>
+                <span>${servoPresent ? escapeHtml(modelName ?? "Attached servo") : "Use Find Servo after the adapter is connected."}</span>
+              </div>
+              <div class="status-chip status-${modeTone}">
+                <div class="status-label"><span class="status-dot"></span> Mode</div>
+                <strong>${escapeHtml(modeDisplay(mode))}</strong>
+                <span>${mode === "cr_mode" ? "Use this when you want wheel behavior." : mode === "servo_mode" ? "Use this when you want position control." : "Show current setup to reveal the active mode."}</span>
+              </div>
+              <div class="status-chip status-${setupTone}">
+                <div class="status-label"><span class="status-dot"></span> Setup</div>
+                <strong>${setup ? "Current setup loaded" : "No setup loaded yet"}</strong>
+                <span>${setup ? `${escapeHtml(selectedProfile.name)} is the closest starting point.` : "Load the current setup before changing range or center."}</span>
+              </div>
+            </div>
           </div>
-        </section>
 
-        <details class="axon-probe-disclosure">
-          <summary>
-            <span>Diagnostics</span>
-            <span class="axon-probe-disclosure-note">Environment, protocol details, and the session log.</span>
-          </summary>
-          <div class="axon-probe-disclosure-body">
-            <div class="axon-probe-diagnostics-grid">
-              <section class="axon-probe-panel">
-                <div class="axon-probe-panel-header">
-                  <h2 class="axon-probe-panel-title">Environment</h2>
-                  <span class="axon-probe-panel-note">Runtime snapshot</span>
+          ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
+
+          <div class="action-row">
+            ${renderActionButton(
+              "requestDevice",
+              options.requestDevice ?? options.refreshInventory,
+              Boolean(state.busyAction),
+              "primary",
+              "See the Axon adapter on USB.",
+            )}
+            ${renderActionButton(
+              "reconnectDevice",
+              options.reconnectDevice,
+              Boolean(state.busyAction),
+              "quiet",
+              "Reuse a browser-approved adapter.",
+            )}
+            ${renderActionButton(
+              "openDevice",
+              options.openDevice,
+              Boolean(state.busyAction) || !visible || connected,
+              "neutral",
+              "Claim the adapter for this app.",
+            )}
+            ${renderActionButton(
+              "identifyServo",
+              options.identifyServo,
+              Boolean(state.busyAction) || !connected,
+              "neutral",
+              "Check what servo is attached right now.",
+            )}
+            ${renderActionButton(
+              "readFullConfig",
+              options.readFullConfig,
+              Boolean(state.busyAction) || !connected,
+              "primary",
+              "Show mode, center, range, and safety settings.",
+            )}
+            ${renderActionButton(
+              "closeDevice",
+              options.closeDevice,
+              Boolean(state.busyAction) || !connected,
+              "quiet",
+              "Release the adapter for other tools.",
+            )}
+          </div>
+
+          <div class="main-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Motion</p>
+                  <h2 class="panel-title">${escapeHtml(modelName ?? "Current servo setup")}</h2>
                 </div>
-                <div data-role="environment"></div>
+                <div class="metric-row">
+                  <div class="metric">
+                    <span class="metric-label">Range</span>
+                    <span class="metric-value">${formatRange(setup?.rangeDegrees ?? null)}</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Center</span>
+                    <span class="metric-value">${escapeHtml(formatSignedUs(setup?.neutralUs ?? null))}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="motion-rail" aria-hidden="true">
+                  <div class="motion-track"></div>
+                  <div class="motion-track-fill" style="left:${rail.start}%; width:${rail.width}%;"></div>
+                  <div class="motion-track-center"></div>
+                  <div class="motion-track-pointer" style="left:${rail.pointer}%;"></div>
+                </div>
+                <div class="motion-legend">
+                  <span>Smaller sweep</span>
+                  <span>Neutral stays centered unless trimmed</span>
+                  <span>Wider sweep</span>
+                </div>
+                <p class="helper-copy">
+                  ${
+                    setup
+                      ? `This visual shows how much of the servo's travel is active and whether the center is trimmed away from neutral.`
+                      : `Connect the adapter and show the current setup to see the sweep and center visually instead of reading raw config bytes.`
+                  }
+                </p>
+              </div>
+            </section>
+
+            <div class="right-stack">
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <p class="panel-kicker">Mode and safety</p>
+                    <h2 class="panel-title">How this servo behaves</h2>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="mode-strip">
+                    <div class="choice ${mode === "servo_mode" ? "choice-active" : ""}">
+                      <strong>Servo</strong>
+                      <span>Position the horn to a target angle.</span>
+                    </div>
+                    <div class="choice ${mode === "cr_mode" ? "choice-active" : ""}">
+                      <strong>Continuous Rotation</strong>
+                      <span>Spin like a wheel instead of holding an angle.</span>
+                    </div>
+                  </div>
+
+                  <div class="loss-strip">
+                    <div class="choice ${setup?.pwmLossBehavior === "release" ? "choice-active" : ""}">
+                      <strong>Let go</strong>
+                      <span>Stop driving when signal disappears.</span>
+                    </div>
+                    <div class="choice ${setup?.pwmLossBehavior === "hold" ? "choice-active" : ""}">
+                      <strong>Hold</strong>
+                      <span>Keep trying to stay where it was.</span>
+                    </div>
+                    <div class="choice ${setup?.pwmLossBehavior === "neutral" ? "choice-active" : ""}">
+                      <strong>Go to center</strong>
+                      <span>Return to the saved neutral point.</span>
+                    </div>
+                  </div>
+
+                  <div class="trait-row">
+                    <div class="trait">
+                      <strong>${escapeHtml(formatInversion(setup?.inversion ?? null))}</strong>
+                      <span>Direction</span>
+                    </div>
+                    <div class="trait">
+                      <strong>${setup?.softStart == null ? "Unknown" : setup.softStart ? "Enabled" : "Off"}</strong>
+                      <span>Soft start</span>
+                    </div>
+                    <div class="trait">
+                      <strong>${escapeHtml(setup?.sensitivityLabel ?? "Unknown")}</strong>
+                      <span>Feel</span>
+                    </div>
+                  </div>
+                </div>
               </section>
 
-              <section class="axon-probe-panel">
-                <div class="axon-probe-panel-header">
-                  <h2 class="axon-probe-panel-title">${options.devicePanelTitle}</h2>
-                  <span class="axon-probe-panel-note">Enumerated through the active transport</span>
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <p class="panel-kicker">Connection</p>
+                    <h2 class="panel-title">What is attached right now</h2>
+                  </div>
                 </div>
-                <div data-role="devices"></div>
-              </section>
-
-              <section class="axon-probe-panel">
-                <div class="axon-probe-panel-header">
-                  <h2 class="axon-probe-panel-title">Protocol Details</h2>
-                  <span class="axon-probe-panel-note">Latest parsed reply plus raw bytes</span>
+                <div class="panel-body">
+                  <div class="status-list">
+                    <div class="status-row">
+                      <strong>Adapter</strong>
+                      <span>${escapeHtml(descriptor?.product ?? "No adapter yet")}</span>
+                    </div>
+                    <div class="status-row">
+                      <strong>USB path</strong>
+                      <span>${escapeHtml(descriptor?.id ?? "Waiting for detection")}</span>
+                    </div>
+                    <div class="status-row">
+                      <strong>Servo</strong>
+                      <span>${servoPresent ? escapeHtml(modelName ?? "Detected") : "Not detected"}</span>
+                    </div>
+                    <div class="status-row">
+                      <strong>Model ID</strong>
+                      <span>${escapeHtml(modelId ?? "--")}</span>
+                    </div>
+                    <div class="status-row">
+                      <strong>Signal loss</strong>
+                      <span>${escapeHtml(formatLoss(setup?.pwmLossBehavior ?? null))}</span>
+                    </div>
+                  </div>
                 </div>
-                <div data-role="latest"></div>
-              </section>
-
-              <section class="axon-probe-panel">
-                <div class="axon-probe-panel-header">
-                  <h2 class="axon-probe-panel-title">Session Log</h2>
-                  <span class="axon-probe-panel-note">Shown on demand instead of on first glance.</span>
-                </div>
-                <pre class="axon-probe-pre axon-probe-log" data-role="log"></pre>
               </section>
             </div>
           </div>
-        </details>
+
+          <section class="panel profiles-panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Starting points</p>
+                <h2 class="panel-title">FTC job-based profiles</h2>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="profiles-grid">
+                ${PROFILE_PREVIEWS.map(
+                  (profile) => `
+                    <button
+                      class="profile-tile"
+                      data-profile-id="${escapeHtml(profile.id)}"
+                      data-selected="${profile.id === state.selectedProfileId}"
+                    >
+                      <span class="profile-mode">${escapeHtml(profile.mode)}</span>
+                      <p class="profile-name">${escapeHtml(profile.name)}</p>
+                      <p class="profile-summary">${escapeHtml(profile.summary)}</p>
+                    </button>
+                  `,
+                ).join("")}
+              </div>
+              <p class="profiles-note">
+                Start from the job the team actually wants to do. The selected profile is a planning cue for the next pass, not a firmware write yet.
+              </p>
+            </div>
+          </section>
+
+          <details class="diagnostics" ${state.diagnosticsOpen ? "open" : ""}>
+            <summary>Diagnostics and raw replies</summary>
+            <div class="diagnostics-grid">
+              <section class="diag-block">
+                <h3>Runtime</h3>
+                <pre>${escapeHtml(toPrettyJson(diagnostics.environment ?? {}))}</pre>
+              </section>
+              <section class="diag-block">
+                <h3>USB inventory</h3>
+                <pre>${escapeHtml(toPrettyJson(diagnostics.inventory))}</pre>
+              </section>
+              <section class="diag-block">
+                <h3>Servo replies</h3>
+                <pre>${escapeHtml(toPrettyJson(diagnostics.identify ?? diagnostics.config ?? {}))}</pre>
+              </section>
+              <section class="diag-block">
+                <h3>Session log</h3>
+                <pre>${escapeHtml(
+                  state.logs.map((entry) => `[${entry.timestamp}] ${entry.message}`).join("\n") ||
+                    "No activity yet.",
+                )}</pre>
+              </section>
+            </div>
+          </details>
+        </div>
       </div>
-    </main>
-  `;
+    `;
 
-  const actionsEl = requireElement<HTMLDivElement>(
-    options.root,
-    '[data-role="actions"]',
-    "Axon probe UI failed to initialize the actions region.",
-  );
-  const summaryEl = requireElement<HTMLDivElement>(
-    options.root,
-    '[data-role="summary"]',
-    "Axon probe UI failed to initialize the summary region.",
-  );
-  const environmentEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="environment"]',
-    "Axon probe UI failed to initialize the environment region.",
-  );
-  const devicesEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="devices"]',
-    "Axon probe UI failed to initialize the devices region.",
-  );
-  const latestEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="latest"]',
-    "Axon probe UI failed to initialize the latest region.",
-  );
-  const currentEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="current"]',
-    "Axon probe UI failed to initialize the current region.",
-  );
-  const tasksEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="tasks"]',
-    "Axon probe UI failed to initialize the tasks region.",
-  );
-  const connectionEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="connection"]',
-    "Axon probe UI failed to initialize the connection region.",
-  );
-  const logEl = requireElement<HTMLElement>(
-    options.root,
-    '[data-role="log"]',
-    "Axon probe UI failed to initialize the log region.",
-  );
-
-  const buttons = new Map<string, HTMLButtonElement>();
-
-  let environmentState: unknown = null;
-  let inventoryState: ProbeInventory = { devices: [], openedId: null };
-  let latestState: unknown = null;
-
-  function rerenderSummary() {
-    renderSummary(document, summaryEl, environmentState, inventoryState, latestState);
-  }
-
-  function log(message: string) {
-    const timestamp = new Date().toLocaleTimeString();
-    logEl.textContent += `[${timestamp}] ${message}\n`;
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function renderInventory(next: ProbeInventory) {
-    inventoryState = next;
-    renderInventoryPanel(document, devicesEl, inventoryState, options.emptyDeviceText);
-    renderConnectionPanel(document, connectionEl, inventoryState);
-    updateButtons();
-    rerenderSummary();
-    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
-  }
-
-  function renderEnvironment(next: unknown) {
-    environmentState = next;
-    renderEnvironmentPanel(document, environmentEl, environmentState);
-    rerenderSummary();
-    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
-  }
-
-  function renderLatest(value: unknown) {
-    latestState = value;
-    renderLatestPanel(document, latestEl, latestState);
-    rerenderSummary();
-    renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
-  }
-
-  function updateButtons() {
-    const hasDevice = inventoryState.devices.length > 0;
-    const isOpen = inventoryState.openedId !== null;
-
-    buttons.get("open")?.toggleAttribute("disabled", !hasDevice || isOpen);
-    buttons.get("identify")?.toggleAttribute("disabled", !isOpen);
-    buttons.get("read")?.toggleAttribute("disabled", !isOpen);
-    buttons.get("close")?.toggleAttribute("disabled", !isOpen);
-  }
-
-  function addButton(key: string, label: string, onClick: () => Promise<void>) {
-    const button = createElement(document, "button");
-    button.type = "button";
-    button.dataset.action = key;
-    button.textContent = label;
-    button.addEventListener("click", () => {
-      void onClick();
+    options.root.querySelectorAll<HTMLButtonElement>("[data-profile-id]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.selectedProfileId = button.dataset.profileId ?? state.selectedProfileId;
+        render();
+      });
     });
-    actionsEl.append(button);
-    buttons.set(key, button);
-  }
 
-  async function runAction<T>(
-    action: ProbeUiAction<T>,
-    onSuccess: (data: T) => void,
-    successMessage: string,
-  ) {
-    try {
-      const data = await action.run();
-      onSuccess(data);
-      log(successMessage);
-    } catch (error) {
-      renderLatest({ error: formatError(error) });
-      log(`error: ${formatError(error)}`);
+    const details = options.root.querySelector<HTMLDetailsElement>("details.diagnostics");
+    if (details) {
+      details.addEventListener("toggle", () => {
+        state.diagnosticsOpen = details.open;
+      });
     }
-  }
 
-  if (options.requestDevice) {
-    const requestDevice = options.requestDevice;
-    addButton("request", requestDevice.label, async () => {
-      await runAction(
-        requestDevice,
-        (data) => {
-          renderInventory(data);
-          renderLatest({ selection: data.openedId ?? "requested" });
-        },
-        "device request completed",
-      );
+    const requestOrRefresh = options.requestDevice ?? options.refreshInventory;
+    const reconnectAction = options.reconnectDevice;
+    const openAction = options.openDevice;
+    const closeAction = options.closeDevice;
+    const identifyAction = options.identifyServo;
+    const readAction = options.readFullConfig;
+
+    const actionMap: Record<string, (() => Promise<void>) | undefined> = {
+      requestDevice: requestOrRefresh
+        ? () =>
+            runAction(requestOrRefresh.label, requestOrRefresh.run, (result) => {
+              updateInventory(result);
+            })
+        : undefined,
+      reconnectDevice: reconnectAction
+        ? () =>
+            runAction(reconnectAction.label, reconnectAction.run, (result) => {
+              updateInventory(result);
+            })
+        : undefined,
+      openDevice: openAction
+        ? () =>
+            runAction(openAction.label, openAction.run, (result) => {
+              updateInventory(result);
+            })
+        : undefined,
+      closeDevice: closeAction
+        ? () =>
+            runAction(closeAction.label, closeAction.run, (result) => {
+              updateInventory(result);
+            })
+        : undefined,
+      identifyServo: identifyAction
+        ? () =>
+            runAction(identifyAction.label, identifyAction.run, (result) => {
+              state.identify = result;
+              if (!result.present) {
+                state.config = null;
+              }
+            })
+        : undefined,
+      readFullConfig: readAction
+        ? () =>
+            runAction(readAction.label, readAction.run, (result) => {
+              state.config = result;
+              setProfileSuggestion();
+            })
+        : undefined,
+    };
+
+    options.root.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
+      const actionId = button.dataset.action ?? "";
+      const handler = actionMap[actionId];
+      if (!handler || button.disabled) return;
+      button.addEventListener("click", () => {
+        void handler();
+      });
     });
   }
 
-  if (options.reconnectDevice) {
-    const reconnectDevice = options.reconnectDevice;
-    addButton("reconnect", reconnectDevice.label, async () => {
-      await runAction(
-        reconnectDevice,
-        (data) => {
-          renderInventory(data);
-          renderLatest({ selection: data.openedId ?? "authorized lookup complete" });
-        },
-        "authorized device lookup completed",
-      );
-    });
-  }
-
-  if (options.refreshInventory) {
-    const refreshInventory = options.refreshInventory;
-    addButton("refresh", refreshInventory.label, async () => {
-      await runAction(
-        refreshInventory,
-        (data) => {
-          renderInventory(data);
-          renderLatest({ visibleCount: data.devices.length, openedId: data.openedId });
-        },
-        "adapter inventory refreshed",
-      );
-    });
-  }
-
-  addButton("open", options.openDevice.label, async () => {
-    await runAction(
-      options.openDevice,
-      (data) => {
-        renderInventory(data);
-        renderLatest({ visibleCount: data.devices.length, openedId: data.openedId });
-      },
-      "adapter opened",
-    );
-  });
-
-  addButton("identify", options.identifyServo.label, async () => {
-    await runAction(
-      options.identifyServo,
-      (data) => {
-        renderLatest(data);
-      },
-      "identify completed",
-    );
-  });
-
-  addButton("read", options.readFullConfig.label, async () => {
-    await runAction(
-      options.readFullConfig,
-      (data) => {
-        renderLatest(data);
-      },
-      "full config read completed",
-    );
-  });
-
-  addButton("close", options.closeDevice.label, async () => {
-    await runAction(
-      options.closeDevice,
-      (data) => {
-        renderInventory(data);
-        renderLatest({ visibleCount: data.devices.length, openedId: data.openedId });
-      },
-      "adapter closed",
-    );
-  });
-
-  updateButtons();
-  rerenderSummary();
-  renderTaskPanel(document, tasksEl);
-  renderConnectionPanel(document, connectionEl, inventoryState);
-  renderCurrentPanel(document, currentEl, environmentState, inventoryState, latestState);
-
-  void (async () => {
+  async function bootstrap(): Promise<void> {
+    log("Loading environment");
+    render();
     try {
-      renderEnvironment(await options.loadEnvironment());
-      log("runtime info loaded");
+      const [environment, inventory] = await Promise.all([
+        options.loadEnvironment(),
+        options.loadInventory(),
+      ]);
+      state.environment = environment;
+      updateInventory(inventory);
+      log("Ready");
     } catch (error) {
-      renderEnvironment({ error: formatError(error) });
-      log(`error: ${formatError(error)}`);
+      state.error = error instanceof Error ? error.message : String(error);
+      log("Startup failed");
     }
-  })();
+    render();
+  }
 
-  void (async () => {
-    try {
-      renderInventory(await options.loadInventory());
-      log("inventory loaded");
-    } catch (error) {
-      renderInventory({ devices: [], openedId: null });
-      renderLatest({ error: formatError(error) });
-      log(`error: ${formatError(error)}`);
-    }
-  })();
+  void bootstrap();
 }

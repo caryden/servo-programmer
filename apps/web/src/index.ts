@@ -1,4 +1,5 @@
 import { findModel, loadCatalog } from "@axon/core/catalog";
+import { servoModeLabel, summarizeConfig } from "@axon/core/config-summary";
 import { identify, modelIdFromConfig, readFullConfig } from "@axon/core/driver/protocol";
 import {
   deviceId,
@@ -83,7 +84,7 @@ mountProbeApp({
   }),
   loadInventory: async () => currentInventory(),
   requestDevice: {
-    label: "Detect Adapter",
+    label: "Find Adapter",
     run: async () => {
       await releaseHandle();
       const devices = await requestAxonDevices();
@@ -92,7 +93,7 @@ mountProbeApp({
     },
   },
   reconnectDevice: {
-    label: "Use Authorized Adapter",
+    label: "Use Remembered Adapter",
     run: async () => {
       await releaseHandle();
       const devices = await listAuthorizedAxonDevices();
@@ -119,7 +120,7 @@ mountProbeApp({
     },
   },
   identifyServo: {
-    label: "Detect Servo",
+    label: "Find Servo",
     run: async (): Promise<ProbeIdentifyInfo> => {
       const reply = await identify(requireHandle());
       const replyBytes = new Uint8Array(reply.rawRx);
@@ -134,8 +135,9 @@ mountProbeApp({
     },
   },
   readFullConfig: {
-    label: "Load Settings",
+    label: "Show Current Setup",
     run: async (): Promise<ProbeConfigInfo> => {
+      const identifyReply = await identify(requireHandle());
       const config = await readFullConfig(requireHandle());
       const configBytes = new Uint8Array(config);
       const modelId = modelIdFromConfig(configBytes);
@@ -148,6 +150,9 @@ mountProbeApp({
         known: Boolean(model),
         modelName: model?.name ?? null,
         docsUrl: model?.docs_url ?? null,
+        mode: identifyReply.mode,
+        modeLabel: servoModeLabel(identifyReply.mode),
+        setup: summarizeConfig(configBytes, modelId),
         rawHex: hexDump(configBytes),
         firstChunk: hexDump(configBytes.subarray(0, chunkSplit)),
         secondChunk: hexDump(configBytes.subarray(chunkSplit)),

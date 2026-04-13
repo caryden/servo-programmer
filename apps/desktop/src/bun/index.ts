@@ -1,4 +1,5 @@
 import { findModel, loadCatalog } from "@axon/core/catalog";
+import { servoModeLabel, summarizeConfig } from "@axon/core/config-summary";
 import {
   type IdentifyReply,
   identify,
@@ -154,6 +155,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
       readFullConfig: () =>
         withResult(async () => {
           const handle = requireOpenHandle();
+          const identifyReply = await identify(handle);
           const config = await readFullConfig(handle);
           const modelId = modelIdFromConfig(config);
           const catalog = loadCatalog();
@@ -166,6 +168,9 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
             known: Boolean(model),
             modelName: model?.name ?? null,
             docsUrl: model?.docs_url ?? null,
+            mode: identifyReply.mode,
+            modeLabel: servoModeLabel(identifyReply.mode),
+            setup: summarizeConfig(config, modelId),
             rawHex: hexDump(config),
             firstChunk: hexDump(config.subarray(0, chunkSplit)),
             secondChunk: hexDump(config.subarray(chunkSplit)),

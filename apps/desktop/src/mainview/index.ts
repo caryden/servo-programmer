@@ -58,7 +58,7 @@ mountProbeApp({
   loadEnvironment: async (): Promise<RuntimeInfo> => unwrapResult(rpc.request.getRuntime()),
   loadInventory: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
   refreshInventory: {
-    label: "Scan Adapters",
+    label: "Find Adapter",
     run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.refreshAdapters()),
   },
   openDevice: {
@@ -70,11 +70,11 @@ mountProbeApp({
     run: async (): Promise<ProbeInventory> => unwrapResult(rpc.request.closeAdapter()),
   },
   identifyServo: {
-    label: "Detect Servo",
+    label: "Find Servo",
     run: async (): Promise<ProbeIdentifyInfo> => unwrapResult(rpc.request.identifyServo()),
   },
   readFullConfig: {
-    label: "Load Settings",
+    label: "Show Current Setup",
     run: async (): Promise<ProbeConfigInfo> => unwrapResult(rpc.request.readFullConfig()),
   },
 });

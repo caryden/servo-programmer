@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./catalog": "./src/catalog.ts",
+    "./config-summary": "./src/config-summary.ts",
     "./errors": "./src/errors.ts",
     "./driver": "./src/driver/index.ts",
     "./driver/protocol": "./src/driver/protocol.ts",
