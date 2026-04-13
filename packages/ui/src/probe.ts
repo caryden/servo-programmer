@@ -89,54 +89,179 @@ interface LogEntry {
   message: string;
 }
 
+interface ProfilePreset {
+  id: string;
+  label: string;
+  mode: "servo_mode" | "cr_mode";
+  rangePercent: number;
+  neutralUs: number;
+  reversed: boolean;
+  pwmLossBehavior: "release" | "hold" | "neutral";
+  softStart: boolean;
+  pwmUs: number;
+}
+
+interface DraftSetup {
+  profileId: string;
+  mode: "servo_mode" | "cr_mode";
+  rangePercent: number;
+  neutralUs: number;
+  reversed: boolean;
+  pwmLossBehavior: "release" | "hold" | "neutral";
+  softStart: boolean;
+  pwmUs: number;
+  voltage: number;
+  loadPercent: number;
+}
+
 interface ProbeState {
   environment: unknown | null;
   inventory: ProbeInventory;
   identify: ProbeIdentifyInfo | null;
   config: ProbeConfigInfo | null;
+  draft: DraftSetup;
   busyAction: string | null;
   error: string | null;
   logs: LogEntry[];
   diagnosticsOpen: boolean;
-  selectedProfileId: string;
 }
 
-interface ProfilePreview {
-  id: string;
-  name: string;
-  mode: string;
-  summary: string;
+interface VoltagePoint {
+  voltage: number;
+  torqueKgcm: number;
+  speedSec60: number;
+  idleMa: number;
+  stallMa: number;
 }
 
-const PROFILE_PREVIEWS: ProfilePreview[] = [
+interface ServoSpec {
+  bodyWidth: number;
+  bodyHeight: number;
+  bodyDepth: number;
+  maxRangeDeg: number;
+  points: VoltagePoint[];
+}
+
+const PROFILE_PRESETS: ProfilePreset[] = [
   {
     id: "claw",
-    name: "Claw",
-    mode: "Servo",
-    summary: "Hold a target and keep the center easy to tune.",
+    label: "Claw",
+    mode: "servo_mode",
+    rangePercent: 34,
+    neutralUs: 0,
+    reversed: false,
+    pwmLossBehavior: "hold",
+    softStart: true,
+    pwmUs: 1900,
   },
   {
     id: "intake",
-    name: "Intake",
-    mode: "Continuous",
-    summary: "Start from a wheel-style setup that spins smoothly.",
+    label: "Intake",
+    mode: "cr_mode",
+    rangePercent: 100,
+    neutralUs: 0,
+    reversed: false,
+    pwmLossBehavior: "release",
+    softStart: false,
+    pwmUs: 2000,
   },
   {
     id: "gate",
-    name: "Gate",
-    mode: "Servo",
-    summary: "Open and close with a tighter range and calm neutral.",
+    label: "Gate",
+    mode: "servo_mode",
+    rangePercent: 22,
+    neutralUs: 0,
+    reversed: false,
+    pwmLossBehavior: "neutral",
+    softStart: true,
+    pwmUs: 1700,
   },
   {
     id: "arm",
-    name: "Arm Joint",
-    mode: "Servo",
-    summary: "Bias for controlled center and safer signal loss behavior.",
+    label: "Arm",
+    mode: "servo_mode",
+    rangePercent: 56,
+    neutralUs: 10,
+    reversed: false,
+    pwmLossBehavior: "hold",
+    softStart: true,
+    pwmUs: 1850,
   },
 ];
 
+const MINI_SPEC: ServoSpec = {
+  bodyWidth: 128,
+  bodyHeight: 82,
+  bodyDepth: 42,
+  maxRangeDeg: 355,
+  points: [
+    { voltage: 4.8, torqueKgcm: 13, speedSec60: 0.16, idleMa: 140, stallMa: 2200 },
+    { voltage: 6.0, torqueKgcm: 16, speedSec60: 0.13, idleMa: 170, stallMa: 2600 },
+    { voltage: 7.4, torqueKgcm: 19, speedSec60: 0.11, idleMa: 190, stallMa: 3000 },
+    { voltage: 8.4, torqueKgcm: 21, speedSec60: 0.1, idleMa: 210, stallMa: 3200 },
+  ],
+};
+
+const MICRO_SPEC: ServoSpec = {
+  bodyWidth: 96,
+  bodyHeight: 62,
+  bodyDepth: 34,
+  maxRangeDeg: 360,
+  points: [
+    { voltage: 4.8, torqueKgcm: 4.2, speedSec60: 0.16, idleMa: 100, stallMa: 1000 },
+    { voltage: 6.0, torqueKgcm: 5.2, speedSec60: 0.13, idleMa: 120, stallMa: 1300 },
+    { voltage: 7.4, torqueKgcm: 6.5, speedSec60: 0.11, idleMa: 140, stallMa: 1600 },
+    { voltage: 8.4, torqueKgcm: 7.1, speedSec60: 0.1, idleMa: 160, stallMa: 1800 },
+  ],
+};
+
+const MAX_SPEC: ServoSpec = {
+  bodyWidth: 150,
+  bodyHeight: 92,
+  bodyDepth: 46,
+  maxRangeDeg: 360,
+  points: [
+    { voltage: 4.8, torqueKgcm: 28, speedSec60: 0.14, idleMa: 280, stallMa: 3600 },
+    { voltage: 6.0, torqueKgcm: 34, speedSec60: 0.115, idleMa: 320, stallMa: 4000 },
+    { voltage: 7.2, torqueKgcm: 39, speedSec60: 0.1, idleMa: 360, stallMa: 4300 },
+    { voltage: 8.4, torqueKgcm: 45, speedSec60: 0.085, idleMa: 400, stallMa: 4600 },
+  ],
+};
+
 function clamp(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, value));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function interpolatePoint(points: VoltagePoint[], voltage: number): VoltagePoint {
+  const sorted = [...points].sort((a, b) => a.voltage - b.voltage);
+  if (voltage <= sorted[0].voltage) return sorted[0];
+  if (voltage >= sorted[sorted.length - 1].voltage) return sorted[sorted.length - 1];
+
+  for (let index = 0; index < sorted.length - 1; index++) {
+    const left = sorted[index];
+    const right = sorted[index + 1];
+    if (voltage >= left.voltage && voltage <= right.voltage) {
+      const t = (voltage - left.voltage) / (right.voltage - left.voltage);
+      return {
+        voltage,
+        torqueKgcm: lerp(left.torqueKgcm, right.torqueKgcm, t),
+        speedSec60: lerp(left.speedSec60, right.speedSec60, t),
+        idleMa: lerp(left.idleMa, right.idleMa, t),
+        stallMa: lerp(left.stallMa, right.stallMa, t),
+      };
+    }
+  }
+
+  return sorted[0];
+}
+
+function rpmFromSec60(speedSec60: number): number {
+  if (speedSec60 <= 0) return 0;
+  return 10 / speedSec60;
 }
 
 function escapeHtml(value: unknown): string {
@@ -148,73 +273,212 @@ function escapeHtml(value: unknown): string {
     .replaceAll("'", "&#39;");
 }
 
-function formatSignedUs(value: number | null): string {
-  if (value === null) return "Center unknown";
-  if (value === 0) return "Centered";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value} us`;
-}
-
-function formatRange(value: number | null): string {
-  if (value === null) return "--";
-  return `${value}&deg;`;
-}
-
-function formatLoss(value: string | null): string {
-  if (value === "release") return "Let go";
-  if (value === "hold") return "Hold";
-  if (value === "neutral") return "Go to center";
-  return "Unknown";
-}
-
-function formatInversion(value: string | null): string {
-  if (value === "reversed") return "Reversed";
-  if (value === "normal") return "Normal";
-  return "Unknown";
-}
-
-function modeDisplay(mode: ProbeIdentifyInfo["mode"] | ProbeConfigInfo["mode"] | null): string {
-  if (mode === "servo_mode") return "Servo";
-  if (mode === "cr_mode") return "Continuous Rotation";
-  return "Unknown";
-}
-
 function nowLabel(): string {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function railGeometry(config: ProbeConfigInfo | null): {
-  start: number;
-  width: number;
-  pointer: number;
-} {
-  const rangePercent = clamp(config?.setup?.rangePercent ?? 50, 8, 100);
-  const neutralPercent = clamp(config?.setup?.neutralPercent ?? 50, 0, 100);
-  const start = clamp(neutralPercent - rangePercent / 2, 0, 100);
-  const end = clamp(neutralPercent + rangePercent / 2, 0, 100);
+function modeShort(mode: "servo_mode" | "cr_mode" | "unknown"): string {
+  if (mode === "cr_mode") return "CR";
+  if (mode === "servo_mode") return "SERVO";
+  return "--";
+}
+
+function formatLoss(value: "release" | "hold" | "neutral"): string {
+  if (value === "release") return "Let go";
+  if (value === "hold") return "Hold";
+  return "Center";
+}
+
+function profileById(profileId: string): ProfilePreset {
+  return PROFILE_PRESETS.find((profile) => profile.id === profileId) ?? PROFILE_PRESETS[0];
+}
+
+function baseDraft(profileId = "claw"): DraftSetup {
+  const profile = profileById(profileId);
   return {
-    start,
-    width: Math.max(6, end - start),
-    pointer: neutralPercent,
+    profileId: profile.id,
+    mode: profile.mode,
+    rangePercent: profile.rangePercent,
+    neutralUs: profile.neutralUs,
+    reversed: profile.reversed,
+    pwmLossBehavior: profile.pwmLossBehavior,
+    softStart: profile.softStart,
+    pwmUs: profile.pwmUs,
+    voltage: 6,
+    loadPercent: 15,
   };
 }
 
-function currentMode(
-  state: ProbeState,
-): ProbeIdentifyInfo["mode"] | ProbeConfigInfo["mode"] | null {
-  return state.config?.mode ?? state.identify?.mode ?? null;
+function modeFromConfig(config: ProbeConfigInfo | null): "servo_mode" | "cr_mode" {
+  return config?.mode === "cr_mode" ? "cr_mode" : "servo_mode";
 }
 
-function adapterDescriptor(inventory: ProbeInventory): ProbeDeviceInfo | null {
+function draftFromConfig(config: ProbeConfigInfo | null, current: DraftSetup): DraftSetup {
+  if (!config?.setup) return current;
+  const suggestedProfile = config.mode === "cr_mode" ? "intake" : "claw";
+  return {
+    ...current,
+    profileId: suggestedProfile,
+    mode: modeFromConfig(config),
+    rangePercent: clamp(config.setup.rangePercent ?? current.rangePercent, 10, 100),
+    neutralUs: clamp(config.setup.neutralUs ?? current.neutralUs, -127, 127),
+    reversed: config.setup.inversion === "reversed",
+    pwmLossBehavior:
+      config.setup.pwmLossBehavior === "hold" || config.setup.pwmLossBehavior === "neutral"
+        ? config.setup.pwmLossBehavior
+        : "release",
+    softStart: config.setup.softStart ?? current.softStart,
+  };
+}
+
+function selectProfile(profileId: string, current: DraftSetup): DraftSetup {
+  const profile = profileById(profileId);
+  return {
+    ...current,
+    profileId: profile.id,
+    mode: profile.mode,
+    rangePercent: profile.rangePercent,
+    neutralUs: profile.neutralUs,
+    reversed: profile.reversed,
+    pwmLossBehavior: profile.pwmLossBehavior,
+    softStart: profile.softStart,
+    pwmUs: profile.pwmUs,
+  };
+}
+
+function lookupSpec(
+  modelId: string | null,
+  modelName: string | null,
+  config: ProbeConfigInfo | null,
+): ServoSpec {
+  if ((modelId ?? "").startsWith("SA20") || (modelName ?? "").toLowerCase().includes("micro")) {
+    return MICRO_SPEC;
+  }
+  if ((modelId ?? "").startsWith("SA81") || (modelName ?? "").toLowerCase().includes("max")) {
+    return MAX_SPEC;
+  }
+
+  if (config?.setup?.rangeDegrees) {
+    return {
+      ...MINI_SPEC,
+      maxRangeDeg: Math.max(MINI_SPEC.maxRangeDeg, config.setup.rangeDegrees),
+    };
+  }
+
+  return MINI_SPEC;
+}
+
+function nearlyEqual(a: number, b: number, epsilon = 1): boolean {
+  return Math.abs(a - b) <= epsilon;
+}
+
+function isDirty(config: ProbeConfigInfo | null, draft: DraftSetup): boolean {
+  if (!config?.setup) return false;
   return (
-    inventory.devices.find((device) => device.id === inventory.openedId) ??
-    inventory.devices[0] ??
-    null
+    config.mode !== draft.mode ||
+    !nearlyEqual(config.setup.rangePercent ?? draft.rangePercent, draft.rangePercent) ||
+    !nearlyEqual(config.setup.neutralUs ?? draft.neutralUs, draft.neutralUs) ||
+    (config.setup.inversion === "reversed") !== draft.reversed ||
+    (config.setup.pwmLossBehavior ?? "release") !== draft.pwmLossBehavior ||
+    (config.setup.softStart ?? false) !== draft.softStart
   );
 }
 
 function toPrettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function formatSignedUs(value: number): string {
+  if (value === 0) return "0";
+  return `${value > 0 ? "+" : ""}${value}`;
+}
+
+function help(title: string): string {
+  return `<span class="help" title="${escapeHtml(title)}">?</span>`;
+}
+
+function textForState(value: string | null): string {
+  return value && value.length > 0 ? value : "--";
+}
+
+interface SimValues {
+  spec: ServoSpec;
+  rangeDeg: number;
+  minAngle: number;
+  maxAngle: number;
+  hornAngle: number;
+  spinDirection: -1 | 0 | 1;
+  spinPeriod: number;
+  rpm: number;
+  torqueKgcm: number;
+  powerW: number;
+  efficiencyPercent: number;
+  heatW: number;
+  currentA: number;
+  voltagePoint: VoltagePoint;
+  powerLimit: number;
+}
+
+function deriveSimulation(config: ProbeConfigInfo | null, draft: DraftSetup): SimValues {
+  const spec = lookupSpec(config?.modelId ?? null, config?.modelName ?? null, config);
+  const voltagePoint = interpolatePoint(spec.points, draft.voltage);
+  const noLoadRpm = rpmFromSec60(voltagePoint.speedSec60);
+  const loadRatio = clamp(draft.loadPercent / 100, 0, 1);
+  const powerLimit = clamp((config?.setup?.pwmPowerPercent ?? 85) / 100, 0.2, 1);
+  const rangeDeg = Math.round((spec.maxRangeDeg * draft.rangePercent) / 100);
+
+  let hornAngle = 0;
+  let spinDirection: -1 | 0 | 1 = 0;
+  let rpm = 0;
+
+  const centeredPwm = 1500 + draft.neutralUs;
+
+  if (draft.mode === "servo_mode") {
+    const command = clamp((draft.pwmUs - centeredPwm) / 1000, -1, 1);
+    const travel = (rangeDeg / 2) * command;
+    hornAngle = draft.reversed ? -travel : travel;
+    rpm = noLoadRpm * Math.abs(command) * 0.32 * powerLimit * Math.max(0.18, 1 - loadRatio * 0.72);
+  } else {
+    const drive = clamp((draft.pwmUs - centeredPwm) / 1000, -1, 1);
+    const signedDrive = draft.reversed ? -drive : drive;
+    spinDirection = signedDrive === 0 ? 0 : signedDrive > 0 ? 1 : -1;
+    hornAngle = signedDrive > 0 ? 18 : signedDrive < 0 ? -18 : 0;
+    rpm = noLoadRpm * Math.abs(signedDrive) * powerLimit * Math.max(0, 1 - loadRatio);
+  }
+
+  const torqueKgcm =
+    voltagePoint.torqueKgcm * loadRatio * powerLimit * (draft.mode === "servo_mode" ? 0.82 : 1);
+  const torqueNm = torqueKgcm * 0.0980665;
+  const omega = (rpm * 2 * Math.PI) / 60;
+  const powerW = torqueNm * omega;
+  const currentA =
+    (voltagePoint.idleMa +
+      (voltagePoint.stallMa - voltagePoint.idleMa) *
+        clamp(loadRatio * 0.85 + Math.abs(draft.pwmUs - centeredPwm) / 2000, 0, 1) *
+        powerLimit) /
+    1000;
+  const electricalW = currentA * draft.voltage;
+  const efficiencyPercent = clamp(electricalW > 0 ? (powerW / electricalW) * 100 : 0, 0, 92);
+  const heatW = Math.max(0, electricalW - powerW);
+  const spinPeriod = rpm > 1 ? clamp(60 / rpm, 0.35, 8) : 9;
+
+  return {
+    spec,
+    rangeDeg,
+    minAngle: -rangeDeg / 2,
+    maxAngle: rangeDeg / 2,
+    hornAngle,
+    spinDirection,
+    spinPeriod,
+    rpm,
+    torqueKgcm,
+    powerW,
+    efficiencyPercent,
+    heatW,
+    currentA,
+    voltagePoint,
+    powerLimit,
+  };
 }
 
 export function mountProbeApp(options: MountProbeAppOptions): void {
@@ -223,11 +487,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     inventory: { devices: [], openedId: null },
     identify: null,
     config: null,
+    draft: baseDraft(),
     busyAction: null,
     error: null,
     logs: [],
     diagnosticsOpen: false,
-    selectedProfileId: "claw",
   };
 
   function log(message: string): void {
@@ -243,924 +507,821 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
-  function setProfileSuggestion(): void {
-    const mode = currentMode(state);
-    if (mode === "cr_mode") {
-      state.selectedProfileId = "intake";
-      return;
-    }
-    if (mode === "servo_mode") {
-      state.selectedProfileId = "claw";
-    }
-  }
-
-  const runAction = async <T>(
-    actionName: string,
+  async function runAction<T>(
+    name: string,
     task: () => Promise<T>,
     onSuccess: (result: T) => void,
-  ): Promise<void> => {
+  ): Promise<void> {
     if (state.busyAction) return;
-    state.busyAction = actionName;
+    state.busyAction = name;
     state.error = null;
     render();
     try {
       const result = await task();
       onSuccess(result);
-      log(`${actionName} done`);
+      log(name);
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log(`${actionName} failed`);
+      log(`${name} failed`);
     } finally {
       state.busyAction = null;
       render();
     }
-  };
+  }
 
-  function renderActionButton(
-    actionId: string,
-    spec: ProbeAction<unknown> | undefined,
-    disabled: boolean,
-    tone: "primary" | "neutral" | "quiet",
-    caption: string,
-  ): string {
-    if (!spec) return "";
-    return `
-      <button class="action-button action-${tone}" data-action="${escapeHtml(actionId)}" ${disabled ? "disabled" : ""}>
-        <span class="action-label">${escapeHtml(spec.label)}</span>
-        <span class="action-caption">${escapeHtml(caption)}</span>
-      </button>
-    `;
+  async function doUsb(): Promise<void> {
+    const usbAction = options.requestDevice ?? options.refreshInventory ?? options.reconnectDevice;
+    if (!usbAction) return;
+    await runAction("USB", usbAction.run, (inventory) => {
+      updateInventory(inventory);
+    });
+  }
+
+  async function doLink(): Promise<void> {
+    if (state.inventory.openedId && options.closeDevice) {
+      await runAction("Close", options.closeDevice.run, (inventory) => {
+        updateInventory(inventory);
+      });
+      return;
+    }
+
+    if (!state.inventory.devices.length && options.reconnectDevice) {
+      await runAction("Remembered", options.reconnectDevice.run, (inventory) => {
+        updateInventory(inventory);
+      });
+      return;
+    }
+
+    if (options.openDevice) {
+      await runAction("Link", options.openDevice.run, (inventory) => {
+        updateInventory(inventory);
+      });
+    }
+  }
+
+  async function doSync(): Promise<void> {
+    const readAction = options.readFullConfig;
+    if (!readAction) return;
+    await runAction("Sync", readAction.run, (config) => {
+      state.config = config;
+      state.identify = {
+        present: true,
+        statusHi: "0x01",
+        statusLo: "0x00",
+        modeByte: null,
+        mode: config.mode,
+        rawRx: state.identify?.rawRx ?? "",
+      };
+      state.draft = draftFromConfig(config, state.draft);
+    });
   }
 
   function render(): void {
     const connected = Boolean(state.inventory.openedId);
     const visible = state.inventory.devices.length > 0;
     const servoPresent = state.identify?.present ?? Boolean(state.config);
-    const modelName = state.config?.modelName ?? null;
+    const dirty = isDirty(state.config, state.draft);
+    const sim = deriveSimulation(state.config, state.draft);
     const modelId = state.config?.modelId ?? null;
-    const mode = currentMode(state);
-    const setup = state.config?.setup ?? null;
-    const descriptor = adapterDescriptor(state.inventory);
-    const rail = railGeometry(state.config);
+    const mode = state.config?.mode ?? state.identify?.mode ?? state.draft.mode;
+    const canSync = connected && Boolean(options.readFullConfig) && !state.busyAction;
+    const canLink = (!connected || Boolean(options.closeDevice)) && !state.busyAction;
+    const canUsb =
+      Boolean(options.requestDevice ?? options.refreshInventory ?? options.reconnectDevice) &&
+      !state.busyAction;
 
-    const adapterTone = connected ? "ok" : visible ? "warn" : "idle";
-    const servoTone = servoPresent ? "ok" : connected ? "warn" : "idle";
-    const modeTone = mode && mode !== "unknown" ? "ok" : "idle";
-    const setupTone = setup ? "ok" : connected ? "warn" : "idle";
-
-    const selectedProfile =
-      PROFILE_PREVIEWS.find((profile) => profile.id === state.selectedProfileId) ??
-      PROFILE_PREVIEWS[0];
+    const hornStyle =
+      state.draft.mode === "cr_mode" && sim.spinDirection !== 0
+        ? `transform: rotate(${sim.hornAngle}deg); animation: spin ${sim.spinPeriod}s linear infinite; animation-direction: ${sim.spinDirection > 0 ? "normal" : "reverse"};`
+        : `transform: rotate(${sim.hornAngle}deg);`;
 
     const diagnostics = {
       environment: state.environment,
       inventory: state.inventory,
       identify: state.identify,
-      config: state.config
-        ? {
-            modelId: state.config.modelId,
-            mode: state.config.modeLabel,
-            rawHex: state.config.rawHex,
-            firstChunk: state.config.firstChunk,
-            secondChunk: state.config.secondChunk,
-          }
-        : null,
+      config: state.config,
       logs: state.logs,
+      draft: state.draft,
     };
 
     options.root.innerHTML = `
       <style>
-        :root {
-          color-scheme: light;
-        }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
 
-        * {
-          box-sizing: border-box;
-        }
+        :root { color-scheme: light; }
 
-        body {
-          margin: 0;
-        }
-
-        .probe-shell {
+        .shell {
           min-height: 100vh;
-          padding: 20px 20px 28px;
-          background:
-            linear-gradient(180deg, #fcfcfc 0%, #f4f5f7 100%);
-          color: #171717;
+          padding: 12px;
+          background: #f3f3f1;
+          color: #111111;
           font-family:
             Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
-        .shell-inner {
-          max-width: 1260px;
+        .frame {
+          max-width: 1380px;
           margin: 0 auto;
         }
 
-        .topbar {
+        .topline {
           display: grid;
-          gap: 16px;
-          align-items: end;
-          margin-bottom: 16px;
-        }
-
-        .brand-row {
-          display: flex;
-          gap: 14px;
-          align-items: center;
-        }
-
-        .brand-mark {
-          width: 18px;
-          height: 18px;
-          border-radius: 4px;
-          background: #e40014;
-          box-shadow: 12px 0 0 #171717;
-        }
-
-        .brand-copy {
-          min-width: 0;
-        }
-
-        .eyebrow {
-          margin: 0 0 4px;
-          color: #5f6773;
-          font-size: 12px;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-
-        .app-title {
-          margin: 0;
-          font-size: 32px;
-          line-height: 1.05;
-          font-weight: 700;
-        }
-
-        .app-subtitle {
-          margin: 6px 0 0;
-          color: #4b5563;
-          font-size: 15px;
-          line-height: 1.5;
-          max-width: 780px;
-        }
-
-        .status-ribbon {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: auto 1fr auto;
           gap: 10px;
-        }
-
-        .status-chip {
-          display: grid;
-          gap: 4px;
-          padding: 12px 14px;
-          border: 1px solid #d7dae0;
+          align-items: center;
+          margin-bottom: 12px;
+          padding: 10px 12px;
           border-radius: 8px;
-          background: rgba(255, 255, 255, 0.86);
-          min-height: 74px;
+          background: #121212;
+          color: #f8fafc;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
 
-        .status-chip strong {
-          font-size: 16px;
-          line-height: 1.2;
+        .brand {
+          width: 12px;
+          height: 12px;
+          border-radius: 2px;
+          background: #e40014;
+          box-shadow: 10px 0 0 #f8fafc;
+          margin-right: 10px;
         }
 
-        .status-label {
+        .toolbar {
           display: inline-flex;
           gap: 8px;
           align-items: center;
-          color: #5f6773;
-          font-size: 12px;
-          font-weight: 700;
-          text-transform: uppercase;
         }
 
-        .status-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          background: #bcc3cf;
-        }
-
-        .status-ok .status-dot {
-          background: #00a544;
-        }
-
-        .status-warn .status-dot {
-          background: #f99c00;
-        }
-
-        .action-row {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 10px;
-          margin-bottom: 18px;
-        }
-
-        .action-button {
-          display: grid;
-          gap: 4px;
-          min-height: 74px;
-          padding: 14px 16px;
-          text-align: left;
+        .tool {
+          height: 32px;
+          padding: 0 12px;
           border-radius: 8px;
-          border: 1px solid #cfd4dc;
-          background: #fff;
-          color: #171717;
+          border: 1px solid #333333;
+          background: #191919;
+          color: #f8fafc;
+          font: inherit;
           cursor: pointer;
-          transition:
-            transform 120ms ease,
-            border-color 120ms ease,
-            box-shadow 120ms ease;
         }
 
-        .action-button:hover:not(:disabled) {
-          transform: translateY(-1px);
-          border-color: #aeb4bf;
-          box-shadow: 0 10px 22px rgba(23, 23, 23, 0.08);
+        .tool:hover:not(:disabled),
+        .apply:hover:not(:disabled) {
+          border-color: #6b7280;
         }
 
-        .action-button:disabled {
+        .tool:disabled,
+        .apply:disabled {
           cursor: default;
-          color: #9aa1ac;
-          background: #f3f4f6;
+          opacity: 0.5;
         }
 
-        .action-primary {
-          border-color: #171717;
+        .statebar {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 8px;
         }
 
-        .action-quiet {
-          background: transparent;
+        .state {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          min-width: 0;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: #171717;
+          border: 1px solid #2c2c2c;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
-        .action-label {
-          font-size: 17px;
-          font-weight: 650;
-          line-height: 1.2;
+        .state-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #707070;
+          flex: 0 0 auto;
         }
 
-        .action-caption {
-          color: #5f6773;
-          font-size: 12px;
+        .ok .state-dot { background: #00a544; }
+        .warn .state-dot { background: #f99c00; }
+        .live .state-dot { background: #e40014; }
+
+        .apply {
+          height: 32px;
+          padding: 0 16px;
+          border-radius: 8px;
+          border: 1px solid #6d000c;
+          background: #e40014;
+          color: #ffffff;
+          font: inherit;
+          cursor: pointer;
+        }
+
+        .error {
+          margin-bottom: 12px;
+          padding: 10px 12px;
+          border: 1px solid #f0b5bc;
+          border-radius: 8px;
+          background: #fff2f3;
+          color: #8f1020;
+          font-size: 13px;
           line-height: 1.35;
         }
 
-        .main-grid {
+        .workspace {
           display: grid;
-          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
-          gap: 18px;
+          grid-template-columns: 360px minmax(0, 1fr);
+          gap: 12px;
         }
 
-        .panel {
-          border: 1px solid #d7dae0;
+        .pane {
+          border: 1px solid #d7d7d2;
           border-radius: 8px;
-          background: rgba(255, 255, 255, 0.92);
+          background: #ffffff;
+          overflow: hidden;
         }
 
-        .panel-header {
+        .settings {
+          padding: 14px;
+          display: grid;
+          gap: 14px;
+        }
+
+        .chip-row,
+        .mode-row,
+        .loss-row {
+          display: grid;
+          gap: 8px;
+        }
+
+        .chip-row {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .mode-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .loss-row {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .chip,
+        .mode-button,
+        .loss-button {
+          min-height: 42px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid #d5d8de;
+          background: #f8f8f6;
+          color: #111111;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+
+        .chip[data-selected="true"],
+        .mode-button[data-selected="true"],
+        .loss-button[data-selected="true"] {
+          border-color: #111111;
+          background: #ffffff;
+          box-shadow: inset 0 0 0 1px #111111;
+        }
+
+        .setting {
+          display: grid;
+          gap: 8px;
+        }
+
+        .setting-head {
           display: flex;
           justify-content: space-between;
-          gap: 16px;
-          align-items: end;
-          padding: 18px 18px 0;
+          align-items: center;
+          gap: 10px;
         }
 
-        .panel-title {
-          margin: 0;
-          font-size: 24px;
-          line-height: 1.1;
-          font-weight: 700;
-        }
-
-        .panel-kicker {
-          margin: 0 0 4px;
-          color: #5f6773;
+        .setting-label {
+          display: inline-flex;
+          gap: 6px;
+          align-items: center;
+          color: #4b5563;
           font-size: 12px;
           font-weight: 700;
           text-transform: uppercase;
         }
 
-        .panel-body {
-          padding: 18px;
-        }
-
-        .metric-row {
-          display: flex;
-          gap: 20px;
-          align-items: baseline;
-          flex-wrap: wrap;
-          margin-bottom: 18px;
-        }
-
-        .metric {
-          display: grid;
-          gap: 2px;
-        }
-
-        .metric-label {
-          color: #5f6773;
-          font-size: 12px;
+        .setting-value {
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 13px;
           font-weight: 700;
-          text-transform: uppercase;
         }
 
-        .metric-value {
-          font-size: 28px;
+        .help {
+          display: inline-grid;
+          place-items: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
+          border: 1px solid #c9ced6;
+          color: #69707d;
+          font-size: 11px;
           line-height: 1;
-          font-weight: 700;
+          cursor: help;
+          background: #ffffff;
         }
 
-        .motion-rail {
-          position: relative;
-          height: 110px;
-          margin-bottom: 14px;
+        .switch {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          min-height: 44px;
+          padding: 0 12px;
+          border: 1px solid #d5d8de;
+          border-radius: 8px;
+          background: #f8f8f6;
         }
 
-        .motion-track,
-        .motion-track-center,
-        .motion-track-fill,
-        .motion-track-pointer {
-          position: absolute;
-          top: 50%;
-          transform: translateY(-50%);
-        }
-
-        .motion-track {
-          left: 0;
-          right: 0;
-          height: 16px;
-          border-radius: 999px;
-          background:
-            linear-gradient(90deg, #eceef2 0%, #f6f7f9 100%);
-          border: 1px solid #dce0e6;
-        }
-
-        .motion-track-center {
-          left: 50%;
-          width: 2px;
-          height: 48px;
-          background: #171717;
-        }
-
-        .motion-track-fill {
-          height: 16px;
-          border-radius: 999px;
-          background: linear-gradient(90deg, #fdb7bc 0%, #e40014 100%);
-        }
-
-        .motion-track-pointer {
+        .switch input {
           width: 18px;
           height: 18px;
-          margin-left: -9px;
-          border-radius: 999px;
-          background: #171717;
-          box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.92);
+          accent-color: #111111;
         }
 
-        .motion-legend {
-          display: flex;
-          justify-content: space-between;
+        .slider {
+          width: 100%;
+          margin: 0;
+          accent-color: #e40014;
+        }
+
+        .sim {
+          padding: 14px;
+          display: grid;
           gap: 12px;
-          color: #69707d;
-          font-size: 13px;
         }
 
-        .helper-copy {
-          margin: 16px 0 0;
-          color: #505866;
-          font-size: 14px;
-          line-height: 1.5;
-        }
-
-        .right-stack {
-          display: grid;
-          gap: 18px;
-        }
-
-        .mode-strip,
-        .loss-strip {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 8px;
-          margin-top: 14px;
-        }
-
-        .loss-strip {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          margin-top: 12px;
-        }
-
-        .choice {
-          padding: 14px 12px;
-          border: 1px solid #d6dbe3;
+        .servo-stage {
+          position: relative;
+          min-height: 440px;
           border-radius: 8px;
-          background: #f7f8fa;
+          border: 1px solid #e0e3e8;
+          background:
+            radial-gradient(circle at 50% 44%, #ffffff 0%, #f7f7f4 58%, #efefeb 100%);
+          overflow: hidden;
         }
 
-        .choice strong {
-          display: block;
-          font-size: 16px;
-          line-height: 1.2;
-        }
-
-        .choice span {
-          display: block;
-          margin-top: 4px;
-          color: #5f6773;
-          font-size: 12px;
-          line-height: 1.35;
-        }
-
-        .choice-active {
-          border-color: #171717;
-          background: #fff;
-          box-shadow: inset 0 0 0 1px #171717;
-        }
-
-        .trait-row {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 10px;
-          margin-top: 16px;
-        }
-
-        .trait {
-          padding: 10px 0 0;
-          border-top: 1px solid #e3e6eb;
-        }
-
-        .trait strong {
-          display: block;
-          font-size: 15px;
-          line-height: 1.2;
-        }
-
-        .trait span {
-          display: block;
-          margin-top: 4px;
-          color: #5f6773;
-          font-size: 12px;
-          line-height: 1.4;
-        }
-
-        .status-list {
-          display: grid;
-          gap: 12px;
-        }
-
-        .status-row {
+        .sim-meta {
+          position: absolute;
+          top: 14px;
+          left: 14px;
+          right: 14px;
           display: flex;
           justify-content: space-between;
-          gap: 12px;
-          padding-bottom: 12px;
-          border-bottom: 1px solid #eceef2;
+          gap: 10px;
+          pointer-events: none;
         }
 
-        .status-row:last-child {
-          padding-bottom: 0;
+        .meta-pill {
+          padding: 6px 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.92);
+          border: 1px solid #dde1e6;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .dial {
+          position: absolute;
+          left: 50%;
+          top: 54%;
+          width: 340px;
+          height: 340px;
+          margin-left: -170px;
+          margin-top: -170px;
+          border-radius: 999px;
+          border: 1px solid #dde1e6;
+          background:
+            radial-gradient(circle at center, transparent 0 58px, #ffffff 58px 62px, transparent 62px),
+            radial-gradient(circle at center, transparent 0 118px, #e6e8ed 118px 120px, transparent 120px);
+        }
+
+        .limit,
+        .horn {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform-origin: 0 50%;
+        }
+
+        .limit {
+          width: 116px;
+          height: 4px;
+          margin-left: 0;
+          margin-top: -2px;
+          border-radius: 999px;
+          background: #b7bec9;
+        }
+
+        .horn {
+          width: 124px;
+          height: 6px;
+          margin-top: -3px;
+          border-radius: 999px;
+          background: #e40014;
+          box-shadow: 0 0 0 1px rgba(228, 0, 20, 0.08);
+          transition: transform 240ms ease;
+        }
+
+        .hub {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 24px;
+          height: 24px;
+          margin-left: -12px;
+          margin-top: -12px;
+          border-radius: 999px;
+          background: #111111;
+          box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.94);
+        }
+
+        .servo-body {
+          position: absolute;
+          left: 50%;
+          bottom: 64px;
+          transform: translateX(-50%);
+          border-radius: 8px;
+          background:
+            linear-gradient(180deg, #1b1b1b 0%, #0f0f0f 100%);
+          border: 1px solid #2f2f2f;
+          box-shadow: 0 18px 30px rgba(17, 17, 17, 0.16);
+        }
+
+        .servo-cap {
+          position: absolute;
+          left: 50%;
+          bottom: 64px;
+          transform: translateX(-50%);
+          width: 38px;
+          height: 26px;
+          border-radius: 8px 8px 0 0;
+          background: #191919;
+          border: 1px solid #2b2b2b;
           border-bottom: 0;
         }
 
-        .status-row strong {
-          font-size: 15px;
-          line-height: 1.25;
+        .servo-wire {
+          position: absolute;
+          right: calc(50% - ${Math.round(sim.spec.bodyWidth / 2)}px);
+          bottom: 102px;
+          width: 132px;
+          height: 22px;
+          border-bottom: 3px solid #4b5563;
+          border-right: 3px solid #4b5563;
+          border-radius: 0 0 18px 0;
         }
 
-        .status-row span {
-          color: #5f6773;
-          font-size: 13px;
-          line-height: 1.4;
-          text-align: right;
-        }
-
-        .profiles-panel {
-          margin-top: 18px;
-        }
-
-        .profiles-grid {
+        .sim-bottom {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 10px;
+          grid-template-columns: minmax(0, 1fr) 236px;
+          gap: 12px;
         }
 
-        .profile-tile {
+        .metrics {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .metric {
+          min-height: 74px;
+          padding: 10px;
+          border: 1px solid #d7d7d2;
           border-radius: 8px;
-          border: 1px solid #d6dbe3;
-          background: #fff;
-          padding: 14px;
-          text-align: left;
-          cursor: pointer;
+          background: #ffffff;
+          display: grid;
+          align-content: space-between;
         }
 
-        .profile-tile:hover {
-          border-color: #aeb4bf;
+        .metric-value {
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 20px;
+          font-weight: 700;
+          line-height: 1;
         }
 
-        .profile-tile[data-selected="true"] {
-          border-color: #171717;
-          box-shadow: inset 0 0 0 1px #171717;
-        }
-
-        .profile-mode {
-          display: inline-block;
-          margin-bottom: 10px;
-          padding: 4px 7px;
-          border-radius: 999px;
-          background: #f3f4f6;
-          color: #5f6773;
+        .metric-unit {
+          color: #69707d;
           font-size: 11px;
           font-weight: 700;
           text-transform: uppercase;
         }
 
-        .profile-name {
-          margin: 0;
-          font-size: 17px;
-          line-height: 1.2;
-          font-weight: 700;
+        .metric-top {
+          display: flex;
+          justify-content: flex-end;
         }
 
-        .profile-summary {
-          margin: 8px 0 0;
-          color: #535b68;
-          font-size: 13px;
-          line-height: 1.45;
-        }
-
-        .profiles-note {
-          margin: 14px 0 0;
-          color: #5f6773;
-          font-size: 13px;
-          line-height: 1.45;
-        }
-
-        .error-banner {
-          margin: 0 0 16px;
-          padding: 12px 14px;
-          border: 1px solid #f3b5bc;
-          border-radius: 8px;
-          background: #fff3f4;
-          color: #8a101d;
-          font-size: 14px;
-          line-height: 1.45;
-        }
-
-        details.diagnostics {
-          margin-top: 18px;
-          border: 1px solid #d7dae0;
-          border-radius: 8px;
-          background: rgba(255, 255, 255, 0.9);
-          overflow: hidden;
-        }
-
-        .diagnostics summary {
-          cursor: pointer;
-          padding: 14px 18px;
-          font-weight: 650;
-          list-style: none;
-        }
-
-        .diagnostics summary::-webkit-details-marker {
-          display: none;
-        }
-
-        .diagnostics-grid {
+        .driver {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-          padding: 0 18px 18px;
-        }
-
-        .diag-block {
-          min-height: 160px;
-          border: 1px solid #e1e5eb;
-          border-radius: 8px;
-          background: #f7f8fa;
+          gap: 12px;
           padding: 12px;
+          border: 1px solid #d7d7d2;
+          border-radius: 8px;
+          background: #ffffff;
         }
 
-        .diag-block h3 {
-          margin: 0 0 10px;
-          font-size: 13px;
+        .ticks {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          color: #69707d;
+          font-size: 11px;
+          font-weight: 700;
           text-transform: uppercase;
-          color: #5f6773;
-        }
-
-        .diag-block pre {
-          margin: 0;
-          overflow: auto;
-          white-space: pre-wrap;
-          word-break: break-word;
-          font-size: 12px;
-          line-height: 1.45;
-          color: #1f2937;
           font-family:
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
 
-        @media (max-width: 1080px) {
-          .status-ribbon,
-          .action-row,
-          .profiles-grid,
-          .trait-row {
+        details.debug {
+          margin-top: 12px;
+        }
+
+        details.debug > summary {
+          list-style: none;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        details.debug > summary::-webkit-details-marker { display: none; }
+
+        .debug-panel {
+          margin-top: 8px;
+          padding: 12px;
+          border: 1px solid #d7d7d2;
+          border-radius: 8px;
+          background: #ffffff;
+        }
+
+        .debug-panel pre {
+          margin: 0;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          color: #1f2937;
+          font-size: 12px;
+          line-height: 1.4;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 1180px) {
+          .workspace,
+          .sim-bottom {
+            grid-template-columns: 1fr;
+          }
+
+          .metrics {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 760px) {
+          .shell { padding: 10px; }
+
+          .topline {
+            grid-template-columns: 1fr;
+          }
+
+          .statebar,
+          .chip-row,
+          .mode-row,
+          .loss-row,
+          .metrics {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .main-grid,
-          .diagnostics-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        @media (max-width: 720px) {
-          .probe-shell {
-            padding: 16px 14px 24px;
+          .servo-stage {
+            min-height: 360px;
           }
 
-          .status-ribbon,
-          .action-row,
-          .mode-strip,
-          .loss-strip,
-          .profiles-grid,
-          .trait-row {
-            grid-template-columns: 1fr;
-          }
-
-          .app-title {
-            font-size: 28px;
-          }
-
-          .panel-title {
-            font-size: 21px;
-          }
-
-          .metric-value {
-            font-size: 24px;
+          .dial {
+            width: 260px;
+            height: 260px;
+            margin-left: -130px;
+            margin-top: -130px;
           }
         }
       </style>
-      <div class="probe-shell">
-        <div class="shell-inner">
-          <div class="topbar">
-            <div class="brand-row">
-              <div class="brand-mark" aria-hidden="true"></div>
-              <div class="brand-copy">
-                ${options.eyebrow ? `<p class="eyebrow">${escapeHtml(options.eyebrow)}</p>` : ""}
-                <h1 class="app-title">${escapeHtml(options.title)}</h1>
-                <p class="app-subtitle">See the adapter, identify the servo, then work from mode, center, range, and safe behavior.</p>
+      <div class="shell">
+        <div class="frame">
+          <div class="topline">
+            <div class="toolbar">
+              <span class="brand" aria-hidden="true"></span>
+              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse a remembered browser device.">USB</button>
+              <button class="tool" data-command="link" ${!canLink ? "disabled" : ""} title="Open or release the adapter for this app.">Link</button>
+              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its setup into the sim.">Sync</button>
+            </div>
+            <div class="statebar">
+              <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
+                <span class="state-dot"></span><span>${connected ? "USB OK" : visible ? "USB" : "USB --"}</span>
+              </div>
+              <div class="state ${servoPresent ? "ok" : connected ? "warn" : ""}" title="Servo state">
+                <span class="state-dot"></span><span>${servoPresent ? "SRV OK" : "SRV --"}</span>
+              </div>
+              <div class="state ${modelId ? "ok" : ""}" title="Model id">
+                <span class="state-dot"></span><span>${escapeHtml(textForState(modelId))}</span>
+              </div>
+              <div class="state ${mode !== "unknown" ? "ok" : ""}" title="Mode">
+                <span class="state-dot"></span><span>${escapeHtml(modeShort(mode))}</span>
+              </div>
+              <div class="state ${dirty ? "live" : state.config ? "ok" : ""}" title="Draft vs live">
+                <span class="state-dot"></span><span>${dirty ? "DIRTY" : state.config ? "LIVE" : "--"}</span>
               </div>
             </div>
-            <div class="status-ribbon">
-              <div class="status-chip status-${adapterTone}">
-                <div class="status-label"><span class="status-dot"></span> Adapter</div>
-                <strong>${connected ? "Connected" : visible ? "Found on USB" : "Not detected"}</strong>
-                <span>${escapeHtml(descriptor?.product ?? "Connect the Axon adapter on the host machine.")}</span>
-              </div>
-              <div class="status-chip status-${servoTone}">
-                <div class="status-label"><span class="status-dot"></span> Servo</div>
-                <strong>${servoPresent ? "Servo detected" : connected ? "Not found yet" : "Waiting for adapter"}</strong>
-                <span>${servoPresent ? escapeHtml(modelName ?? "Attached servo") : "Use Find Servo after the adapter is connected."}</span>
-              </div>
-              <div class="status-chip status-${modeTone}">
-                <div class="status-label"><span class="status-dot"></span> Mode</div>
-                <strong>${escapeHtml(modeDisplay(mode))}</strong>
-                <span>${mode === "cr_mode" ? "Use this when you want wheel behavior." : mode === "servo_mode" ? "Use this when you want position control." : "Show current setup to reveal the active mode."}</span>
-              </div>
-              <div class="status-chip status-${setupTone}">
-                <div class="status-label"><span class="status-dot"></span> Setup</div>
-                <strong>${setup ? "Current setup loaded" : "No setup loaded yet"}</strong>
-                <span>${setup ? `${escapeHtml(selectedProfile.name)} is the closest starting point.` : "Load the current setup before changing range or center."}</span>
-              </div>
-            </div>
+            <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Write the draft back to the servo. Not wired in this probe yet.">Apply</button>
           </div>
 
-          ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
+          ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
 
-          <div class="action-row">
-            ${renderActionButton(
-              "requestDevice",
-              options.requestDevice ?? options.refreshInventory,
-              Boolean(state.busyAction),
-              "primary",
-              "See the Axon adapter on USB.",
-            )}
-            ${renderActionButton(
-              "reconnectDevice",
-              options.reconnectDevice,
-              Boolean(state.busyAction),
-              "quiet",
-              "Reuse a browser-approved adapter.",
-            )}
-            ${renderActionButton(
-              "openDevice",
-              options.openDevice,
-              Boolean(state.busyAction) || !visible || connected,
-              "neutral",
-              "Claim the adapter for this app.",
-            )}
-            ${renderActionButton(
-              "identifyServo",
-              options.identifyServo,
-              Boolean(state.busyAction) || !connected,
-              "neutral",
-              "Check what servo is attached right now.",
-            )}
-            ${renderActionButton(
-              "readFullConfig",
-              options.readFullConfig,
-              Boolean(state.busyAction) || !connected,
-              "primary",
-              "Show mode, center, range, and safety settings.",
-            )}
-            ${renderActionButton(
-              "closeDevice",
-              options.closeDevice,
-              Boolean(state.busyAction) || !connected,
-              "quiet",
-              "Release the adapter for other tools.",
-            )}
-          </div>
-
-          <div class="main-grid">
-            <section class="panel">
-              <div class="panel-header">
-                <div>
-                  <p class="panel-kicker">Motion</p>
-                  <h2 class="panel-title">${escapeHtml(modelName ?? "Current servo setup")}</h2>
-                </div>
-                <div class="metric-row">
-                  <div class="metric">
-                    <span class="metric-label">Range</span>
-                    <span class="metric-value">${formatRange(setup?.rangeDegrees ?? null)}</span>
-                  </div>
-                  <div class="metric">
-                    <span class="metric-label">Center</span>
-                    <span class="metric-value">${escapeHtml(formatSignedUs(setup?.neutralUs ?? null))}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="panel-body">
-                <div class="motion-rail" aria-hidden="true">
-                  <div class="motion-track"></div>
-                  <div class="motion-track-fill" style="left:${rail.start}%; width:${rail.width}%;"></div>
-                  <div class="motion-track-center"></div>
-                  <div class="motion-track-pointer" style="left:${rail.pointer}%;"></div>
-                </div>
-                <div class="motion-legend">
-                  <span>Smaller sweep</span>
-                  <span>Neutral stays centered unless trimmed</span>
-                  <span>Wider sweep</span>
-                </div>
-                <p class="helper-copy">
-                  ${
-                    setup
-                      ? `This visual shows how much of the servo's travel is active and whether the center is trimmed away from neutral.`
-                      : `Connect the adapter and show the current setup to see the sweep and center visually instead of reading raw config bytes.`
-                  }
-                </p>
-              </div>
-            </section>
-
-            <div class="right-stack">
-              <section class="panel">
-                <div class="panel-header">
-                  <div>
-                    <p class="panel-kicker">Mode and safety</p>
-                    <h2 class="panel-title">How this servo behaves</h2>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div class="mode-strip">
-                    <div class="choice ${mode === "servo_mode" ? "choice-active" : ""}">
-                      <strong>Servo</strong>
-                      <span>Position the horn to a target angle.</span>
-                    </div>
-                    <div class="choice ${mode === "cr_mode" ? "choice-active" : ""}">
-                      <strong>Continuous Rotation</strong>
-                      <span>Spin like a wheel instead of holding an angle.</span>
-                    </div>
-                  </div>
-
-                  <div class="loss-strip">
-                    <div class="choice ${setup?.pwmLossBehavior === "release" ? "choice-active" : ""}">
-                      <strong>Let go</strong>
-                      <span>Stop driving when signal disappears.</span>
-                    </div>
-                    <div class="choice ${setup?.pwmLossBehavior === "hold" ? "choice-active" : ""}">
-                      <strong>Hold</strong>
-                      <span>Keep trying to stay where it was.</span>
-                    </div>
-                    <div class="choice ${setup?.pwmLossBehavior === "neutral" ? "choice-active" : ""}">
-                      <strong>Go to center</strong>
-                      <span>Return to the saved neutral point.</span>
-                    </div>
-                  </div>
-
-                  <div class="trait-row">
-                    <div class="trait">
-                      <strong>${escapeHtml(formatInversion(setup?.inversion ?? null))}</strong>
-                      <span>Direction</span>
-                    </div>
-                    <div class="trait">
-                      <strong>${setup?.softStart == null ? "Unknown" : setup.softStart ? "Enabled" : "Off"}</strong>
-                      <span>Soft start</span>
-                    </div>
-                    <div class="trait">
-                      <strong>${escapeHtml(setup?.sensitivityLabel ?? "Unknown")}</strong>
-                      <span>Feel</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="panel">
-                <div class="panel-header">
-                  <div>
-                    <p class="panel-kicker">Connection</p>
-                    <h2 class="panel-title">What is attached right now</h2>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div class="status-list">
-                    <div class="status-row">
-                      <strong>Adapter</strong>
-                      <span>${escapeHtml(descriptor?.product ?? "No adapter yet")}</span>
-                    </div>
-                    <div class="status-row">
-                      <strong>USB path</strong>
-                      <span>${escapeHtml(descriptor?.id ?? "Waiting for detection")}</span>
-                    </div>
-                    <div class="status-row">
-                      <strong>Servo</strong>
-                      <span>${servoPresent ? escapeHtml(modelName ?? "Detected") : "Not detected"}</span>
-                    </div>
-                    <div class="status-row">
-                      <strong>Model ID</strong>
-                      <span>${escapeHtml(modelId ?? "--")}</span>
-                    </div>
-                    <div class="status-row">
-                      <strong>Signal loss</strong>
-                      <span>${escapeHtml(formatLoss(setup?.pwmLossBehavior ?? null))}</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
-
-          <section class="panel profiles-panel">
-            <div class="panel-header">
-              <div>
-                <p class="panel-kicker">Starting points</p>
-                <h2 class="panel-title">FTC job-based profiles</h2>
-              </div>
-            </div>
-            <div class="panel-body">
-              <div class="profiles-grid">
-                ${PROFILE_PREVIEWS.map(
+          <div class="workspace">
+            <section class="pane settings">
+              <div class="chip-row">
+                ${PROFILE_PRESETS.map(
                   (profile) => `
-                    <button
-                      class="profile-tile"
-                      data-profile-id="${escapeHtml(profile.id)}"
-                      data-selected="${profile.id === state.selectedProfileId}"
-                    >
-                      <span class="profile-mode">${escapeHtml(profile.mode)}</span>
-                      <p class="profile-name">${escapeHtml(profile.name)}</p>
-                      <p class="profile-summary">${escapeHtml(profile.summary)}</p>
+                    <button class="chip" data-profile-id="${escapeHtml(profile.id)}" data-selected="${profile.id === state.draft.profileId}" title="Profile">
+                      ${escapeHtml(profile.label)}
                     </button>
                   `,
                 ).join("")}
               </div>
-              <p class="profiles-note">
-                Start from the job the team actually wants to do. The selected profile is a planning cue for the next pass, not a firmware write yet.
-              </p>
-            </div>
-          </section>
 
-          <details class="diagnostics" ${state.diagnosticsOpen ? "open" : ""}>
-            <summary>Diagnostics and raw replies</summary>
-            <div class="diagnostics-grid">
-              <section class="diag-block">
-                <h3>Runtime</h3>
-                <pre>${escapeHtml(toPrettyJson(diagnostics.environment ?? {}))}</pre>
-              </section>
-              <section class="diag-block">
-                <h3>USB inventory</h3>
-                <pre>${escapeHtml(toPrettyJson(diagnostics.inventory))}</pre>
-              </section>
-              <section class="diag-block">
-                <h3>Servo replies</h3>
-                <pre>${escapeHtml(toPrettyJson(diagnostics.identify ?? diagnostics.config ?? {}))}</pre>
-              </section>
-              <section class="diag-block">
-                <h3>Session log</h3>
-                <pre>${escapeHtml(
-                  state.logs.map((entry) => `[${entry.timestamp}] ${entry.message}`).join("\n") ||
-                    "No activity yet.",
-                )}</pre>
-              </section>
+              <div class="mode-row">
+                <button class="mode-button" data-mode="servo_mode" data-selected="${state.draft.mode === "servo_mode"}" title="Position control mode">Servo</button>
+                <button class="mode-button" data-mode="cr_mode" data-selected="${state.draft.mode === "cr_mode"}" title="Continuous rotation mode">CR</button>
+              </div>
+
+              <div class="setting">
+                <div class="setting-head">
+                  <span class="setting-label">Range ${help("How much of the servo travel is active.")}</span>
+                  <span class="setting-value">${sim.rangeDeg}&deg;</span>
+                </div>
+                <input class="slider" data-slider="range" type="range" min="10" max="100" step="1" value="${state.draft.rangePercent}" />
+              </div>
+
+              <div class="setting">
+                <div class="setting-head">
+                  <span class="setting-label">Center ${help("Trim the PWM center point around 1500 us.")}</span>
+                  <span class="setting-value">${escapeHtml(formatSignedUs(state.draft.neutralUs))} us</span>
+                </div>
+                <input class="slider" data-slider="neutral" type="range" min="-127" max="127" step="1" value="${state.draft.neutralUs}" />
+              </div>
+
+              <div class="switch" title="Reverse direction">
+                <span class="setting-label">Dir ${help("Reverse the simulated direction.")}</span>
+                <input data-toggle="reversed" type="checkbox" ${state.draft.reversed ? "checked" : ""} />
+              </div>
+
+              <div class="switch" title="Soft start">
+                <span class="setting-label">Ramp ${help("Ease into motion instead of snapping immediately.")}</span>
+                <input data-toggle="softStart" type="checkbox" ${state.draft.softStart ? "checked" : ""} />
+              </div>
+
+              <div class="loss-row">
+                ${(["release", "hold", "neutral"] as const)
+                  .map(
+                    (modeValue) => `
+                      <button
+                        class="loss-button"
+                        data-loss="${modeValue}"
+                        data-selected="${state.draft.pwmLossBehavior === modeValue}"
+                        title="PWM loss behavior"
+                      >
+                        ${escapeHtml(formatLoss(modeValue))}
+                      </button>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </section>
+
+            <section class="pane sim">
+              <div class="servo-stage">
+                <div class="sim-meta">
+                  <span class="meta-pill" title="Attached model">${escapeHtml(textForState(state.config?.modelName ?? null))}</span>
+                  <span class="meta-pill" title="Power limit from current config">${Math.round(sim.powerLimit * 100)}%</span>
+                </div>
+
+                <div class="dial">
+                  <div class="limit" style="transform: rotate(${sim.minAngle}deg);"></div>
+                  <div class="limit" style="transform: rotate(${sim.maxAngle}deg);"></div>
+                  <div class="horn" style="${hornStyle}"></div>
+                  <div class="hub"></div>
+                </div>
+
+                <div
+                  class="servo-body"
+                  style="width:${sim.spec.bodyWidth}px; height:${sim.spec.bodyHeight}px;"
+                  title="${escapeHtml(state.config?.modelName ?? "Servo proxy")}"
+                ></div>
+                <div
+                  class="servo-cap"
+                  style="bottom:${64 + sim.spec.bodyHeight - 8}px;"
+                ></div>
+                <div class="servo-wire" aria-hidden="true"></div>
+              </div>
+
+              <div class="sim-bottom">
+                <div>
+                  <div class="setting">
+                    <div class="setting-head">
+                      <span class="setting-label">PWM ${help("Drive signal from 500 us to 2500 us with center at 1500 us.")}</span>
+                      <span class="setting-value">${state.draft.pwmUs} us</span>
+                    </div>
+                    <input class="slider" data-slider="pwm" type="range" min="500" max="2500" step="10" value="${state.draft.pwmUs}" />
+                    <div class="ticks"><span>500</span><span>1500</span><span>2500</span></div>
+                  </div>
+
+                  <div class="metrics">
+                    <div class="metric" title="Output speed">
+                      <div class="metric-top">${help("No-load and loaded speed estimate at the chosen voltage.")}</div>
+                      <div class="metric-value">${Math.round(sim.rpm)}</div>
+                      <div class="metric-unit">rpm</div>
+                    </div>
+                    <div class="metric" title="Torque">
+                      <div class="metric-top">${help("Load torque estimate.")}</div>
+                      <div class="metric-value">${sim.torqueKgcm.toFixed(1)}</div>
+                      <div class="metric-unit">kg.cm</div>
+                    </div>
+                    <div class="metric" title="Electrical power">
+                      <div class="metric-top">${help("Voltage times current.")}</div>
+                      <div class="metric-value">${sim.powerW.toFixed(1)}</div>
+                      <div class="metric-unit">W mech</div>
+                    </div>
+                    <div class="metric" title="Heat">
+                      <div class="metric-top">${help("Estimated electrical loss not turned into motion.")}</div>
+                      <div class="metric-value">${sim.heatW.toFixed(1)}</div>
+                      <div class="metric-unit">W heat</div>
+                    </div>
+                    <div class="metric" title="Efficiency">
+                      <div class="metric-top">${help("Mechanical power divided by electrical power.")}</div>
+                      <div class="metric-value">${Math.round(sim.efficiencyPercent)}</div>
+                      <div class="metric-unit">%</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="driver">
+                  <div class="setting">
+                    <div class="setting-head">
+                      <span class="setting-label">V ${help("Operating voltage.")}</span>
+                      <span class="setting-value">${state.draft.voltage.toFixed(1)} V</span>
+                    </div>
+                    <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" />
+                  </div>
+
+                  <div class="setting">
+                    <div class="setting-head">
+                      <span class="setting-label">Load ${help("Mechanical load as a percent of stall torque.")}</span>
+                      <span class="setting-value">${state.draft.loadPercent}%</span>
+                    </div>
+                    <input class="slider" data-slider="load" type="range" min="0" max="100" step="1" value="${state.draft.loadPercent}" />
+                  </div>
+
+                  <div class="metrics">
+                    <div class="metric" title="Current">
+                      <div class="metric-top">${help("Current draw estimate.")}</div>
+                      <div class="metric-value">${sim.currentA.toFixed(2)}</div>
+                      <div class="metric-unit">A</div>
+                    </div>
+                    <div class="metric" title="Stall torque at current voltage">
+                      <div class="metric-top">${help("Interpolated from the model spec.")}</div>
+                      <div class="metric-value">${sim.voltagePoint.torqueKgcm.toFixed(0)}</div>
+                      <div class="metric-unit">stall</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <details class="debug" ${state.diagnosticsOpen ? "open" : ""}>
+            <summary>${help("Diagnostics and raw replies")}</summary>
+            <div class="debug-panel">
+              <pre>${escapeHtml(toPrettyJson(diagnostics))}</pre>
             </div>
           </details>
         </div>
@@ -1169,80 +1330,93 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
     options.root.querySelectorAll<HTMLButtonElement>("[data-profile-id]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.selectedProfileId = button.dataset.profileId ?? state.selectedProfileId;
+        state.draft = selectProfile(button.dataset.profileId ?? "claw", state.draft);
         render();
       });
     });
 
-    const details = options.root.querySelector<HTMLDetailsElement>("details.diagnostics");
+    options.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.draft.mode = button.dataset.mode === "cr_mode" ? "cr_mode" : "servo_mode";
+        if (state.draft.mode === "cr_mode" && state.draft.profileId === "claw") {
+          state.draft.profileId = "intake";
+        }
+        render();
+      });
+    });
+
+    options.root.querySelectorAll<HTMLButtonElement>("[data-loss]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const next =
+          button.dataset.loss === "hold" || button.dataset.loss === "neutral"
+            ? button.dataset.loss
+            : "release";
+        state.draft.pwmLossBehavior = next;
+        render();
+      });
+    });
+
+    options.root.querySelectorAll<HTMLInputElement>("[data-slider]").forEach((input) => {
+      input.addEventListener("input", () => {
+        switch (input.dataset.slider) {
+          case "range":
+            state.draft.rangePercent = clamp(Number(input.value), 10, 100);
+            break;
+          case "neutral":
+            state.draft.neutralUs = clamp(Number(input.value), -127, 127);
+            break;
+          case "pwm":
+            state.draft.pwmUs = clamp(Number(input.value), 500, 2500);
+            break;
+          case "voltage":
+            state.draft.voltage = clamp(Number(input.value), 4.8, 8.4);
+            break;
+          case "load":
+            state.draft.loadPercent = clamp(Number(input.value), 0, 100);
+            break;
+          default:
+            break;
+        }
+        render();
+      });
+    });
+
+    options.root.querySelectorAll<HTMLInputElement>("[data-toggle]").forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.dataset.toggle === "reversed") {
+          state.draft.reversed = input.checked;
+        }
+        if (input.dataset.toggle === "softStart") {
+          state.draft.softStart = input.checked;
+        }
+        render();
+      });
+    });
+
+    const details = options.root.querySelector<HTMLDetailsElement>("details.debug");
     if (details) {
       details.addEventListener("toggle", () => {
         state.diagnosticsOpen = details.open;
       });
     }
 
-    const requestOrRefresh = options.requestDevice ?? options.refreshInventory;
-    const reconnectAction = options.reconnectDevice;
-    const openAction = options.openDevice;
-    const closeAction = options.closeDevice;
-    const identifyAction = options.identifyServo;
-    const readAction = options.readFullConfig;
-
-    const actionMap: Record<string, (() => Promise<void>) | undefined> = {
-      requestDevice: requestOrRefresh
-        ? () =>
-            runAction(requestOrRefresh.label, requestOrRefresh.run, (result) => {
-              updateInventory(result);
-            })
-        : undefined,
-      reconnectDevice: reconnectAction
-        ? () =>
-            runAction(reconnectAction.label, reconnectAction.run, (result) => {
-              updateInventory(result);
-            })
-        : undefined,
-      openDevice: openAction
-        ? () =>
-            runAction(openAction.label, openAction.run, (result) => {
-              updateInventory(result);
-            })
-        : undefined,
-      closeDevice: closeAction
-        ? () =>
-            runAction(closeAction.label, closeAction.run, (result) => {
-              updateInventory(result);
-            })
-        : undefined,
-      identifyServo: identifyAction
-        ? () =>
-            runAction(identifyAction.label, identifyAction.run, (result) => {
-              state.identify = result;
-              if (!result.present) {
-                state.config = null;
-              }
-            })
-        : undefined,
-      readFullConfig: readAction
-        ? () =>
-            runAction(readAction.label, readAction.run, (result) => {
-              state.config = result;
-              setProfileSuggestion();
-            })
-        : undefined,
-    };
-
-    options.root.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
-      const actionId = button.dataset.action ?? "";
-      const handler = actionMap[actionId];
-      if (!handler || button.disabled) return;
+    options.root.querySelectorAll<HTMLButtonElement>("[data-command]").forEach((button) => {
       button.addEventListener("click", () => {
-        void handler();
+        const command = button.dataset.command;
+        if (command === "usb") void doUsb();
+        if (command === "link") void doLink();
+        if (command === "sync") void doSync();
+        if (command === "apply") {
+          state.error = "Apply is not wired in this probe yet.";
+          log("Apply pending");
+          render();
+        }
       });
     });
   }
 
   async function bootstrap(): Promise<void> {
-    log("Loading environment");
+    log("Boot");
     render();
     try {
       const [environment, inventory] = await Promise.all([
@@ -1254,7 +1428,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       log("Ready");
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log("Startup failed");
+      log("Boot failed");
     }
     render();
   }
