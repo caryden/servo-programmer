@@ -133,6 +133,8 @@ interface ProbeState {
   sweepPhase: number;
 }
 
+type EmptyStateKind = "adapter" | "servo" | null;
+
 interface VoltagePoint {
   voltage: number;
   torqueKgcm: number;
@@ -314,12 +316,6 @@ function modeLabel(mode: ServoMode): string {
   return mode === "cr_mode" ? "CR" : "Servo";
 }
 
-function modeLong(mode: "servo_mode" | "cr_mode" | "unknown"): string {
-  if (mode === "cr_mode") return "Continuous Rotation";
-  if (mode === "servo_mode") return "Servo";
-  return "--";
-}
-
 function lossLabel(loss: LossBehavior): string {
   if (loss === "release") return "Release";
   if (loss === "hold") return "Hold";
@@ -435,10 +431,6 @@ function isDirty(config: ProbeConfigInfo | null, draft: DraftSetup): boolean {
 
 function toPrettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
-}
-
-function textForState(value: string | null): string {
-  return value && value.length > 0 ? value : "--";
 }
 
 function help(title: string): string {
@@ -702,14 +694,14 @@ function powerChart(
 
 function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup): string {
   const width = 430;
-  const height = 330;
-  const bodyX = 163;
-  const bodyY = 82;
+  const height = 390;
+  const bodyX = 168;
+  const bodyY = 118;
   const axisX = bodyX + spec.bodyWidth / 2;
   const axisY = bodyY + spec.axisInsetY;
-  const armLength = Math.round(spec.bodyWidth * 0.84);
-  const sweepRadius = armLength + 16;
-  const arrowRadius = sweepRadius + 42;
+  const armLength = Math.round(spec.bodyWidth * 0.78);
+  const sweepRadius = armLength + 14;
+  const arrowRadius = sweepRadius + 34;
   const arcStartDeg = -74;
   const arcEndDeg = 74;
   const pointAt = (degrees: number, radius: number): { x: number; y: number } => ({
@@ -740,7 +732,7 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup):
       <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
       <circle cx="${axisX}" cy="${axisY}" r="17" fill="#ffffff" stroke="#111111" stroke-width="2" />
       <circle cx="${axisX}" cy="${axisY}" r="5" fill="${draft.direction === "cw" ? "#25a244" : "#ff3a38"}" />
-      <text x="${axisX}" y="${axisY + 42}" text-anchor="middle" fill="#7eb4f5" font-size="20" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
+      <text x="${axisX}" y="${axisY + 36}" text-anchor="middle" fill="#7eb4f5" font-size="18" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
     </svg>
   `;
 }
@@ -775,6 +767,22 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
+  function applyConfig(config: ProbeConfigInfo): void {
+    state.config = config;
+    state.identify = {
+      present: true,
+      statusHi: "0x01",
+      statusLo: "0x00",
+      modeByte: null,
+      mode: config.mode,
+      rawRx: state.identify?.rawRx ?? "",
+    };
+    state.draft = draftFromConfig(config, state.draft);
+    state.loadPanelOpen = false;
+    state.sweepPhase = 0;
+    updateSweepTimer();
+  }
+
   function updateSweepTimer(): void {
     const shouldRun = state.draft.mode === "servo_mode" && state.draft.sweepEnabled;
     if (shouldRun && !sweepTimer) {
@@ -789,75 +797,92 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
-  async function runAction<T>(
-    actionName: string,
-    task: () => Promise<T>,
-    onSuccess: (result: T) => void,
-  ): Promise<void> {
+  async function doSync(): Promise<void> {
     if (state.busyAction) return;
-    state.busyAction = actionName;
+    state.busyAction = "Sync";
     state.error = null;
     render();
     try {
-      const result = await task();
-      onSuccess(result);
-      log(actionName);
+      if (options.identifyServo) {
+        const identifyReply = await options.identifyServo.run();
+        state.identify = identifyReply;
+        if (!identifyReply.present) {
+          state.config = null;
+          log("Servo not detected");
+          return;
+        }
+      }
+
+      if (!options.readFullConfig) {
+        log("Sync");
+        return;
+      }
+
+      const config = await options.readFullConfig.run();
+      applyConfig(config);
+      log("Sync");
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log(`${actionName} failed`);
+      log("Sync failed");
     } finally {
       state.busyAction = null;
       render();
     }
   }
 
-  async function doUsb(): Promise<void> {
-    const usbAction = options.requestDevice ?? options.refreshInventory ?? options.reconnectDevice;
-    if (!usbAction) return;
-    await runAction("USB", usbAction.run, (inventory) => {
-      updateInventory(inventory);
-    });
-  }
+  async function doConnectAndSync(): Promise<void> {
+    if (state.busyAction) return;
+    state.busyAction = "Connect";
+    state.error = null;
+    render();
+    try {
+      if (!state.inventory.openedId) {
+        if (!state.inventory.devices.length && options.reconnectDevice) {
+          updateInventory(await options.reconnectDevice.run());
+        }
+        if (!state.inventory.devices.length && options.requestDevice) {
+          updateInventory(await options.requestDevice.run());
+        }
+        if (!state.inventory.devices.length && options.refreshInventory) {
+          updateInventory(await options.refreshInventory.run());
+        }
+        if (!state.inventory.devices.length) {
+          throw new Error(
+            "Adapter not detected. Please ensure it is plugged in, then unplug and replug it.",
+          );
+        }
+        if (options.openDevice) {
+          updateInventory(await options.openDevice.run());
+        }
+      }
 
-  async function doLink(): Promise<void> {
-    if (state.inventory.openedId && options.closeDevice) {
-      await runAction("Close", options.closeDevice.run, (inventory) => {
-        updateInventory(inventory);
-      });
-      return;
+      if (!state.inventory.openedId) {
+        throw new Error("Adapter not connected. Please unplug and replug it, then try again.");
+      }
+
+      if (options.identifyServo) {
+        const identifyReply = await options.identifyServo.run();
+        state.identify = identifyReply;
+        if (!identifyReply.present) {
+          state.config = null;
+          log("Servo not detected");
+          return;
+        }
+      }
+
+      if (options.readFullConfig) {
+        const config = await options.readFullConfig.run();
+        applyConfig(config);
+      }
+
+      log("Connected");
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      log("Connect failed");
+    } finally {
+      state.busyAction = null;
+      render();
     }
-
-    if (!state.inventory.devices.length && options.reconnectDevice) {
-      await runAction("Remembered", options.reconnectDevice.run, (inventory) => {
-        updateInventory(inventory);
-      });
-      return;
-    }
-
-    if (options.openDevice) {
-      await runAction("Link", options.openDevice.run, (inventory) => {
-        updateInventory(inventory);
-      });
-    }
-  }
-
-  async function doSync(): Promise<void> {
-    if (!options.readFullConfig) return;
-    await runAction("Sync", options.readFullConfig.run, (config) => {
-      state.config = config;
-      state.identify = {
-        present: true,
-        statusHi: "0x01",
-        statusLo: "0x00",
-        modeByte: null,
-        mode: config.mode,
-        rawRx: state.identify?.rawRx ?? "",
-      };
-      state.draft = draftFromConfig(config, state.draft);
-      state.loadPanelOpen = false;
-      state.sweepPhase = 0;
-      updateSweepTimer();
-    });
   }
 
   function triggerSave(): void {
@@ -941,13 +966,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const visible = state.inventory.devices.length > 0;
     const servoPresent = state.identify?.present ?? Boolean(state.config);
     const dirty = isDirty(state.config, state.draft);
-    const modelId = state.config?.modelId ?? null;
-    const mode = state.config?.mode ?? state.identify?.mode ?? state.draft.mode;
-    const canSync = connected && Boolean(options.readFullConfig) && !state.busyAction;
-    const canLink = (!connected || Boolean(options.closeDevice)) && !state.busyAction;
-    const canUsb =
-      Boolean(options.requestDevice ?? options.refreshInventory ?? options.reconnectDevice) &&
-      !state.busyAction;
+    const servoLabel =
+      state.config?.modelName ??
+      (servoPresent ? (state.config?.modelId ?? "Detected") : "Not Found");
+    const canDiscard = dirty && Boolean(state.config) && !state.busyAction;
+    const emptyState: EmptyStateKind = !connected ? "adapter" : !servoPresent ? "servo" : null;
 
     const operating = buildOperatingPoint(state.config, state.draft, state.sweepPhase);
     const voltageDetents = Array.from(
@@ -1029,7 +1052,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .topline {
           display: grid;
-          grid-template-columns: auto 1fr auto;
+          grid-template-columns: 1fr auto;
           gap: 10px;
           align-items: center;
           margin-bottom: 12px;
@@ -1084,8 +1107,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .statebar {
           display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 220px));
           gap: 8px;
+        }
+
+        .actions {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
         }
 
         .state {
@@ -1142,7 +1171,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .workspace {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
           gap: 12px;
         }
 
@@ -1312,6 +1341,51 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           padding: 14px;
           display: grid;
           gap: 12px;
+        }
+
+        .empty-pane {
+          min-height: 420px;
+          display: grid;
+          place-items: center;
+          padding: 24px;
+        }
+
+        .empty-content {
+          max-width: 520px;
+          text-align: center;
+          display: grid;
+          gap: 12px;
+        }
+
+        .empty-title {
+          margin: 0;
+          font-size: 28px;
+          line-height: 1.1;
+        }
+
+        .empty-copy {
+          margin: 0;
+          color: #5b6674;
+          font-size: 15px;
+          line-height: 1.5;
+        }
+
+        .empty-action {
+          justify-self: center;
+          min-height: 40px;
+          padding: 0 18px;
+          border-radius: 999px;
+          border: 1px solid #111111;
+          background: #ffffff;
+          color: #111111;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .empty-action:disabled {
+          opacity: 0.5;
+          cursor: default;
         }
 
         .sim-grid {
@@ -1494,41 +1568,48 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       <div class="shell">
         <div class="frame">
           <div class="topline">
-            <div class="toolbar">
-              <span class="brand" aria-hidden="true"></span>
-              <button class="tool" data-command="usb" ${!canUsb ? "disabled" : ""} title="Find the adapter on USB or reuse an already approved browser device.">Find Adapter</button>
-              <button class="tool" data-command="link" ${!canLink ? "disabled" : ""} title="Open or release the adapter for this app.">${connected ? "Disconnect" : "Connect"}</button>
-              <button class="tool" data-command="sync" ${!canSync ? "disabled" : ""} title="Read the attached servo and copy its live setup into the sim.">Use Live Setup</button>
-            </div>
             <div class="statebar">
               <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
                 <span class="state-label"><span class="state-dot"></span>Adapter</span>
-                <span class="state-value">${connected ? "Connected" : visible ? "Detected" : "Not Found"}</span>
+                <span class="state-value">${connected ? "Connected" : "Not Connected"}</span>
               </div>
               <div class="state ${servoPresent ? "ok" : connected ? "warn" : ""}" title="Servo state">
                 <span class="state-label"><span class="state-dot"></span>Servo</span>
-                <span class="state-value">${servoPresent ? "Detected" : connected ? "Not Detected" : "Waiting"}</span>
-              </div>
-              <div class="state ${modelId ? "ok" : ""}" title="Model id">
-                <span class="state-label"><span class="state-dot"></span>Model</span>
-                <span class="state-value">${escapeHtml(textForState(modelId))}</span>
-              </div>
-              <div class="state ${mode !== "unknown" ? "ok" : ""}" title="Mode">
-                <span class="state-label"><span class="state-dot"></span>Mode</span>
-                <span class="state-value">${escapeHtml(modeLong(mode))}</span>
-              </div>
-              <div class="state ${dirty ? "live" : state.config ? "ok" : ""}" title="Draft versus live servo">
-                <span class="state-label"><span class="state-dot"></span>Draft</span>
-                <span class="state-value">${dirty ? "Changes Pending" : state.config ? "Matches Live" : "--"}</span>
+                <span class="state-value">${escapeHtml(servoLabel)}</span>
               </div>
             </div>
-            <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Make the attached servo match the sim. Not wired yet.">Apply</button>
+            <div class="actions">
+              <button class="tool" data-command="discard" ${!canDiscard ? "disabled" : ""} title="Re-read the servo and discard unsaved changes.">Discard</button>
+              <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Make the attached servo match the sim. Not wired yet.">Apply</button>
+            </div>
           </div>
 
           ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
 
-          <div class="workspace">
-            <section class="pane config-pane" data-dropzone="config">
+          ${
+            emptyState === "adapter"
+              ? `
+                <section class="pane empty-pane">
+                  <div class="empty-content">
+                    <h2 class="empty-title">Adapter not connected</h2>
+                    <p class="empty-copy">Please ensure the adapter is properly plugged in and available to this app. Try unplugging and replugging it.</p>
+                    <button class="empty-action" data-command="connect-adapter" ${state.busyAction ? "disabled" : ""}>Connect Adapter</button>
+                  </div>
+                </section>
+              `
+              : emptyState === "servo"
+                ? `
+                  <section class="pane empty-pane">
+                    <div class="empty-content">
+                      <h2 class="empty-title">Servo not detected</h2>
+                      <p class="empty-copy">Please ensure the servo is plugged into the adapter and powered correctly. Try unplugging and replugging it.</p>
+                      <button class="empty-action" data-command="retry-servo" ${state.busyAction ? "disabled" : ""}>Try Again</button>
+                    </div>
+                  </section>
+                `
+                : `
+                  <div class="workspace">
+                    <section class="pane config-pane" data-dropzone="config">
               <div class="mode-row">
                 <button class="mode-button" data-mode="servo_mode" data-selected="${state.draft.mode === "servo_mode"}">Servo</button>
                 <button class="mode-button" data-mode="cr_mode" data-selected="${state.draft.mode === "cr_mode"}">CR</button>
@@ -1613,9 +1694,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                   `
                   : ""
               }
-            </section>
+                    </section>
 
-            <section class="pane sim-pane">
+                    <section class="pane sim-pane">
               <div class="sim-grid">
                 <div class="sim-left">
                   <div class="servo-card">
@@ -1712,8 +1793,10 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                   )}
                 </div>
               </div>
-            </section>
-          </div>
+                    </section>
+                  </div>
+                `
+          }
 
           <details class="debug" ${state.diagnosticsOpen ? "open" : ""}>
             <summary>${help("Diagnostics and raw replies")}</summary>
@@ -1850,9 +1933,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     options.root.querySelectorAll<HTMLButtonElement>("[data-command]").forEach((button) => {
       button.addEventListener("click", () => {
         const command = button.dataset.command;
-        if (command === "usb") void doUsb();
-        if (command === "link") void doLink();
-        if (command === "sync") void doSync();
+        if (command === "connect-adapter") void doConnectAndSync();
+        if (command === "retry-servo") void doSync();
         if (command === "load") {
           state.loadPanelOpen = !state.loadPanelOpen;
           render();
@@ -1862,6 +1944,9 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         }
         if (command === "save") {
           triggerSave();
+        }
+        if (command === "discard") {
+          void doSync();
         }
         if (command === "apply") {
           state.error = "Apply is not wired in this probe yet.";
