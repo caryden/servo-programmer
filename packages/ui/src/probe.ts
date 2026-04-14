@@ -1,3 +1,32 @@
+import { findModel, loadCatalog } from "@axon/core/catalog";
+import { servoModeLabel, summarizeConfig } from "@axon/core/config-summary";
+import {
+  CONFIG_BLOCK_SIZE,
+  type ServoMode as CoreServoMode,
+  modelIdFromConfig,
+} from "@axon/core/driver/protocol";
+import {
+  AXON_MINI_SPEC,
+  lookupServoSpec,
+  type ServoSpec,
+  type VoltagePoint,
+} from "@axon/core/servo-specs";
+import {
+  Chart,
+  type ChartDataset,
+  type ChartOptions,
+  Filler,
+  Legend,
+  LinearScale,
+  LineController,
+  LineElement,
+  PointElement,
+  Tooltip,
+  type TooltipModel,
+} from "chart.js";
+
+Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, Filler);
+
 export interface ProbeDeviceInfo {
   id: string | null;
   vendorId: string | null;
@@ -42,8 +71,13 @@ export interface ProbeSetupInfo {
   pwmLossBehavior: string | null;
   inversion: string | null;
   softStart: boolean | null;
+  sensitivityStep: number | null;
   sensitivityLabel: string | null;
+  dampeningFactor: number | null;
+  overloadProtectionEnabled: boolean | null;
+  overloadLevels: Array<{ pct: number; sec: number }>;
   pwmPowerPercent: number | null;
+  proptlSeconds: number | null;
 }
 
 export interface ProbeConfigInfo {
@@ -58,6 +92,7 @@ export interface ProbeConfigInfo {
   rawHex: string;
   firstChunk: string;
   secondChunk: string;
+  rawBytes: number[] | null;
 }
 
 interface ProbeAction<T> {
@@ -67,6 +102,12 @@ interface ProbeAction<T> {
 
 export interface MountProbeAppOptions {
   root: HTMLElement;
+  autoConnectOnLoad?: boolean;
+  debugEnabled?: boolean;
+  initialAuthorizedAccess?: boolean;
+  livePollIntervalMs?: number;
+  subscribeTransportLog?: (push: (message: string) => void) => undefined | (() => void);
+  watchInventory?: (onInventory: (inventory: ProbeInventory) => void) => undefined | (() => void);
   eyebrow?: string;
   title: string;
   description?: string;
@@ -87,36 +128,51 @@ export interface MountProbeAppOptions {
 interface LogEntry {
   timestamp: string;
   message: string;
+  level: "status" | "debug";
 }
 
 type ServoMode = "servo_mode" | "cr_mode";
 type LossBehavior = "release" | "hold" | "neutral";
 type Direction = "cw" | "ccw";
+type SensitivityLabel = "Ultra High" | "High" | "Medium" | "Low" | "Very Low";
 
-interface ProfilePreset {
-  id: string;
-  label: string;
-  mode: ServoMode;
-  rangePercent: number;
-  neutralUs: number;
-  direction: Direction;
-  pwmLossBehavior: LossBehavior;
-  softStart: boolean;
-  pwmUs: number;
+interface OverloadLevel {
+  pct: number;
+  sec: number;
 }
 
-interface DraftSetup {
-  profileId: string;
+interface DraftConfig {
   mode: ServoMode;
   rangePercent: number;
   neutralUs: number;
   direction: Direction;
   pwmLossBehavior: LossBehavior;
   softStart: boolean;
+  sensitivityStep: number;
+  dampeningFactor: number;
+  overloadProtectionEnabled: boolean;
+  overloadLevels: [OverloadLevel, OverloadLevel, OverloadLevel];
+  pwmPowerPercent: number;
+  proptlSeconds: number;
+}
+
+interface SimState {
   pwmUs: number;
   voltage: number;
   loadKgcm: number;
   sweepEnabled: boolean;
+  playbackRunning: boolean;
+  servoSweepPhase: number;
+  crAngleDeg: number;
+}
+
+interface ConfigCheckpoint {
+  id: string;
+  createdAt: string;
+  label: string;
+  modelId: string | null;
+  modelName: string | null;
+  draft: DraftConfig;
 }
 
 interface ProbeState {
@@ -124,32 +180,23 @@ interface ProbeState {
   inventory: ProbeInventory;
   identify: ProbeIdentifyInfo | null;
   config: ProbeConfigInfo | null;
-  draft: DraftSetup;
+  draft: DraftConfig;
+  baselineDraft: DraftConfig | null;
+  baselineRawBytes: number[] | null;
+  liveSnapshot: DraftConfig | null;
+  checkpoints: ConfigCheckpoint[];
+  sim: SimState;
   busyAction: string | null;
   error: string | null;
   logs: LogEntry[];
-  diagnosticsOpen: boolean;
+  statusMessage: string;
+  statusOpen: boolean;
   loadPanelOpen: boolean;
-  sweepPhase: number;
+  hasAuthorizedAccess: boolean;
+  diagnosticsOpen: boolean;
 }
 
 type EmptyStateKind = "adapter" | "servo" | null;
-
-interface VoltagePoint {
-  voltage: number;
-  torqueKgcm: number;
-  speedSec60: number;
-  idleA: number;
-  stallA: number;
-}
-
-interface ServoSpec {
-  bodyWidth: number;
-  bodyHeight: number;
-  axisInsetY: number;
-  maxRangeDeg: number;
-  points: VoltagePoint[];
-}
 
 interface CurvePoint {
   torqueKgcm: number;
@@ -166,94 +213,66 @@ interface OperatingPoint extends CurvePoint {
   hornAngleDeg: number;
   minAngleDeg: number;
   maxAngleDeg: number;
-  sweepDirection: 1 | -1;
+  effectiveVoltage: number;
+  commandMagnitude: number;
+  commandSigned: number;
 }
 
-const PROFILE_PRESETS: ProfilePreset[] = [
-  {
-    id: "claw",
-    label: "Claw",
-    mode: "servo_mode",
-    rangePercent: 30,
-    neutralUs: 0,
-    direction: "cw",
-    pwmLossBehavior: "hold",
-    softStart: true,
-    pwmUs: 1900,
-  },
-  {
-    id: "intake",
-    label: "Intake",
-    mode: "cr_mode",
-    rangePercent: 100,
-    neutralUs: 0,
-    direction: "cw",
-    pwmLossBehavior: "release",
-    softStart: false,
-    pwmUs: 2000,
-  },
-  {
-    id: "gate",
-    label: "Gate",
-    mode: "servo_mode",
-    rangePercent: 22,
-    neutralUs: 0,
-    direction: "ccw",
-    pwmLossBehavior: "neutral",
-    softStart: true,
-    pwmUs: 1700,
-  },
-  {
-    id: "arm",
-    label: "Arm",
-    mode: "servo_mode",
-    rangePercent: 55,
-    neutralUs: 10,
-    direction: "cw",
-    pwmLossBehavior: "hold",
-    softStart: true,
-    pwmUs: 1850,
-  },
-];
+interface ChartPoint {
+  x: number;
+  y: number;
+}
 
-const MINI_SPEC: ServoSpec = {
-  bodyWidth: 130,
-  bodyHeight: 236,
-  axisInsetY: 44,
-  maxRangeDeg: 355,
-  points: [
-    { voltage: 4.8, torqueKgcm: 13, speedSec60: 0.16, idleA: 0.14, stallA: 2.2 },
-    { voltage: 6.0, torqueKgcm: 16, speedSec60: 0.13, idleA: 0.17, stallA: 2.6 },
-    { voltage: 7.4, torqueKgcm: 19, speedSec60: 0.11, idleA: 0.19, stallA: 3.0 },
-    { voltage: 8.4, torqueKgcm: 21, speedSec60: 0.1, idleA: 0.21, stallA: 3.2 },
-  ],
-};
+interface TooltipRow {
+  label: string;
+  si: string;
+  imp: string;
+  servo: string;
+}
 
-const MICRO_SPEC: ServoSpec = {
-  bodyWidth: 112,
-  bodyHeight: 214,
-  axisInsetY: 40,
-  maxRangeDeg: 360,
-  points: [
-    { voltage: 4.8, torqueKgcm: 4.2, speedSec60: 0.16, idleA: 0.1, stallA: 1.0 },
-    { voltage: 6.0, torqueKgcm: 5.2, speedSec60: 0.13, idleA: 0.12, stallA: 1.3 },
-    { voltage: 7.4, torqueKgcm: 6.5, speedSec60: 0.11, idleA: 0.14, stallA: 1.6 },
-    { voltage: 8.4, torqueKgcm: 7.1, speedSec60: 0.1, idleA: 0.16, stallA: 1.8 },
-  ],
-};
+interface TooltipTableData {
+  rows: TooltipRow[];
+}
 
-const MAX_SPEC: ServoSpec = {
-  bodyWidth: 144,
-  bodyHeight: 246,
-  axisInsetY: 46,
-  maxRangeDeg: 360,
-  points: [
-    { voltage: 4.8, torqueKgcm: 28, speedSec60: 0.14, idleA: 0.28, stallA: 3.6 },
-    { voltage: 6.0, torqueKgcm: 34, speedSec60: 0.115, idleA: 0.32, stallA: 4.0 },
-    { voltage: 7.2, torqueKgcm: 39, speedSec60: 0.1, idleA: 0.36, stallA: 4.3 },
-    { voltage: 8.4, torqueKgcm: 45, speedSec60: 0.085, idleA: 0.4, stallA: 4.6 },
-  ],
-};
+interface ProbeCharts {
+  speedCurrent: Chart<"line", ChartPoint[]>;
+  power: Chart<"line", ChartPoint[]>;
+  efficiency: Chart<"line", ChartPoint[]>;
+}
+
+const CHECKPOINT_STORAGE_KEY = "axon-config-checkpoints-v1";
+const MAX_CHECKPOINTS = 12;
+const HELP_TEXT = {
+  range:
+    "Sets the servo travel limit. 100% uses the model's full programmed range; lower values narrow the green-to-red sweep.",
+  sensitivity:
+    "PWM dead-band around neutral. Lower step means smaller dead-band and higher sensitivity. Step 0 is the most sensitive setting.",
+  center:
+    "Offsets the neutral position in microseconds from the nominal 1500 us center pulse. Use this to trim the mechanical center.",
+  stopTrim:
+    "Offsets the stop point in microseconds from the nominal 1500 us pulse in CR mode. Use this to stop rotation cleanly.",
+  direction:
+    "Reverses the commanded direction. Vendor default is CCW for normal; reversed flips the response.",
+  ramp: "Limits acceleration on startup to reduce sudden motion.",
+  dampening:
+    "Internal PID D coefficient in Servo mode. Higher values add more braking near the target and can reduce overshoot.",
+  signalLoss:
+    "What the servo should do if PWM signal is lost while power remains. Release removes drive, Hold keeps the last commanded position, Neutral moves to center.",
+  overload:
+    "Three-stage stall protection in Servo mode. When the servo stalls, it reduces available power to each stage's percentage after that stage's delay.",
+  proptl:
+    "Continuous-rotation overheat timeout in seconds. After continuous operation for this long, the servo cuts output to protect the motor.",
+  powerLimit:
+    "Caps maximum output power as a percentage of full drive. Useful for limiting current draw or softening the servo.",
+  pwmServo:
+    "Simulated command pulse width in Servo mode. Sweep/manual motion changes the horn position, but not the Servo-mode operating-point physics.",
+  pwmCr:
+    "Simulated CR drive command. 1500 us is stop; farther from center increases drive in the selected direction.",
+  voltage:
+    "Supply voltage used for the operating curves. Detents match the published servo spec voltages, but you can set values between them.",
+  load: "Mechanical output load in kgf*cm. Higher load moves the operating point toward stall torque.",
+  diagnostics: "Show decoded state, transport details, and debug logs.",
+} as const;
 
 function clamp(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, value));
@@ -299,6 +318,15 @@ function kgcmToOzIn(value: number): number {
   return value * 13.887;
 }
 
+function rpmToRadPerSec(value: number): number {
+  return (value * 2 * Math.PI) / 60;
+}
+
+function rpmToSecPer60Deg(value: number): number {
+  if (value <= 0.001) return Number.POSITIVE_INFINITY;
+  return 10 / value;
+}
+
 function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -310,6 +338,23 @@ function escapeHtml(value: unknown): string {
 
 function nowLabel(): string {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "Unknown";
+  const deltaSec = Math.round((then - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(deltaSec) >= 86400) {
+    return rtf.format(Math.round(deltaSec / 86400), "day");
+  }
+  if (Math.abs(deltaSec) >= 3600) {
+    return rtf.format(Math.round(deltaSec / 3600), "hour");
+  }
+  if (Math.abs(deltaSec) >= 60) {
+    return rtf.format(Math.round(deltaSec / 60), "minute");
+  }
+  return rtf.format(deltaSec, "second");
 }
 
 function modeLabel(mode: ServoMode): string {
@@ -326,39 +371,143 @@ function directionLabel(direction: Direction): string {
   return direction === "cw" ? "CW" : "CCW";
 }
 
-function profileById(profileId: string): ProfilePreset {
-  return PROFILE_PRESETS.find((profile) => profile.id === profileId) ?? PROFILE_PRESETS[0];
+function sensitivityLabel(step: number): SensitivityLabel {
+  if (step <= 1) return "Ultra High";
+  if (step <= 4) return "High";
+  if (step <= 8) return "Medium";
+  if (step <= 11) return "Low";
+  return "Very Low";
 }
 
-function baseDraft(profileId = "claw"): DraftSetup {
-  const profile = profileById(profileId);
+function shortModelLabel(value: string | null): string {
+  if (!value || value.length === 0) return "--";
+  return value.replace(/^Axon\s+/i, "");
+}
+
+function servoIdentityLabel(config: ProbeConfigInfo | null, servoPresent: boolean): string {
+  const modelName = shortModelLabel(config?.modelName ?? null);
+  if (modelName !== "--") return modelName;
+
+  const modelId = (config?.modelId ?? "").trim();
+  if (modelId.length > 0) return modelId;
+
+  return servoPresent ? "Detected" : "Not Found";
+}
+
+function baseDraft(): DraftConfig {
   return {
-    profileId: profile.id,
-    mode: profile.mode,
-    rangePercent: profile.rangePercent,
-    neutralUs: profile.neutralUs,
-    direction: profile.direction,
-    pwmLossBehavior: profile.pwmLossBehavior,
-    softStart: profile.softStart,
-    pwmUs: profile.pwmUs,
-    voltage: 6,
-    loadKgcm: profile.mode === "cr_mode" ? 4 : 6,
-    sweepEnabled: profile.mode === "servo_mode",
+    mode: "servo_mode",
+    rangePercent: 50,
+    neutralUs: 0,
+    direction: "cw",
+    pwmLossBehavior: "hold",
+    softStart: true,
+    sensitivityStep: 4,
+    dampeningFactor: 166,
+    overloadProtectionEnabled: true,
+    overloadLevels: [
+      { pct: 55, sec: 4.0 },
+      { pct: 75, sec: 2.0 },
+      { pct: 100, sec: 0.8 },
+    ],
+    pwmPowerPercent: 85,
+    proptlSeconds: 25.5,
   };
+}
+
+function baseSim(config: DraftConfig = baseDraft()): SimState {
+  return {
+    pwmUs: 1500,
+    voltage: 6,
+    loadKgcm: peakEfficiencyLoadKgcm(AXON_MINI_SPEC, 6, config.pwmPowerPercent),
+    sweepEnabled: true,
+    playbackRunning: true,
+    servoSweepPhase: 0,
+    crAngleDeg: 0,
+  };
+}
+
+function cloneDraftConfig(draft: DraftConfig): DraftConfig {
+  return {
+    ...draft,
+    overloadLevels: draft.overloadLevels.map((level) => ({
+      ...level,
+    })) as DraftConfig["overloadLevels"],
+  };
+}
+
+function draftKey(draft: DraftConfig | null): string | null {
+  if (!draft) return null;
+  return JSON.stringify(draft);
+}
+
+function isDirty(baseline: DraftConfig | null, draft: DraftConfig): boolean {
+  return draftKey(baseline) !== null && draftKey(baseline) !== draftKey(draft);
+}
+
+function readStoredCheckpoints(): ConfigCheckpoint[] {
+  try {
+    const raw = window.localStorage.getItem(CHECKPOINT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((value) => value && typeof value === "object" && typeof value.id === "string")
+      .map((value) => ({
+        id: String(value.id),
+        createdAt: String(value.createdAt ?? ""),
+        label: String(value.label ?? "checkpoint"),
+        modelId: typeof value.modelId === "string" ? value.modelId : null,
+        modelName: typeof value.modelName === "string" ? value.modelName : null,
+        draft: cloneDraftConfig(value.draft as DraftConfig),
+      }))
+      .slice(0, MAX_CHECKPOINTS);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredCheckpoints(checkpoints: ConfigCheckpoint[]): void {
+  try {
+    window.localStorage.setItem(CHECKPOINT_STORAGE_KEY, JSON.stringify(checkpoints));
+  } catch {}
+}
+
+function checkpointLabel(config: ProbeConfigInfo, createdAt: string): string {
+  const model = shortModelLabel(config.modelName ?? config.modelId ?? "servo").toLowerCase();
+  return `${model}-${createdAt.replaceAll(":", "-")}`;
 }
 
 function modeFromConfig(config: ProbeConfigInfo | null): ServoMode {
   return config?.mode === "cr_mode" ? "cr_mode" : "servo_mode";
 }
 
-function draftFromConfig(config: ProbeConfigInfo | null, current: DraftSetup): DraftSetup {
+function normalizeOverloadLevel(
+  value: Partial<OverloadLevel> | undefined,
+  fallback: OverloadLevel,
+): OverloadLevel {
+  return {
+    pct: clamp(Number(value?.pct ?? fallback.pct), 10, 100),
+    sec: clamp(Number(value?.sec ?? fallback.sec), 0, 25.5),
+  };
+}
+
+function normalizeOverloadLevels(
+  values: Array<Partial<OverloadLevel>> | undefined,
+  fallback: DraftConfig["overloadLevels"],
+): DraftConfig["overloadLevels"] {
+  return [
+    normalizeOverloadLevel(values?.[0], fallback[0]),
+    normalizeOverloadLevel(values?.[1], fallback[1]),
+    normalizeOverloadLevel(values?.[2], fallback[2]),
+  ];
+}
+
+function draftFromConfig(config: ProbeConfigInfo | null, current: DraftConfig): DraftConfig {
   if (!config?.setup) return current;
-  const mode = modeFromConfig(config);
-  const profileId = mode === "cr_mode" ? "intake" : "claw";
   return {
     ...current,
-    profileId,
-    mode,
+    mode: modeFromConfig(config),
     rangePercent: clamp(config.setup.rangePercent ?? current.rangePercent, 10, 100),
     neutralUs: clamp(config.setup.neutralUs ?? current.neutralUs, -127, 127),
     direction: config.setup.inversion === "reversed" ? "ccw" : "cw",
@@ -367,24 +516,136 @@ function draftFromConfig(config: ProbeConfigInfo | null, current: DraftSetup): D
         ? config.setup.pwmLossBehavior
         : "release",
     softStart: config.setup.softStart ?? current.softStart,
-    sweepEnabled: mode === "servo_mode",
+    sensitivityStep: clamp(config.setup.sensitivityStep ?? current.sensitivityStep, 0, 14),
+    dampeningFactor: clamp(config.setup.dampeningFactor ?? current.dampeningFactor, 0, 65535),
+    overloadProtectionEnabled:
+      config.setup.overloadProtectionEnabled ?? current.overloadProtectionEnabled,
+    overloadLevels: normalizeOverloadLevels(config.setup.overloadLevels, current.overloadLevels),
+    pwmPowerPercent: clamp(config.setup.pwmPowerPercent ?? current.pwmPowerPercent, 0, 100),
+    proptlSeconds: clamp(config.setup.proptlSeconds ?? current.proptlSeconds, 0, 25.5),
   };
 }
 
-function selectProfile(profileId: string, current: DraftSetup): DraftSetup {
-  const profile = profileById(profileId);
+function draftFromPartial(configDraft: Partial<DraftConfig>, current: DraftConfig): DraftConfig {
   return {
     ...current,
-    profileId: profile.id,
-    mode: profile.mode,
-    rangePercent: profile.rangePercent,
-    neutralUs: profile.neutralUs,
-    direction: profile.direction,
-    pwmLossBehavior: profile.pwmLossBehavior,
-    softStart: profile.softStart,
-    pwmUs: profile.pwmUs,
-    loadKgcm: profile.mode === "cr_mode" ? 4 : 6,
-    sweepEnabled: profile.mode === "servo_mode",
+    ...configDraft,
+    mode: configDraft.mode === "cr_mode" ? "cr_mode" : "servo_mode",
+    direction: configDraft.direction === "ccw" ? "ccw" : "cw",
+    pwmLossBehavior:
+      configDraft.pwmLossBehavior === "hold" || configDraft.pwmLossBehavior === "neutral"
+        ? configDraft.pwmLossBehavior
+        : "release",
+    rangePercent: clamp(Number(configDraft.rangePercent ?? current.rangePercent), 10, 100),
+    neutralUs: clamp(Number(configDraft.neutralUs ?? current.neutralUs), -127, 127),
+    sensitivityStep: clamp(Number(configDraft.sensitivityStep ?? current.sensitivityStep), 0, 14),
+    dampeningFactor: clamp(
+      Number(configDraft.dampeningFactor ?? current.dampeningFactor),
+      0,
+      65535,
+    ),
+    overloadProtectionEnabled: Boolean(
+      configDraft.overloadProtectionEnabled ?? current.overloadProtectionEnabled,
+    ),
+    overloadLevels: normalizeOverloadLevels(
+      Array.isArray(configDraft.overloadLevels) ? configDraft.overloadLevels : undefined,
+      current.overloadLevels,
+    ),
+    pwmPowerPercent: clamp(Number(configDraft.pwmPowerPercent ?? current.pwmPowerPercent), 0, 100),
+    proptlSeconds: clamp(Number(configDraft.proptlSeconds ?? current.proptlSeconds), 0, 25.5),
+  };
+}
+
+function encodeRangeRaw(percent: number): number {
+  return clamp(Math.round((clamp(percent, 10, 100) * 255) / 100), 0, 255);
+}
+
+function encodeNeutralRaw(us: number): number {
+  return clamp(Math.round(clamp(us, -127, 127) + 128), 1, 255);
+}
+
+function encodeSensitivityRaw(step: number): number {
+  return (clamp(Math.round(step), 0, 14) + 1) * 16;
+}
+
+function encodePercentRaw(percent: number): number {
+  return clamp(Math.round((clamp(percent, 0, 100) * 255) / 100), 0, 255);
+}
+
+function encodeSecondsTenthRaw(seconds: number): number {
+  return clamp(Math.round(clamp(seconds, 0, 25.5) / 0.1), 0, 255);
+}
+
+function setBeU16(bytes: Uint8Array, offset: number, value: number): void {
+  const clamped = clamp(Math.round(value), 0, 65535);
+  bytes[offset] = (clamped >> 8) & 0xff;
+  bytes[offset + 1] = clamped & 0xff;
+}
+
+function encodeDraftOntoRawConfig(source: Uint8Array, draft: DraftConfig): Uint8Array {
+  const bytes = Uint8Array.from(source);
+  const rangeRaw = encodeRangeRaw(draft.rangePercent);
+  bytes[0x04] = rangeRaw;
+  bytes[0x05] = rangeRaw;
+  bytes[0x06] = encodeNeutralRaw(draft.neutralUs);
+  bytes[0x0c] = encodeSensitivityRaw(draft.sensitivityStep);
+
+  setBeU16(bytes, 0x0a, draft.dampeningFactor);
+  setBeU16(bytes, 0x27, draft.dampeningFactor);
+  setBeU16(bytes, 0x29, draft.dampeningFactor);
+  setBeU16(bytes, 0x2b, draft.dampeningFactor);
+
+  const flags = bytes[0x25] ?? 0;
+  const directionBits = draft.direction === "ccw" ? 0x02 : 0x00;
+  const pwmLossBits =
+    draft.pwmLossBehavior === "hold" ? 0x40 : draft.pwmLossBehavior === "neutral" ? 0x60 : 0x00;
+  const softStartBits = draft.softStart ? 0x10 : 0x00;
+  const overloadBits = draft.overloadProtectionEnabled ? 0x80 : 0x00;
+  bytes[0x25] = (flags & ~0xf2) | directionBits | pwmLossBits | softStartBits | overloadBits;
+
+  draft.overloadLevels.forEach((level, index) => {
+    bytes[0x35 + index * 2] = encodePercentRaw(level.pct);
+    bytes[0x36 + index * 2] = encodeSecondsTenthRaw(level.sec);
+  });
+
+  const pwmPowerPrimary = encodePercentRaw(draft.pwmPowerPercent);
+  bytes[0x11] = pwmPowerPrimary;
+  bytes[0x12] = pwmPowerPrimary;
+  bytes[0x13] = pwmPowerPrimary;
+  bytes[0x0f] = Math.max(0, pwmPowerPrimary - 20);
+
+  if (draft.mode === "cr_mode") {
+    bytes[0x36] = encodeSecondsTenthRaw(draft.proptlSeconds);
+  }
+
+  return bytes;
+}
+
+function configInfoFromRawBytes(rawBytes: Uint8Array, mode: CoreServoMode): ProbeConfigInfo {
+  if (rawBytes.length !== CONFIG_BLOCK_SIZE) {
+    throw new Error(`Expected ${CONFIG_BLOCK_SIZE} bytes, got ${rawBytes.length}.`);
+  }
+
+  const modelId = modelIdFromConfig(rawBytes);
+  const model = findModel(loadCatalog(), modelId);
+  const chunkSplit = 59;
+
+  const hexDump = (bytes: Uint8Array): string =>
+    Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+
+  return {
+    length: rawBytes.length,
+    modelId,
+    known: Boolean(model),
+    modelName: model?.name ?? null,
+    docsUrl: model?.docs_url ?? null,
+    mode,
+    modeLabel: servoModeLabel(mode),
+    setup: summarizeConfig(rawBytes, modelId),
+    rawHex: hexDump(rawBytes),
+    firstChunk: hexDump(rawBytes.subarray(0, chunkSplit)),
+    secondChunk: hexDump(rawBytes.subarray(chunkSplit)),
+    rawBytes: Array.from(rawBytes),
   };
 }
 
@@ -393,40 +654,78 @@ function lookupSpec(
   modelName: string | null,
   config: ProbeConfigInfo | null,
 ): ServoSpec {
-  if ((modelId ?? "").startsWith("SA20") || (modelName ?? "").toLowerCase().includes("micro")) {
-    return MICRO_SPEC;
-  }
-  if ((modelId ?? "").startsWith("SA81") || (modelName ?? "").toLowerCase().includes("max")) {
-    return MAX_SPEC;
-  }
-  if (config?.setup?.rangeDegrees && config.setup.rangeDegrees > MINI_SPEC.maxRangeDeg) {
-    return {
-      ...MINI_SPEC,
-      maxRangeDeg: config.setup.rangeDegrees,
-    };
-  }
-  return MINI_SPEC;
+  return lookupServoSpec(modelId, modelName, config?.setup?.rangeDegrees ?? null);
 }
 
-function nearlyEqual(a: number, b: number, epsilon = 1): boolean {
-  return Math.abs(a - b) <= epsilon;
+function peakEfficiencyLoadKgcm(spec: ServoSpec, voltage: number, pwmPowerPercent = 85): number {
+  const base = interpolatePoint(spec.points, voltage);
+  const torqueMax = Math.max(0.1, base.torqueKgcm * clamp(pwmPowerPercent / 100, 0.2, 1));
+  const noLoadRpm = rpmFromSec60(base.speedSec60);
+  let bestTorque = 0;
+  let bestEfficiency = -1;
+
+  for (let index = 0; index <= 48; index++) {
+    const sampleTorque = (torqueMax * index) / 48;
+    const sampleRatio = clamp(sampleTorque / torqueMax, 0, 1);
+    const sampleCurrentA = base.idleA + (base.stallA - base.idleA) * sampleRatio;
+    const sampleSpeedRpm = Math.max(0, noLoadRpm * (1 - sampleRatio));
+    const sampleMechanicalPowerW = kgcmToNm(sampleTorque) * ((sampleSpeedRpm * 2 * Math.PI) / 60);
+    const sampleElectricalPowerW = voltage * sampleCurrentA;
+    const sampleEfficiency =
+      sampleElectricalPowerW > 0 ? sampleMechanicalPowerW / sampleElectricalPowerW : 0;
+
+    if (sampleEfficiency > bestEfficiency) {
+      bestEfficiency = sampleEfficiency;
+      bestTorque = sampleTorque;
+    }
+  }
+
+  return Number(bestTorque.toFixed(1));
 }
 
-function isDirty(config: ProbeConfigInfo | null, draft: DraftSetup): boolean {
-  if (!config?.setup) return false;
-  const configDirection = config.setup.inversion === "reversed" ? "ccw" : "cw";
-  const configLoss =
-    config.setup.pwmLossBehavior === "hold" || config.setup.pwmLossBehavior === "neutral"
-      ? config.setup.pwmLossBehavior
-      : "release";
-  return (
-    config.mode !== draft.mode ||
-    !nearlyEqual(config.setup.rangePercent ?? draft.rangePercent, draft.rangePercent) ||
-    !nearlyEqual(config.setup.neutralUs ?? draft.neutralUs, draft.neutralUs) ||
-    configDirection !== draft.direction ||
-    configLoss !== draft.pwmLossBehavior ||
-    (config.setup.softStart ?? false) !== draft.softStart
-  );
+function maxAvailableTorqueKgcm(spec: ServoSpec, voltage: number, pwmPowerPercent = 85): number {
+  const base = interpolatePoint(spec.points, voltage);
+  return Math.max(0, base.torqueKgcm * clamp(pwmPowerPercent / 100, 0, 1));
+}
+
+function syncSimToDraft(
+  draft: DraftConfig,
+  sim: SimState,
+  spec: ServoSpec,
+  previousMode: ServoMode | null,
+): SimState {
+  const next = {
+    ...sim,
+    loadKgcm: clamp(
+      sim.loadKgcm,
+      0,
+      maxAvailableTorqueKgcm(spec, sim.voltage, draft.pwmPowerPercent),
+    ),
+  };
+
+  if (draft.mode === "servo_mode") {
+    if (previousMode !== "servo_mode") {
+      next.sweepEnabled = true;
+      next.playbackRunning = true;
+      next.servoSweepPhase = 0;
+      next.crAngleDeg = 0;
+      if (Math.abs(next.pwmUs - (1500 + draft.neutralUs)) < 50) {
+        next.pwmUs = 1500;
+      }
+    }
+  } else {
+    if (previousMode !== "cr_mode") {
+      next.sweepEnabled = false;
+      next.playbackRunning = true;
+      next.servoSweepPhase = 0;
+      next.crAngleDeg = 0;
+      if (Math.abs(next.pwmUs - (1500 + draft.neutralUs)) < 50) {
+        next.pwmUs = 2000;
+      }
+    }
+  }
+
+  return next;
 }
 
 function toPrettyJson(value: unknown): string {
@@ -434,7 +733,7 @@ function toPrettyJson(value: unknown): string {
 }
 
 function help(title: string): string {
-  return `<span class="help" title="${escapeHtml(title)}">?</span>`;
+  return `<button type="button" class="help" data-help="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">?</button>`;
 }
 
 function formatSignedUs(value: number): string {
@@ -447,59 +746,84 @@ function triangleWave(phase: number): number {
   return wrapped <= 1 ? wrapped : 2 - wrapped;
 }
 
-function effectivePwm(draft: DraftSetup, sweepPhase: number): number {
-  if (draft.mode === "servo_mode" && draft.sweepEnabled) {
-    return Math.round(500 + 2000 * triangleWave(sweepPhase));
+function scaleVoltagePoint(point: VoltagePoint, factor: number): VoltagePoint {
+  return {
+    voltage: point.voltage * factor,
+    torqueKgcm: point.torqueKgcm * factor,
+    speedSec60: factor <= 0.0001 ? Number.POSITIVE_INFINITY : point.speedSec60 / factor,
+    idleA: point.idleA * factor,
+    stallA: point.stallA * factor,
+  };
+}
+
+function effectiveServoPwm(draft: DraftConfig, sim: SimState): number {
+  if (draft.mode === "servo_mode" && sim.sweepEnabled) {
+    return Math.round(500 + 2000 * triangleWave(sim.servoSweepPhase));
   }
-  return draft.pwmUs;
+  return sim.pwmUs;
+}
+
+function commandRatio(draft: DraftConfig, pwmUs: number): number {
+  const centeredPwm = 1500 + draft.neutralUs;
+  return clamp((pwmUs - centeredPwm) / 1000, -1, 1);
 }
 
 function buildOperatingPoint(
   config: ProbeConfigInfo | null,
-  draft: DraftSetup,
-  sweepPhase: number,
+  draft: DraftConfig,
+  sim: SimState,
 ): {
   spec: ServoSpec;
   base: VoltagePoint;
+  effective: VoltagePoint;
   point: OperatingPoint;
   curves: CurvePoint[];
   torqueMax: number;
   noLoadRpm: number;
 } {
   const spec = lookupSpec(config?.modelId ?? null, config?.modelName ?? null, config);
-  const base = interpolatePoint(spec.points, draft.voltage);
-  const noLoadRpm = rpmFromSec60(base.speedSec60);
-  const pwmPowerLimit = clamp((config?.setup?.pwmPowerPercent ?? 85) / 100, 0.2, 1);
-  const torqueMax = Math.max(0.1, base.torqueKgcm * pwmPowerLimit);
-  const currentPwmUs = effectivePwm(draft, sweepPhase);
-  const centeredPwm = 1500 + draft.neutralUs;
-  const command = clamp((currentPwmUs - centeredPwm) / 1000, -1, 1);
-  const signedCommand = draft.direction === "cw" ? command : -command;
+  const base = interpolatePoint(spec.points, sim.voltage);
+  const currentPwmUs = effectiveServoPwm(draft, sim);
+  const servoCommand = commandRatio(draft, currentPwmUs);
+  const powerFactor = clamp(draft.pwmPowerPercent / 100, 0, 1);
+  const crDrive = commandRatio(draft, sim.pwmUs);
+  const driveFactor = draft.mode === "cr_mode" ? Math.abs(crDrive) : 1;
+  const signedCommand =
+    (draft.mode === "cr_mode" ? crDrive : servoCommand) * (draft.direction === "cw" ? 1 : -1);
+  const effective = scaleVoltagePoint(base, powerFactor * driveFactor);
+  const noLoadRpm = rpmFromSec60(effective.speedSec60);
+  const torqueMax = Math.max(0, effective.torqueKgcm);
   const rangeDeg = (spec.maxRangeDeg * draft.rangePercent) / 100;
   const minAngleDeg = -rangeDeg / 2;
   const maxAngleDeg = rangeDeg / 2;
+  const commandMagnitude = Math.abs(signedCommand);
+  const torqueKgcm = clamp(sim.loadKgcm, 0, Math.max(0.001, torqueMax));
+  const torqueRatio = torqueMax <= 0.0001 ? 0 : clamp(torqueKgcm / torqueMax, 0, 1);
+  const currentA =
+    torqueMax <= 0.0001 ? 0 : effective.idleA + (effective.stallA - effective.idleA) * torqueRatio;
+  const currentRpm = torqueMax <= 0.0001 ? 0 : Math.max(0, noLoadRpm * (1 - torqueRatio));
   const hornAngleDeg =
     draft.mode === "servo_mode"
       ? clamp(signedCommand * (rangeDeg / 2), minAngleDeg, maxAngleDeg)
-      : signedCommand * 18;
-
-  const torqueKgcm = clamp(draft.loadKgcm, 0, torqueMax);
-  const torqueRatio = clamp(torqueKgcm / torqueMax, 0, 1);
-  const currentA = base.idleA + (base.stallA - base.idleA) * torqueRatio;
-  const currentRpm = Math.max(0, noLoadRpm * (1 - torqueRatio));
+      : commandMagnitude > 0.01
+        ? sim.crAngleDeg
+        : 0;
   const mechanicalPowerW = kgcmToNm(torqueKgcm) * ((currentRpm * 2 * Math.PI) / 60);
-  const electricalPowerW = draft.voltage * currentA;
+  const electricalPowerW = effective.voltage * currentA;
   const heatW = Math.max(0, electricalPowerW - mechanicalPowerW);
   const efficiency = electricalPowerW > 0 ? mechanicalPowerW / electricalPowerW : 0;
 
   const curves: CurvePoint[] = [];
   for (let index = 0; index <= 48; index++) {
     const sampleTorque = (torqueMax * index) / 48;
-    const sampleRatio = clamp(sampleTorque / torqueMax, 0, 1);
-    const sampleCurrentA = base.idleA + (base.stallA - base.idleA) * sampleRatio;
-    const sampleSpeedRpm = Math.max(0, noLoadRpm * (1 - sampleRatio));
+    const sampleRatio = torqueMax <= 0.0001 ? 0 : clamp(sampleTorque / torqueMax, 0, 1);
+    const sampleCurrentA =
+      torqueMax <= 0.0001
+        ? 0
+        : effective.idleA + (effective.stallA - effective.idleA) * sampleRatio;
+    const sampleSpeedRpm = torqueMax <= 0.0001 ? 0 : Math.max(0, noLoadRpm * (1 - sampleRatio));
     const sampleMechanicalPowerW = kgcmToNm(sampleTorque) * ((sampleSpeedRpm * 2 * Math.PI) / 60);
-    const sampleElectricalPowerW = draft.voltage * sampleCurrentA;
+    const sampleElectricalPowerW = effective.voltage * sampleCurrentA;
     const sampleHeatW = Math.max(0, sampleElectricalPowerW - sampleMechanicalPowerW);
     const sampleEfficiency =
       sampleElectricalPowerW > 0 ? sampleMechanicalPowerW / sampleElectricalPowerW : 0;
@@ -518,6 +842,7 @@ function buildOperatingPoint(
   return {
     spec,
     base,
+    effective,
     torqueMax,
     noLoadRpm,
     curves,
@@ -533,166 +858,402 @@ function buildOperatingPoint(
       hornAngleDeg,
       minAngleDeg,
       maxAngleDeg,
-      sweepDirection: draft.direction === "cw" ? 1 : -1,
+      effectiveVoltage: effective.voltage,
+      commandMagnitude,
+      commandSigned: signedCommand,
     },
   };
-}
-
-function svgPathFromSeries(
-  values: CurvePoint[],
-  xValue: (point: CurvePoint) => number,
-  yValue: (point: CurvePoint) => number,
-  xMax: number,
-  yMax: number,
-  width: number,
-  height: number,
-): string {
-  return values
-    .map((point, index) => {
-      const x = (xValue(point) / xMax) * width;
-      const y = height - (yValue(point) / yMax) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-function chartDiamond(x: number, y: number, tooltip: string, color = "#5aa5ff"): string {
-  const size = 8;
-  return `
-    <g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
-      <title>${escapeHtml(tooltip)}</title>
-      <path d="M 0 -${size} L ${size} 0 L 0 ${size} L -${size} 0 Z" fill="${color}" stroke="#2d78d0" stroke-width="1.5" />
-    </g>
-  `;
 }
 
 function formatOperatingTooltip(
   point: OperatingPoint,
   kind: "speed" | "current" | "power" | "efficiency",
-): string {
-  const lines = [
-    `Torque: ${point.torqueKgcm.toFixed(1)} kgf*cm`,
-    `Torque: ${kgcmToNm(point.torqueKgcm).toFixed(2)} N*m`,
-    `Torque: ${kgcmToOzIn(point.torqueKgcm).toFixed(1)} oz*in`,
+): TooltipTableData {
+  const rows: TooltipRow[] = [
+    {
+      label: "Torque",
+      si: `${kgcmToNm(point.torqueKgcm).toFixed(2)} N*m`,
+      imp: `${kgcmToOzIn(point.torqueKgcm).toFixed(1)} oz*in`,
+      servo: `${point.torqueKgcm.toFixed(1)} kgf*cm`,
+    },
+    {
+      label: "Speed",
+      si: `${rpmToRadPerSec(point.speedRpm).toFixed(1)} rad/s`,
+      imp: `${(point.speedRpm * 6).toFixed(0)} deg/s`,
+      servo:
+        point.speedRpm <= 0.001
+          ? "stopped"
+          : `${rpmToSecPer60Deg(point.speedRpm).toFixed(2)} s/60deg`,
+    },
   ];
 
-  if (kind === "speed") {
-    lines.push(`Speed: ${point.speedRpm.toFixed(0)} rpm`);
-    lines.push(`Speed: ${(point.speedRpm * 6).toFixed(0)} deg/s`);
-  }
-  if (kind === "current") {
-    lines.push(`Current: ${point.currentA.toFixed(2)} A`);
-    lines.push(`Electrical power: ${point.electricalPowerW.toFixed(1)} W`);
-  }
-  if (kind === "power") {
-    lines.push(`Mechanical power: ${point.mechanicalPowerW.toFixed(1)} W`);
-    lines.push(`Heat: ${point.heatW.toFixed(1)} W`);
-  }
-  if (kind === "efficiency") {
-    lines.push(`Efficiency: ${(point.efficiency * 100).toFixed(0)} %`);
-    lines.push(`Mechanical power: ${point.mechanicalPowerW.toFixed(1)} W`);
-    lines.push(`Electrical power: ${point.electricalPowerW.toFixed(1)} W`);
-    lines.push(`Heat: ${point.heatW.toFixed(1)} W`);
+  if (kind === "speed" || kind === "current") {
+    rows.push(
+      {
+        label: "Current",
+        si: `${point.currentA.toFixed(2)} A`,
+        imp: "—",
+        servo: "—",
+      },
+      {
+        label: "Elec. Power",
+        si: `${point.electricalPowerW.toFixed(1)} W`,
+        imp: "—",
+        servo: "—",
+      },
+    );
   }
 
-  return lines.join("\n");
+  if (kind === "power" || kind === "efficiency") {
+    rows.push(
+      {
+        label: "Mech. Power",
+        si: `${point.mechanicalPowerW.toFixed(1)} W`,
+        imp: "—",
+        servo: "—",
+      },
+      {
+        label: "Elec. Power",
+        si: `${point.electricalPowerW.toFixed(1)} W`,
+        imp: "—",
+        servo: "—",
+      },
+      {
+        label: "Heat",
+        si: `${point.heatW.toFixed(1)} W`,
+        imp: "—",
+        servo: "—",
+      },
+      {
+        label: "Eff.",
+        si: `${(point.efficiency * 100).toFixed(0)} %`,
+        imp: "—",
+        servo: "—",
+      },
+    );
+  }
+
+  return { rows };
 }
 
-function lineChart(
-  title: string,
-  subtitle: string,
-  xMax: number,
-  leftMax: number,
-  rightMax: number | null,
-  primaryPath: string,
-  secondaryPath: string | null,
-  operatingX: number,
-  primaryY: number,
-  secondaryY: number | null,
-  primaryTooltip: string,
-  secondaryTooltip: string | null,
-  leftLabel: string,
-  rightLabel: string | null,
-): string {
-  const width = 280;
-  const height = 120;
-  const x = (operatingX / xMax) * width;
+function curveData(values: CurvePoint[], select: (value: CurvePoint) => number): ChartPoint[] {
+  return values.map((value) => ({
+    x: Number(value.torqueKgcm.toFixed(3)),
+    y: Number(select(value).toFixed(6)),
+  }));
+}
 
+function withHeadroom(value: number, minimum = 0.1, factor = 1.08): number {
+  return Math.max(minimum, value * factor);
+}
+
+function createLineDataset(
+  label: string,
+  color: string,
+  yAxisID: string,
+  data: ChartPoint[],
+): ChartDataset<"line", ChartPoint[]> {
+  return {
+    label,
+    data,
+    yAxisID,
+    parsing: false,
+    borderColor: color,
+    backgroundColor: color,
+    borderWidth: 2.5,
+    tension: 0.22,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+  };
+}
+
+function createPointDataset(
+  label: string,
+  color: string,
+  yAxisID: string,
+  point: ChartPoint,
+  tooltipData: TooltipTableData,
+): ChartDataset<"line", ChartPoint[]> {
+  return {
+    label,
+    data: [point],
+    yAxisID,
+    parsing: false,
+    borderColor: color,
+    backgroundColor: "#8fc2f8",
+    pointBorderColor: "#2d78d0",
+    pointBackgroundColor: "#8fc2f8",
+    pointBorderWidth: 1.5,
+    pointRadius: 7,
+    pointHoverRadius: 8,
+    pointStyle: "rectRot",
+    showLine: false,
+    clip: false,
+    tooltipData,
+  } as ChartDataset<"line", ChartPoint[]>;
+}
+
+function ensureTooltipElement(_chart: Chart<"line", ChartPoint[]>): HTMLDivElement {
+  let tooltipEl = document.body.querySelector<HTMLDivElement>(".chart-tooltip");
+  if (!tooltipEl) {
+    tooltipEl = document.createElement("div");
+    tooltipEl.className = "chart-tooltip";
+    document.body.appendChild(tooltipEl);
+  }
+
+  return tooltipEl;
+}
+
+function ensureHelpTooltipElement(): HTMLDivElement {
+  let tooltipEl = document.body.querySelector<HTMLDivElement>(".help-tooltip");
+  if (!tooltipEl) {
+    tooltipEl = document.createElement("div");
+    tooltipEl.className = "help-tooltip";
+    document.body.appendChild(tooltipEl);
+  }
+  return tooltipEl;
+}
+
+function hideHelpTooltip(): void {
+  const tooltipEl = document.body.querySelector<HTMLDivElement>(".help-tooltip");
+  if (!tooltipEl) return;
+  tooltipEl.style.opacity = "0";
+  tooltipEl.style.pointerEvents = "none";
+}
+
+function showHelpTooltip(target: HTMLElement): void {
+  const text = target.dataset.help?.trim();
+  if (!text) return;
+  const tooltipEl = ensureHelpTooltipElement();
+  tooltipEl.textContent = text;
+  tooltipEl.style.opacity = "1";
+  tooltipEl.style.pointerEvents = "none";
+  tooltipEl.style.left = "0px";
+  tooltipEl.style.top = "0px";
+
+  const targetRect = target.getBoundingClientRect();
+  const tooltipRect = tooltipEl.getBoundingClientRect();
+  const margin = 12;
+  const preferredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+  const preferredTop = targetRect.top - tooltipRect.height - 10;
+  const maxLeft = window.innerWidth - tooltipRect.width - margin;
+  const maxTop = window.innerHeight - tooltipRect.height - margin;
+
+  const left = clamp(preferredLeft, margin, Math.max(margin, maxLeft));
+  const top = clamp(preferredTop, margin, Math.max(margin, maxTop));
+
+  tooltipEl.style.left = `${left}px`;
+  tooltipEl.style.top = `${top}px`;
+}
+
+function renderTooltipTable(data: TooltipTableData): string {
   return `
-    <div class="chart-card">
-      <div class="chart-head">
-        <span>${escapeHtml(title)}</span>
-        <span>${escapeHtml(subtitle)}</span>
-      </div>
-      <svg viewBox="0 0 320 152" class="chart-svg" aria-label="${escapeHtml(title)}">
-        <line x1="28" y1="8" x2="28" y2="128" stroke="#3c7ce7" stroke-width="1.6" />
-        <line x1="28" y1="128" x2="308" y2="128" stroke="#111111" stroke-width="1.2" />
-        ${rightLabel ? `<line x1="308" y1="8" x2="308" y2="128" stroke="#3c7ce7" stroke-width="1.6" />` : ""}
-        <line x1="${(28 + x).toFixed(1)}" y1="8" x2="${(28 + x).toFixed(1)}" y2="128" stroke="#88bfff" stroke-width="1.2" stroke-dasharray="4 8" />
-        <path d="${primaryPath}" fill="none" stroke="#111111" stroke-width="2.2" transform="translate(28 8)" />
-        ${secondaryPath ? `<path d="${secondaryPath}" fill="none" stroke="#ff3a38" stroke-width="2.2" transform="translate(28 8)" />` : ""}
-        ${chartDiamond(28 + x, 8 + (height - (primaryY / leftMax) * height), primaryTooltip)}
-        ${
-          secondaryY != null && rightLabel != null && rightMax
-            ? chartDiamond(
-                28 + x,
-                8 + (height - (secondaryY / rightMax) * height),
-                secondaryTooltip ?? "",
-              )
-            : ""
-        }
-        <text x="28" y="145" class="chart-axis">0</text>
-        <text x="308" y="145" text-anchor="end" class="chart-axis">${xMax.toFixed(1)}</text>
-        <text x="22" y="24" text-anchor="end" class="chart-axis">${leftMax.toFixed(0)}</text>
-        ${rightLabel && rightMax ? `<text x="314" y="24" class="chart-axis">${rightMax.toFixed(1)}</text>` : ""}
-        <text x="10" y="74" transform="rotate(-90 10 74)" class="chart-label">${escapeHtml(leftLabel)}</text>
-        ${
-          rightLabel
-            ? `<text x="318" y="74" transform="rotate(-90 318 74)" class="chart-label">${escapeHtml(rightLabel)}</text>`
-            : ""
-        }
-        <text x="165" y="150" text-anchor="middle" class="chart-label">torque (kgf*cm)</text>
-      </svg>
-    </div>
+    <table class="chart-tooltip-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>SI</th>
+          <th>Imp</th>
+          <th>Servo</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.rows
+          .map(
+            (row) => `
+              <tr>
+                <th>${escapeHtml(row.label)}</th>
+                <td>${escapeHtml(row.si)}</td>
+                <td>${escapeHtml(row.imp)}</td>
+                <td>${escapeHtml(row.servo)}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
   `;
 }
 
-function powerChart(
-  title: string,
+function externalTooltipHandler(context: {
+  chart: Chart<"line", ChartPoint[]>;
+  tooltip: TooltipModel<"line">;
+}): void {
+  const { chart, tooltip } = context;
+  const tooltipEl = ensureTooltipElement(chart);
+
+  if (tooltip.opacity === 0 || tooltip.dataPoints.length === 0) {
+    tooltipEl.style.opacity = "0";
+    tooltipEl.style.pointerEvents = "none";
+    return;
+  }
+
+  const dataset = tooltip.dataPoints[0].dataset as ChartDataset<"line", ChartPoint[]> & {
+    tooltipData?: TooltipTableData;
+  };
+
+  if (!dataset.tooltipData) {
+    tooltipEl.style.opacity = "0";
+    tooltipEl.style.pointerEvents = "none";
+    return;
+  }
+
+  tooltipEl.innerHTML = renderTooltipTable(dataset.tooltipData);
+  tooltipEl.style.opacity = "1";
+  tooltipEl.style.pointerEvents = "none";
+  tooltipEl.style.left = "0px";
+  tooltipEl.style.top = "0px";
+
+  const canvasRect = chart.canvas.getBoundingClientRect();
+  const margin = 12;
+  const tooltipRect = tooltipEl.getBoundingClientRect();
+  const preferredLeft = canvasRect.left + tooltip.caretX - tooltipRect.width / 2;
+  const preferredTop = canvasRect.top + tooltip.caretY - tooltipRect.height - 12;
+  const maxLeft = window.innerWidth - tooltipRect.width - margin;
+  const maxTop = window.innerHeight - tooltipRect.height - margin;
+
+  const left = clamp(preferredLeft, margin, Math.max(margin, maxLeft));
+  const top = clamp(preferredTop, margin, Math.max(margin, maxTop));
+
+  tooltipEl.style.left = `${left}px`;
+  tooltipEl.style.top = `${top}px`;
+}
+
+function baseChartOptions(
   xMax: number,
   yMax: number,
-  path: string,
-  operatingX: number,
-  operatingY: number,
-  tooltip: string,
-  yLabel: string,
-): string {
-  const width = 280;
-  const height = 120;
-  const x = (operatingX / xMax) * width;
-  const y = 8 + (height - (operatingY / yMax) * height);
+  yTitle: string,
+  y1Max?: number,
+  y1Title?: string,
+): ChartOptions<"line"> {
+  return {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: "nearest",
+      intersect: true,
+    },
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        enabled: false,
+        external: externalTooltipHandler,
+      },
+    },
+    scales: {
+      x: {
+        type: "linear",
+        min: 0,
+        max: xMax,
+        grid: {
+          color: "#e8edf3",
+        },
+        ticks: {
+          color: "#9aa3af",
+          maxTicksLimit: 5,
+        },
+        title: {
+          display: true,
+          text: "torque (kgf*cm)",
+          color: "#9aa3af",
+        },
+      },
+      y: {
+        type: "linear",
+        min: 0,
+        max: yMax,
+        grid: {
+          color: "#edf1f5",
+        },
+        ticks: {
+          color: "#9aa3af",
+          maxTicksLimit: 4,
+        },
+        title: {
+          display: true,
+          text: yTitle,
+          color: "#9aa3af",
+        },
+      },
+      ...(y1Max && y1Title
+        ? {
+            y1: {
+              type: "linear",
+              position: "right",
+              min: 0,
+              max: y1Max,
+              grid: {
+                drawOnChartArea: false,
+              },
+              ticks: {
+                color: "#9aa3af",
+                maxTicksLimit: 4,
+              },
+              title: {
+                display: true,
+                text: y1Title,
+                color: "#9aa3af",
+              },
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+function simChartsMarkup(draft: DraftConfig, sim: SimState): string {
   return `
     <div class="chart-card">
       <div class="chart-head">
-        <span>${escapeHtml(title)}</span>
+        <span>speed / current</span>
+        <span data-chart-speed-meta>${escapeHtml(`${modeLabel(draft.mode)} @ ${sim.voltage.toFixed(1)}V`)}</span>
       </div>
-      <svg viewBox="0 0 320 152" class="chart-svg" aria-label="${escapeHtml(title)}">
-        <line x1="28" y1="8" x2="28" y2="128" stroke="#3c7ce7" stroke-width="1.6" />
-        <line x1="28" y1="128" x2="308" y2="128" stroke="#111111" stroke-width="1.2" />
-        <line x1="${(28 + x).toFixed(1)}" y1="8" x2="${(28 + x).toFixed(1)}" y2="128" stroke="#88bfff" stroke-width="1.2" stroke-dasharray="4 8" />
-        <path d="${path}" fill="none" stroke="#8fc2f8" stroke-width="3" transform="translate(28 8)" />
-        ${chartDiamond(28 + x, y, tooltip)}
-        <text x="28" y="145" class="chart-axis">0</text>
-        <text x="308" y="145" text-anchor="end" class="chart-axis">${xMax.toFixed(1)}</text>
-        <text x="22" y="24" text-anchor="end" class="chart-axis">${yMax.toFixed(1)}</text>
-        <text x="10" y="74" transform="rotate(-90 10 74)" class="chart-label">${escapeHtml(yLabel)}</text>
-        <text x="165" y="150" text-anchor="middle" class="chart-label">torque (kgf*cm)</text>
-      </svg>
+      <div class="chart-canvas-wrap">
+        <canvas data-chart="speed-current" aria-label="speed and current chart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <span>mechanical power</span>
+        <span data-chart-power-meta>power (W)</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas data-chart="power" aria-label="mechanical power chart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <span>efficiency</span>
+        <span data-chart-efficiency-meta>efficiency</span>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas data-chart="efficiency" aria-label="efficiency chart"></canvas>
+      </div>
     </div>
   `;
 }
 
-function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup): string {
+function sweepControlIcon(enabled: boolean): string {
+  return enabled
+    ? `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor" />
+        <rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor" />
+      </svg>
+    `
+    : `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 5.5L19 12L8 18.5V5.5Z" fill="currentColor" />
+      </svg>
+    `;
+}
+
+function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftConfig): string {
   const width = 430;
   const height = 390;
   const bodyX = 168;
@@ -711,12 +1272,27 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup):
   const arrowStart = pointAt(draft.direction === "cw" ? arcStartDeg : arcEndDeg, arrowRadius);
   const arrowEnd = pointAt(draft.direction === "cw" ? arcEndDeg : arcStartDeg, arrowRadius);
   const directionArc = `M ${arrowStart.x.toFixed(1)} ${arrowStart.y.toFixed(1)} A ${arrowRadius} ${arrowRadius} 0 0 ${draft.direction === "cw" ? "1" : "0"} ${arrowEnd.x.toFixed(1)} ${arrowEnd.y.toFixed(1)}`;
-  const minLineEndX = axisX + Math.sin((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
-  const minLineEndY = axisY - Math.cos((point.minAngleDeg * Math.PI) / 180) * sweepRadius;
-  const maxLineEndX = axisX + Math.sin((point.maxAngleDeg * Math.PI) / 180) * sweepRadius;
-  const maxLineEndY = axisY - Math.cos((point.maxAngleDeg * Math.PI) / 180) * sweepRadius;
+  const markerRadius = arrowRadius;
+  const minLineEndX = axisX + Math.sin((point.minAngleDeg * Math.PI) / 180) * markerRadius;
+  const minLineEndY = axisY - Math.cos((point.minAngleDeg * Math.PI) / 180) * markerRadius;
+  const maxLineEndX = axisX + Math.sin((point.maxAngleDeg * Math.PI) / 180) * markerRadius;
+  const maxLineEndY = axisY - Math.cos((point.maxAngleDeg * Math.PI) / 180) * markerRadius;
   const hornEndX = axisX + Math.sin((point.hornAngleDeg * Math.PI) / 180) * armLength;
   const hornEndY = axisY - Math.cos((point.hornAngleDeg * Math.PI) / 180) * armLength;
+  const readout =
+    draft.mode === "servo_mode"
+      ? `${point.hornAngleDeg.toFixed(0)} deg`
+      : `${point.speedRpm.toFixed(0)} rpm`;
+  const centerColor =
+    draft.mode === "cr_mode"
+      ? point.commandMagnitude > 0.01
+        ? point.commandSigned >= 0
+          ? "#25a244"
+          : "#ff3a38"
+        : "#6b7280"
+      : draft.direction === "cw"
+        ? "#25a244"
+        : "#ff3a38";
 
   return `
     <svg viewBox="0 0 ${width} ${height}" class="servo-svg" aria-label="servo operating sketch">
@@ -726,48 +1302,189 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftSetup):
         </marker>
       </defs>
       <path d="${directionArc}" fill="none" stroke="#b9bbc0" stroke-width="4" stroke-linecap="round" marker-end="url(#dir-head)" />
-      <line x1="${axisX}" y1="${axisY}" x2="${minLineEndX.toFixed(1)}" y2="${minLineEndY.toFixed(1)}" stroke="#25a244" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
-      <line x1="${axisX}" y1="${axisY}" x2="${maxLineEndX.toFixed(1)}" y2="${maxLineEndY.toFixed(1)}" stroke="#ff3a38" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
       <rect x="${bodyX}" y="${bodyY}" width="${spec.bodyWidth}" height="${spec.bodyHeight}" rx="28" ry="28" fill="#ffffff" stroke="#111111" stroke-width="2" />
-      <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
       <circle cx="${axisX}" cy="${axisY}" r="17" fill="#ffffff" stroke="#111111" stroke-width="2" />
-      <circle cx="${axisX}" cy="${axisY}" r="5" fill="${draft.direction === "cw" ? "#25a244" : "#ff3a38"}" />
-      <text x="${axisX}" y="${axisY + 36}" text-anchor="middle" fill="#7eb4f5" font-size="18" font-weight="700">${point.hornAngleDeg.toFixed(0)} deg</text>
+      ${
+        draft.mode === "servo_mode"
+          ? `
+            <line x1="${axisX}" y1="${axisY}" x2="${minLineEndX.toFixed(1)}" y2="${minLineEndY.toFixed(1)}" stroke="#25a244" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
+            <line x1="${axisX}" y1="${axisY}" x2="${maxLineEndX.toFixed(1)}" y2="${maxLineEndY.toFixed(1)}" stroke="#ff3a38" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14" />
+          `
+          : ""
+      }
+      <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
+      <circle cx="${axisX}" cy="${axisY}" r="5" fill="${centerColor}" />
+      <text x="${axisX}" y="${axisY + 36}" text-anchor="middle" fill="#7eb4f5" font-size="15" font-weight="700">${readout}</text>
     </svg>
   `;
 }
 
 export function mountProbeApp(options: MountProbeAppOptions): void {
+  const initialDraft = baseDraft();
   const state: ProbeState = {
     environment: null,
     inventory: { devices: [], openedId: null },
     identify: null,
     config: null,
-    draft: baseDraft(),
+    draft: initialDraft,
+    baselineDraft: null,
+    baselineRawBytes: null,
+    liveSnapshot: null,
+    checkpoints: readStoredCheckpoints(),
+    sim: baseSim(initialDraft),
     busyAction: null,
     error: null,
     logs: [],
-    diagnosticsOpen: false,
+    statusMessage: "Starting",
+    statusOpen: false,
     loadPanelOpen: false,
-    sweepPhase: 0,
+    hasAuthorizedAccess: options.initialAuthorizedAccess ?? false,
+    diagnosticsOpen: false,
   };
 
-  let sweepTimer: ReturnType<typeof setInterval> | null = null;
+  let sweepFrame: number | null = null;
+  let lastSweepFrameTs: number | null = null;
+  let livePollTimer: ReturnType<typeof setInterval> | null = null;
+  let _transportLogCleanup: undefined | (() => void);
+  let liveProbeInFlight = false;
+  let missingServoStreak = 0;
+  let probeFailureStreak = 0;
+  let lastSilentError: string | null = null;
+  let charts: ProbeCharts | null = null;
+  const logger = {
+    push(level: "status" | "debug", message: string): void {
+      state.logs.unshift({ timestamp: nowLabel(), message, level });
+      state.logs = state.logs.slice(0, 64);
+    },
+    status(message: string): void {
+      this.push("status", message);
+    },
+    debug(message: string): void {
+      if (!options.debugEnabled) return;
+      this.push("debug", message);
+    },
+    snapshot(): string {
+      return [...state.logs]
+        .reverse()
+        .map(
+          (entry) =>
+            `[${entry.timestamp}]${entry.level === "debug" ? "[debug]" : ""} ${entry.message}`,
+        )
+        .join("\n");
+    },
+  };
 
-  function log(message: string): void {
-    state.logs.unshift({ timestamp: nowLabel(), message });
-    state.logs = state.logs.slice(0, 16);
-  }
-
-  function updateInventory(inventory: ProbeInventory): void {
-    state.inventory = inventory;
-    if (!inventory.openedId) {
-      state.identify = null;
-      state.config = null;
+  function setStatus(message: string, shouldLog = true): void {
+    if (state.statusMessage === message) return;
+    state.statusMessage = message;
+    if (shouldLog) {
+      logger.status(message);
     }
   }
 
+  function idleStatus(): string {
+    if (state.inventory.openedId === null) {
+      return state.hasAuthorizedAccess ? "Waiting for adapter" : "Request USB permission";
+    }
+    if (!(state.identify?.present ?? Boolean(state.config))) {
+      return "Checking for servo";
+    }
+    return "Ready";
+  }
+
+  function setIdleStatus(shouldLog = true): void {
+    setStatus(idleStatus(), shouldLog);
+  }
+
+  function inventorySignature(inventory: ProbeInventory): string {
+    return JSON.stringify({
+      openedId: inventory.openedId,
+      devices: inventory.devices.map((device) => ({
+        id: device.id,
+        opened: device.opened,
+      })),
+    });
+  }
+
+  function updateInventory(inventory: ProbeInventory): boolean {
+    const previousDevices = state.inventory.devices.length;
+    const previousOpenedId = state.inventory.openedId;
+    const changed = inventorySignature(state.inventory) !== inventorySignature(inventory);
+    let clearedLiveState = false;
+    state.inventory = inventory;
+    if (inventory.devices.length > 0 || inventory.openedId !== null) {
+      state.hasAuthorizedAccess = true;
+    }
+    if (!inventory.openedId) {
+      clearedLiveState = state.identify !== null || state.config !== null;
+      state.identify = null;
+      state.config = null;
+      state.liveSnapshot = null;
+      missingServoStreak = 0;
+      probeFailureStreak = 0;
+      lastSilentError = null;
+    }
+    if (changed) {
+      if (previousDevices === 0 && inventory.devices.length > 0) {
+        logger.debug("Adapter visible");
+      }
+      if (previousDevices > 0 && inventory.devices.length === 0) {
+        logger.debug("Adapter not visible");
+      }
+      if (previousOpenedId === null && inventory.openedId !== null) {
+        logger.debug("Adapter connected");
+      }
+      if (previousOpenedId !== null && inventory.openedId === null) {
+        logger.debug("Adapter disconnected");
+      }
+    }
+    updateSweepTimer();
+    if (!state.busyAction) {
+      setIdleStatus(changed || clearedLiveState);
+    }
+    return changed || clearedLiveState;
+  }
+
+  function rememberCheckpoint(config: ProbeConfigInfo, draft: DraftConfig): void {
+    const createdAt = new Date().toISOString();
+    const checkpoint: ConfigCheckpoint = {
+      id: checkpointLabel(config, createdAt),
+      createdAt,
+      label: checkpointLabel(config, createdAt),
+      modelId: config.modelId,
+      modelName: config.modelName,
+      draft: cloneDraftConfig(draft),
+    };
+    if (
+      state.checkpoints[0] &&
+      draftKey(state.checkpoints[0].draft) === draftKey(checkpoint.draft)
+    ) {
+      return;
+    }
+    state.checkpoints = [checkpoint, ...state.checkpoints].slice(0, MAX_CHECKPOINTS);
+    writeStoredCheckpoints(state.checkpoints);
+  }
+
+  function adoptDraft(
+    nextDraft: DraftConfig,
+    previousMode: ServoMode | null,
+    asBaseline = false,
+  ): void {
+    state.draft = cloneDraftConfig(nextDraft);
+    if (asBaseline) {
+      state.baselineDraft = cloneDraftConfig(nextDraft);
+    }
+    state.sim = syncSimToDraft(
+      state.draft,
+      state.sim,
+      lookupSpec(state.config?.modelId ?? null, state.config?.modelName ?? null, state.config),
+      previousMode,
+    );
+    updateSweepTimer();
+  }
+
   function applyConfig(config: ProbeConfigInfo): void {
+    const previousMode = state.draft.mode;
     state.config = config;
     state.identify = {
       present: true,
@@ -777,71 +1494,543 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       mode: config.mode,
       rawRx: state.identify?.rawRx ?? "",
     };
-    state.draft = draftFromConfig(config, state.draft);
+    const nextDraft = draftFromConfig(config, state.draft);
+    state.liveSnapshot = cloneDraftConfig(nextDraft);
+    state.baselineRawBytes = config.rawBytes ? [...config.rawBytes] : null;
+    rememberCheckpoint(config, nextDraft);
+    adoptDraft(nextDraft, previousMode, true);
+  }
+
+  function discardToBaseline(): void {
+    if (!state.baselineDraft) return;
+    const previousMode = state.draft.mode;
+    adoptDraft(cloneDraftConfig(state.baselineDraft), previousMode, false);
+    state.error = null;
     state.loadPanelOpen = false;
-    state.sweepPhase = 0;
-    updateSweepTimer();
+    setStatus("Discarded edits");
+    setIdleStatus();
+    render();
+  }
+
+  function loadCheckpoint(checkpointId: string): void {
+    const checkpoint = state.checkpoints.find((entry) => entry.id === checkpointId);
+    if (!checkpoint) return;
+    const previousMode = state.draft.mode;
+    adoptDraft(cloneDraftConfig(checkpoint.draft), previousMode, true);
+    state.error = null;
+    state.loadPanelOpen = false;
+    setStatus(`Loaded ${checkpoint.label}`);
+    setIdleStatus();
+    render();
+  }
+
+  function destroyCharts(): void {
+    charts?.speedCurrent.destroy();
+    charts?.power.destroy();
+    charts?.efficiency.destroy();
+    charts = null;
+  }
+
+  function ensureCharts(operating: ReturnType<typeof buildOperatingPoint>): void {
+    const speedCanvas = options.root.querySelector<HTMLCanvasElement>(
+      "[data-chart='speed-current']",
+    );
+    const powerCanvas = options.root.querySelector<HTMLCanvasElement>("[data-chart='power']");
+    const efficiencyCanvas = options.root.querySelector<HTMLCanvasElement>(
+      "[data-chart='efficiency']",
+    );
+
+    if (!speedCanvas || !powerCanvas || !efficiencyCanvas) {
+      destroyCharts();
+      return;
+    }
+
+    const xMax = Math.max(0.1, operating.torqueMax);
+    const speedMax = withHeadroom(Math.max(1, operating.noLoadRpm), 1);
+    const currentMax = withHeadroom(Math.max(0.1, operating.effective.stallA), 0.1);
+    const powerMax = withHeadroom(
+      Math.max(0.1, ...operating.curves.map((curve) => curve.mechanicalPowerW)),
+      0.1,
+    );
+    const efficiencyMax = withHeadroom(1, 1, 1.04);
+
+    const speedData = curveData(operating.curves, (curve) => curve.speedRpm);
+    const currentData = curveData(operating.curves, (curve) => curve.currentA);
+    const powerData = curveData(operating.curves, (curve) => curve.mechanicalPowerW);
+    const efficiencyData = curveData(operating.curves, (curve) => curve.efficiency);
+
+    const speedPoint = {
+      x: Number(operating.point.torqueKgcm.toFixed(3)),
+      y: Number(operating.point.speedRpm.toFixed(6)),
+    };
+    const currentPoint = {
+      x: Number(operating.point.torqueKgcm.toFixed(3)),
+      y: Number(operating.point.currentA.toFixed(6)),
+    };
+    const powerPoint = {
+      x: Number(operating.point.torqueKgcm.toFixed(3)),
+      y: Number(operating.point.mechanicalPowerW.toFixed(6)),
+    };
+    const efficiencyPoint = {
+      x: Number(operating.point.torqueKgcm.toFixed(3)),
+      y: Number(operating.point.efficiency.toFixed(6)),
+    };
+
+    if (!charts) {
+      charts = {
+        speedCurrent: new Chart(speedCanvas, {
+          type: "line",
+          data: {
+            datasets: [
+              createLineDataset("Speed", "#111111", "y", speedData),
+              createLineDataset("Current", "#ff3a38", "y1", currentData),
+              createPointDataset(
+                "Operating speed",
+                "#2d78d0",
+                "y",
+                speedPoint,
+                formatOperatingTooltip(operating.point, "speed"),
+              ),
+              createPointDataset(
+                "Operating current",
+                "#2d78d0",
+                "y1",
+                currentPoint,
+                formatOperatingTooltip(operating.point, "current"),
+              ),
+            ],
+          },
+          options: baseChartOptions(xMax, speedMax, "speed (rpm)", currentMax, "current (A)"),
+        }),
+        power: new Chart(powerCanvas, {
+          type: "line",
+          data: {
+            datasets: [
+              createLineDataset("Mechanical power", "#8fc2f8", "y", powerData),
+              createPointDataset(
+                "Operating power",
+                "#2d78d0",
+                "y",
+                powerPoint,
+                formatOperatingTooltip(operating.point, "power"),
+              ),
+            ],
+          },
+          options: baseChartOptions(xMax, powerMax, "power (W)"),
+        }),
+        efficiency: new Chart(efficiencyCanvas, {
+          type: "line",
+          data: {
+            datasets: [
+              createLineDataset("Efficiency", "#f0c57a", "y", efficiencyData),
+              createPointDataset(
+                "Operating efficiency",
+                "#2d78d0",
+                "y",
+                efficiencyPoint,
+                formatOperatingTooltip(operating.point, "efficiency"),
+              ),
+            ],
+          },
+          options: baseChartOptions(xMax, efficiencyMax, "efficiency"),
+        }),
+      };
+    }
+
+    const speedMeta = options.root.querySelector<HTMLElement>("[data-chart-speed-meta]");
+    if (speedMeta) {
+      speedMeta.textContent = `${modeLabel(state.draft.mode)} @ ${state.sim.voltage.toFixed(1)}V`;
+    }
+
+    charts.speedCurrent.data.datasets[0].data = speedData;
+    charts.speedCurrent.data.datasets[1].data = currentData;
+    charts.speedCurrent.data.datasets[2].data = [speedPoint];
+    charts.speedCurrent.data.datasets[3].data = [currentPoint];
+    (
+      charts.speedCurrent.data.datasets[2] as ChartDataset<"line", ChartPoint[]> & {
+        tooltipData?: TooltipTableData;
+      }
+    ).tooltipData = formatOperatingTooltip(operating.point, "speed");
+    (
+      charts.speedCurrent.data.datasets[3] as ChartDataset<"line", ChartPoint[]> & {
+        tooltipData?: TooltipTableData;
+      }
+    ).tooltipData = formatOperatingTooltip(operating.point, "current");
+    charts.speedCurrent.options.scales = {
+      ...(charts.speedCurrent.options.scales ?? {}),
+      x: { ...(charts.speedCurrent.options.scales?.x ?? {}), min: 0, max: xMax },
+      y: { ...(charts.speedCurrent.options.scales?.y ?? {}), min: 0, max: speedMax },
+      y1: { ...(charts.speedCurrent.options.scales?.y1 ?? {}), min: 0, max: currentMax },
+    };
+    charts.speedCurrent.update("none");
+
+    charts.power.data.datasets[0].data = powerData;
+    charts.power.data.datasets[1].data = [powerPoint];
+    (
+      charts.power.data.datasets[1] as ChartDataset<"line", ChartPoint[]> & {
+        tooltipData?: TooltipTableData;
+      }
+    ).tooltipData = formatOperatingTooltip(operating.point, "power");
+    charts.power.options.scales = {
+      ...(charts.power.options.scales ?? {}),
+      x: { ...(charts.power.options.scales?.x ?? {}), min: 0, max: xMax },
+      y: { ...(charts.power.options.scales?.y ?? {}), min: 0, max: powerMax },
+    };
+    charts.power.update("none");
+
+    charts.efficiency.data.datasets[0].data = efficiencyData;
+    charts.efficiency.data.datasets[1].data = [efficiencyPoint];
+    (
+      charts.efficiency.data.datasets[1] as ChartDataset<"line", ChartPoint[]> & {
+        tooltipData?: TooltipTableData;
+      }
+    ).tooltipData = formatOperatingTooltip(operating.point, "efficiency");
+    charts.efficiency.options.scales = {
+      ...(charts.efficiency.options.scales ?? {}),
+      x: { ...(charts.efficiency.options.scales?.x ?? {}), min: 0, max: xMax },
+      y: { ...(charts.efficiency.options.scales?.y ?? {}), min: 0, max: efficiencyMax },
+    };
+    charts.efficiency.update("none");
+  }
+
+  function renderSweepFrame(updateCharts = false): void {
+    const servoHost = options.root.querySelector<HTMLElement>("[data-sim-servo]");
+    if (!servoHost) {
+      return;
+    }
+
+    const operating = buildOperatingPoint(state.config, state.draft, state.sim);
+    const rangeValue = options.root.querySelector<HTMLElement>("[data-range-value]");
+    const sensitivityValue = options.root.querySelector<HTMLElement>("[data-sensitivity-value]");
+    const neutralValue = options.root.querySelector<HTMLElement>("[data-neutral-value]");
+    const dampeningValue = options.root.querySelector<HTMLElement>("[data-dampening-value]");
+    const proptlValue = options.root.querySelector<HTMLElement>("[data-proptl-value]");
+    const powerLimitValue = options.root.querySelector<HTMLElement>("[data-power-limit-value]");
+    const pwmValue = options.root.querySelector<HTMLElement>("[data-live-pwm-value]");
+    const pwmInput = options.root.querySelector<HTMLInputElement>("[data-slider='pwm']");
+    const voltageValue = options.root.querySelector<HTMLElement>("[data-voltage-value]");
+    const voltageMarks = options.root.querySelector<HTMLElement>("[data-voltage-detents]");
+    const loadValue = options.root.querySelector<HTMLElement>("[data-load-value]");
+    const loadInput = options.root.querySelector<HTMLInputElement>("[data-slider='load']");
+    const loadMax = options.root.querySelector<HTMLElement>("[data-load-max]");
+    const discardButton = options.root.querySelector<HTMLButtonElement>("[data-command='discard']");
+    const applyButton = options.root.querySelector<HTMLButtonElement>("[data-command='apply']");
+    const sweepButton = options.root.querySelector<HTMLButtonElement>(
+      "[data-command='toggle-sweep']",
+    );
+    const loadSliderMax = maxAvailableTorqueKgcm(
+      operating.spec,
+      state.sim.voltage,
+      state.draft.pwmPowerPercent,
+    );
+
+    servoHost.innerHTML = servoSketch(operating.spec, operating.point, state.draft);
+
+    if (rangeValue) {
+      rangeValue.textContent = `${Math.round((operating.spec.maxRangeDeg * state.draft.rangePercent) / 100)} deg`;
+    }
+    if (sensitivityValue) {
+      sensitivityValue.textContent = `${state.draft.sensitivityStep} · ${sensitivityLabel(state.draft.sensitivityStep)}`;
+    }
+    if (neutralValue) {
+      neutralValue.textContent = `${formatSignedUs(state.draft.neutralUs)} us`;
+    }
+    if (dampeningValue) {
+      dampeningValue.textContent = String(state.draft.dampeningFactor);
+    }
+    if (proptlValue) {
+      proptlValue.textContent = `${state.draft.proptlSeconds.toFixed(1)} s`;
+    }
+    if (powerLimitValue) {
+      powerLimitValue.textContent = `${state.draft.pwmPowerPercent.toFixed(0)} %`;
+    }
+    if (pwmValue) {
+      pwmValue.textContent = `${operating.point.pwmUs} us`;
+    }
+    if (
+      pwmInput &&
+      state.draft.mode === "servo_mode" &&
+      state.sim.sweepEnabled &&
+      document.activeElement !== pwmInput
+    ) {
+      pwmInput.value = String(operating.point.pwmUs);
+    }
+    if (voltageValue) {
+      voltageValue.textContent = `${state.sim.voltage.toFixed(1)} V`;
+    }
+    if (voltageMarks) {
+      voltageMarks.innerHTML = Array.from(
+        new Set(operating.spec.points.map((sample) => sample.voltage.toFixed(1))),
+      )
+        .map((value) => `<span>${escapeHtml(value)}</span>`)
+        .join("");
+    }
+    if (loadValue) {
+      loadValue.textContent = `${state.sim.loadKgcm.toFixed(1)} kgf*cm`;
+    }
+    if (loadInput) {
+      loadInput.max = loadSliderMax.toFixed(2);
+      if (document.activeElement !== loadInput) {
+        loadInput.value = state.sim.loadKgcm.toFixed(2);
+      }
+    }
+    if (loadMax) {
+      loadMax.textContent = loadSliderMax.toFixed(1);
+    }
+    const workingDirty = isDirty(state.baselineDraft, state.draft);
+    const liveDirty = isDirty(state.liveSnapshot, state.draft);
+    if (discardButton) {
+      discardButton.disabled = !(workingDirty && Boolean(state.baselineDraft) && !state.busyAction);
+    }
+    if (applyButton) {
+      applyButton.disabled = !(liveDirty && state.config && !state.busyAction);
+    }
+    if (sweepButton) {
+      sweepButton.innerHTML = sweepControlIcon(state.sim.playbackRunning);
+      sweepButton.title =
+        state.draft.mode === "servo_mode"
+          ? state.sim.sweepEnabled && state.sim.playbackRunning
+            ? "Pause sweep"
+            : "Play sweep"
+          : state.sim.playbackRunning
+            ? "Pause animation"
+            : "Play animation";
+      sweepButton.setAttribute(
+        "aria-label",
+        state.draft.mode === "servo_mode"
+          ? state.sim.sweepEnabled && state.sim.playbackRunning
+            ? "Pause sweep"
+            : "Play sweep"
+          : state.sim.playbackRunning
+            ? "Pause animation"
+            : "Play animation",
+      );
+    }
+    const pointSnapshot = options.root.querySelector<HTMLElement>("[data-operating-point]");
+    if (pointSnapshot) {
+      pointSnapshot.dataset.torqueKgcm = operating.point.torqueKgcm.toFixed(3);
+      pointSnapshot.dataset.speedRpm = operating.point.speedRpm.toFixed(3);
+      pointSnapshot.dataset.currentA = operating.point.currentA.toFixed(3);
+      pointSnapshot.dataset.mechanicalPowerW = operating.point.mechanicalPowerW.toFixed(3);
+      pointSnapshot.dataset.electricalPowerW = operating.point.electricalPowerW.toFixed(3);
+      pointSnapshot.dataset.heatW = operating.point.heatW.toFixed(3);
+      pointSnapshot.dataset.efficiency = operating.point.efficiency.toFixed(4);
+      pointSnapshot.dataset.effectiveVoltage = operating.point.effectiveVoltage.toFixed(3);
+    }
+    if (updateCharts) {
+      ensureCharts(operating);
+    }
+  }
+
+  function refreshInteractiveUi(): void {
+    renderSweepFrame(true);
   }
 
   function updateSweepTimer(): void {
-    const shouldRun = state.draft.mode === "servo_mode" && state.draft.sweepEnabled;
-    if (shouldRun && !sweepTimer) {
-      sweepTimer = setInterval(() => {
-        state.sweepPhase = (state.sweepPhase + 0.04) % 2;
-        render();
-      }, 90);
+    const liveServoPresent =
+      state.inventory.openedId !== null && (state.identify?.present ?? Boolean(state.config));
+    const shouldRun =
+      liveServoPresent &&
+      ((state.draft.mode === "servo_mode" && state.sim.sweepEnabled && state.sim.playbackRunning) ||
+        (state.draft.mode === "cr_mode" &&
+          state.sim.playbackRunning &&
+          Math.abs(commandRatio(state.draft, state.sim.pwmUs)) > 0.02));
+    if (shouldRun && !sweepFrame) {
+      const tick = (timestamp: number) => {
+        if (!sweepFrame) {
+          return;
+        }
+        if (lastSweepFrameTs === null) {
+          lastSweepFrameTs = timestamp;
+        }
+        const deltaMs = timestamp - lastSweepFrameTs;
+        lastSweepFrameTs = timestamp;
+        if (state.draft.mode === "servo_mode") {
+          state.sim.servoSweepPhase = (state.sim.servoSweepPhase + (deltaMs * 0.04) / 90) % 2;
+        } else {
+          const operating = buildOperatingPoint(state.config, state.draft, state.sim);
+          const degreesPerMs =
+            ((operating.point.speedRpm * 360) / 60000) *
+            (operating.point.commandSigned >= 0 ? 1 : -1);
+          state.sim.crAngleDeg =
+            (((state.sim.crAngleDeg + deltaMs * degreesPerMs) % 360) + 360) % 360;
+        }
+        renderSweepFrame();
+        sweepFrame = window.requestAnimationFrame(tick);
+      };
+      sweepFrame = window.requestAnimationFrame(tick);
     }
-    if (!shouldRun && sweepTimer) {
-      clearInterval(sweepTimer);
-      sweepTimer = null;
+    if (!shouldRun && sweepFrame) {
+      window.cancelAnimationFrame(sweepFrame);
+      sweepFrame = null;
+      lastSweepFrameTs = null;
     }
   }
 
-  async function doSync(): Promise<void> {
-    if (state.busyAction) return;
-    state.busyAction = "Sync";
-    state.error = null;
-    render();
-    try {
-      if (options.identifyServo) {
-        const identifyReply = await options.identifyServo.run();
-        state.identify = identifyReply;
-        if (!identifyReply.present) {
-          state.config = null;
-          log("Servo not detected");
-          return;
+  function updateLivePollTimer(): void {
+    const shouldRun = (options.livePollIntervalMs ?? 0) > 0;
+    if (shouldRun && !livePollTimer) {
+      livePollTimer = setInterval(() => {
+        const workingDirty = isDirty(state.baselineDraft, state.draft);
+        const liveDirty = isDirty(state.liveSnapshot, state.draft);
+        if (state.inventory.openedId !== null && !state.busyAction && !workingDirty && !liveDirty) {
+          void probeLiveStateSilently();
         }
-      }
+      }, options.livePollIntervalMs);
+    }
+    if (!shouldRun && livePollTimer) {
+      clearInterval(livePollTimer);
+      livePollTimer = null;
+    }
+  }
 
-      if (!options.readFullConfig) {
-        log("Sync");
+  async function probeLiveStateSilently(): Promise<void> {
+    if (liveProbeInFlight || state.busyAction || state.inventory.openedId === null) return;
+
+    liveProbeInFlight = true;
+    let shouldRender = false;
+
+    try {
+      if (!options.identifyServo) {
         return;
       }
 
-      const config = await options.readFullConfig.run();
-      applyConfig(config);
-      log("Sync");
+      const previousPresent = state.identify?.present === true || state.config !== null;
+      const previousMode = state.identify?.mode ?? "unknown";
+      if (!previousPresent) {
+        setStatus("Checking for servo");
+      }
+      const identifyReply = await options.identifyServo.run();
+
+      if (!identifyReply.present) {
+        missingServoStreak += 1;
+        if (missingServoStreak >= 2) {
+          state.identify = identifyReply;
+          if (state.config !== null || previousPresent || state.error !== null) {
+            state.config = null;
+            state.error = null;
+            updateSweepTimer();
+            shouldRender = true;
+          }
+        }
+        return;
+      }
+
+      missingServoStreak = 0;
+      probeFailureStreak = 0;
+      state.identify = identifyReply;
+      if (state.error !== null) {
+        state.error = null;
+        shouldRender = true;
+      }
+
+      const readFullConfigAction = options.readFullConfig;
+      const shouldLoadConfig =
+        readFullConfigAction !== undefined &&
+        (state.config === null ||
+          previousPresent === false ||
+          (previousMode !== "unknown" && previousMode !== identifyReply.mode));
+
+      if (!shouldLoadConfig) {
+        if (previousPresent === false || previousMode !== identifyReply.mode) {
+          shouldRender = true;
+        }
+        lastSilentError = null;
+        return;
+      }
+
+      try {
+        const previousModelId = state.config?.modelId ?? null;
+        if (state.config === null) {
+          setStatus("Reading setup");
+        }
+        const config = await readFullConfigAction.run();
+        applyConfig(config);
+        lastSilentError = null;
+        shouldRender = true;
+
+        const identityLabel = servoIdentityLabel(config, true);
+        if (previousModelId !== config.modelId && identityLabel !== "Detected") {
+          setStatus(`Servo detected: ${identityLabel}`);
+        }
+        setIdleStatus(previousModelId === config.modelId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        probeFailureStreak += 1;
+        if (lastSilentError !== message) {
+          logger.debug(`Probe retry: ${message}`);
+          lastSilentError = message;
+        }
+        if (probeFailureStreak >= 2 && (state.config !== null || previousPresent)) {
+          state.identify = null;
+          state.config = null;
+          updateSweepTimer();
+          setStatus("Checking for servo", false);
+          shouldRender = true;
+        } else if (previousPresent === false) {
+          shouldRender = true;
+        }
+      }
     } catch (error) {
-      state.error = error instanceof Error ? error.message : String(error);
-      log("Sync failed");
+      const message = error instanceof Error ? error.message : String(error);
+      probeFailureStreak += 1;
+      if (lastSilentError !== message) {
+        logger.debug(`Probe retry: ${message}`);
+        lastSilentError = message;
+      }
+      if (probeFailureStreak >= 2 && (state.config !== null || state.identify?.present === true)) {
+        state.identify = null;
+        state.config = null;
+        updateSweepTimer();
+        setStatus("Checking for servo", false);
+        shouldRender = true;
+      }
     } finally {
-      state.busyAction = null;
-      render();
+      liveProbeInFlight = false;
+      if (shouldRender) {
+        render();
+      }
     }
   }
 
-  async function doConnectAndSync(): Promise<void> {
-    if (state.busyAction) return;
+  async function doAuthorizeAndConnect(): Promise<void> {
+    if (state.busyAction || !options.requestDevice) return;
+
     state.busyAction = "Connect";
     state.error = null;
+    setStatus("Requesting USB permission");
     render();
+
+    try {
+      updateInventory(await options.requestDevice.run());
+      await doConnectAndSync(false, true);
+      return;
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      setIdleStatus();
+    } finally {
+      if (state.busyAction === "Connect") {
+        state.busyAction = null;
+        render();
+      }
+    }
+  }
+
+  async function doConnectAndSync(allowRequest = false, alreadyBusy = false): Promise<void> {
+    if (state.busyAction && !alreadyBusy) return;
+    if (!alreadyBusy) {
+      state.busyAction = "Connect";
+      state.error = null;
+      setStatus(allowRequest ? "Requesting USB permission" : "Connecting adapter");
+      render();
+    }
     try {
       if (!state.inventory.openedId) {
+        if (!state.inventory.devices.length && allowRequest && options.requestDevice) {
+          updateInventory(await options.requestDevice.run());
+        }
         if (!state.inventory.devices.length && options.reconnectDevice) {
           updateInventory(await options.reconnectDevice.run());
-        }
-        if (!state.inventory.devices.length && options.requestDevice) {
-          updateInventory(await options.requestDevice.run());
         }
         if (!state.inventory.devices.length && options.refreshInventory) {
           updateInventory(await options.refreshInventory.run());
@@ -852,6 +2041,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           );
         }
         if (options.openDevice) {
+          setStatus("Connecting adapter", false);
           updateInventory(await options.openDevice.run());
         }
       }
@@ -861,89 +2051,199 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       }
 
       if (options.identifyServo) {
+        setStatus("Checking for servo");
         const identifyReply = await options.identifyServo.run();
         state.identify = identifyReply;
         if (!identifyReply.present) {
           state.config = null;
-          log("Servo not detected");
+          updateSweepTimer();
+          setStatus("Checking for servo", false);
           return;
         }
       }
 
       if (options.readFullConfig) {
+        setStatus("Reading setup");
         const config = await options.readFullConfig.run();
         applyConfig(config);
       }
 
-      log("Connected");
+      setIdleStatus();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log("Connect failed");
+      setIdleStatus();
     } finally {
-      state.busyAction = null;
-      render();
+      if (!alreadyBusy) {
+        state.busyAction = null;
+        render();
+      }
     }
   }
 
-  function triggerSave(): void {
-    const payload = {
-      kind: "axon-sim-draft",
-      version: 1,
+  function savePayload(): Record<string, unknown> {
+    return {
+      kind: "axon-config-draft",
+      version: 2,
       savedAt: new Date().toISOString(),
-      draft: state.draft,
+      config: state.draft,
       modelId: state.config?.modelId ?? null,
+      mode: state.draft.mode,
     };
+  }
 
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  function downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `axon-${state.config?.modelId ?? "draft"}.json`;
+    anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
-    log("Save");
+  }
+
+  async function triggerSave(format: "axon" | "svo"): Promise<void> {
+    const baseName = `axon-${(state.config?.modelId ?? "draft").toLowerCase()}`;
+    const payload = savePayload();
+    const axonBlob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const svoBytes = state.baselineRawBytes
+      ? encodeDraftOntoRawConfig(Uint8Array.from(state.baselineRawBytes), state.draft)
+      : null;
+
+    type SavePickerWindow = Window & {
+      showSaveFilePicker?: (options: {
+        suggestedName?: string;
+        types?: Array<{ description: string; accept: Record<string, string[]> }>;
+      }) => Promise<{
+        name?: string;
+        createWritable: () => Promise<{
+          write: (data: Blob | BufferSource | string) => Promise<void>;
+          close: () => Promise<void>;
+        }>;
+      }>;
+    };
+
+    const saveWindow = window as SavePickerWindow;
+    if (typeof saveWindow.showSaveFilePicker === "function") {
+      try {
+        const handle = await saveWindow.showSaveFilePicker({
+          suggestedName: `${baseName}.${format}`,
+          types:
+            format === "axon"
+              ? [
+                  {
+                    description: "Axon config (.axon)",
+                    accept: { "application/json": [".axon"] },
+                  },
+                ]
+              : [
+                  {
+                    description: "Vendor programmer config (.svo)",
+                    accept: { "application/octet-stream": [".svo"] },
+                  },
+                ],
+        });
+        if (format === "svo") {
+          if (!svoBytes) {
+            throw new Error("No raw config block is available for .svo export yet.");
+          }
+          const binary = new Uint8Array(Array.from(svoBytes));
+          const writable = await handle.createWritable();
+          await writable.write(new Blob([binary], { type: "application/octet-stream" }));
+          await writable.close();
+          setStatus("Saved .svo");
+        } else {
+          const writable = await handle.createWritable();
+          await writable.write(JSON.stringify(payload, null, 2));
+          await writable.close();
+          setStatus("Saved .axon");
+        }
+        setIdleStatus();
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setIdleStatus();
+          return;
+        }
+        state.error = error instanceof Error ? error.message : String(error);
+        render();
+        return;
+      }
+    }
+
+    if (format === "svo") {
+      if (!svoBytes) {
+        state.error = "No raw config block is available for .svo export yet.";
+        render();
+        return;
+      }
+      const binary = new Uint8Array(Array.from(svoBytes));
+      downloadBlob(new Blob([binary], { type: "application/octet-stream" }), `${baseName}.svo`);
+      setStatus("Saved .svo");
+    } else {
+      downloadBlob(axonBlob, `${baseName}.axon`);
+      setStatus("Saved .axon");
+    }
+    setIdleStatus();
   }
 
   function applyLoadedDraft(value: unknown): void {
     if (!value || typeof value !== "object") {
       throw new Error("Unsupported file format.");
     }
-    const payload = value as { draft?: Partial<DraftSetup> };
-    if (!payload.draft) {
+    const payload = value as {
+      config?: Partial<DraftConfig>;
+      draft?: Partial<DraftConfig & SimState>;
+    };
+    const configDraft = payload.config ?? payload.draft;
+    if (!configDraft) {
       throw new Error("Missing draft payload.");
     }
 
-    state.draft = {
-      ...state.draft,
-      ...payload.draft,
-      mode: payload.draft.mode === "cr_mode" ? "cr_mode" : "servo_mode",
-      direction: payload.draft.direction === "ccw" ? "ccw" : "cw",
-      pwmLossBehavior:
-        payload.draft.pwmLossBehavior === "hold" || payload.draft.pwmLossBehavior === "neutral"
-          ? payload.draft.pwmLossBehavior
-          : "release",
-      sweepEnabled:
-        payload.draft.sweepEnabled !== undefined
-          ? Boolean(payload.draft.sweepEnabled)
-          : state.draft.mode === "servo_mode",
-      profileId:
-        typeof payload.draft.profileId === "string"
-          ? payload.draft.profileId
-          : state.draft.profileId,
-      rangePercent: clamp(Number(payload.draft.rangePercent ?? state.draft.rangePercent), 10, 100),
-      neutralUs: clamp(Number(payload.draft.neutralUs ?? state.draft.neutralUs), -127, 127),
-      pwmUs: clamp(Number(payload.draft.pwmUs ?? state.draft.pwmUs), 500, 2500),
-      voltage: clamp(Number(payload.draft.voltage ?? state.draft.voltage), 4.8, 8.4),
-      loadKgcm: clamp(Number(payload.draft.loadKgcm ?? state.draft.loadKgcm), 0, 999),
-    };
+    const previousMode = state.draft.mode;
+    const nextDraft = draftFromPartial(configDraft, state.draft);
+    adoptDraft(nextDraft, previousMode, true);
     state.loadPanelOpen = false;
-    state.sweepPhase = 0;
-    updateSweepTimer();
+    state.error = null;
     render();
-    log("Load");
+    setStatus("Loaded config");
+    setIdleStatus();
+  }
+
+  function handleSvoFile(file: File): void {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      state.error = "Could not read file.";
+      render();
+    };
+    reader.onload = () => {
+      try {
+        const bytes = new Uint8Array(reader.result as ArrayBuffer);
+        const mode: CoreServoMode =
+          state.identify?.mode && state.identify.mode !== "unknown"
+            ? state.identify.mode
+            : state.draft.mode;
+        const config = configInfoFromRawBytes(bytes, mode);
+        const nextDraft = draftFromConfig(config, state.draft);
+        state.baselineRawBytes = [...(config.rawBytes ?? [])];
+        adoptDraft(nextDraft, state.draft.mode, true);
+        state.loadPanelOpen = false;
+        state.error = null;
+        render();
+        setStatus(`Loaded ${file.name}`);
+        setIdleStatus();
+      } catch (error) {
+        state.error = error instanceof Error ? error.message : String(error);
+        render();
+      }
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   function handleFile(file: File): void {
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith(".svo")) {
+      handleSvoFile(file);
+      return;
+    }
     const reader = new FileReader();
     reader.onerror = () => {
       state.error = "Could not read file.";
@@ -961,64 +2261,86 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     reader.readAsText(file);
   }
 
+  async function promptLoadFile(fileInput: HTMLInputElement | null): Promise<void> {
+    type OpenPickerWindow = Window & {
+      showOpenFilePicker?: (options: {
+        multiple?: boolean;
+        excludeAcceptAllOption?: boolean;
+        types?: Array<{ description: string; accept: Record<string, string[]> }>;
+      }) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    };
+
+    const openWindow = window as OpenPickerWindow;
+    if (typeof openWindow.showOpenFilePicker === "function") {
+      try {
+        const handles = await openWindow.showOpenFilePicker({
+          multiple: false,
+          excludeAcceptAllOption: false,
+          types: [
+            {
+              description: "Axon config files",
+              accept: {
+                "application/json": [".axon"],
+                "application/octet-stream": [".svo"],
+              },
+            },
+          ],
+        });
+        const file = await handles[0]?.getFile();
+        if (file) {
+          handleFile(file);
+        }
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    fileInput?.click();
+  }
+
   function render(): void {
+    destroyCharts();
     const connected = Boolean(state.inventory.openedId);
     const visible = state.inventory.devices.length > 0;
     const servoPresent = state.identify?.present ?? Boolean(state.config);
-    const dirty = isDirty(state.config, state.draft);
-    const servoLabel =
-      state.config?.modelName ??
-      (servoPresent ? (state.config?.modelId ?? "Detected") : "Not Found");
-    const canDiscard = dirty && Boolean(state.config) && !state.busyAction;
+    const activeModelId = servoPresent ? (state.config?.modelId ?? null) : null;
+    const activeModelName = servoPresent
+      ? shortModelLabel(state.config?.modelName ?? activeModelId)
+      : null;
+    const fileActionsEnabled = connected && servoPresent && Boolean(state.config);
+    const visibleCheckpoints =
+      activeModelId === null
+        ? []
+        : state.checkpoints
+            .filter((checkpoint) => checkpoint.modelId === activeModelId)
+            .slice(0, 3);
+    const workingDirty = isDirty(state.baselineDraft, state.draft);
+    const liveDirty = isDirty(state.liveSnapshot, state.draft);
+    const servoLabel = servoIdentityLabel(state.config, servoPresent);
+    const canDiscard = workingDirty && Boolean(state.baselineDraft) && !state.busyAction;
+    const canApply = liveDirty && Boolean(state.config) && !state.busyAction;
     const emptyState: EmptyStateKind = !connected ? "adapter" : !servoPresent ? "servo" : null;
-
-    const operating = buildOperatingPoint(state.config, state.draft, state.sweepPhase);
+    const showRange = state.draft.mode === "servo_mode";
+    const centerLabel = state.draft.mode === "servo_mode" ? "Center" : "Stop trim";
+    const showSoftStart = state.draft.mode === "servo_mode";
+    const showSensitivity = state.draft.mode === "servo_mode";
+    const showDampening = state.draft.mode === "servo_mode";
+    const showOverload = state.draft.mode === "servo_mode";
+    const showSignalLoss = state.draft.mode === "servo_mode";
+    const showProptl = state.draft.mode === "cr_mode";
+    const operating = buildOperatingPoint(state.config, state.draft, state.sim);
     const voltageDetents = Array.from(
       new Set(operating.spec.points.map((sample) => sample.voltage.toFixed(1))),
     );
+    const loadSliderMax = maxAvailableTorqueKgcm(
+      operating.spec,
+      state.sim.voltage,
+      state.draft.pwmPowerPercent,
+    );
     const point = operating.point;
-    const xMax = operating.torqueMax;
-    const speedMax = Math.max(1, operating.noLoadRpm);
-    const currentMax = Math.max(0.1, operating.base.stallA);
-    const powerMax = Math.max(0.1, ...operating.curves.map((curve) => curve.mechanicalPowerW));
-    const efficiencyMax = 1;
-
-    const speedPath = svgPathFromSeries(
-      operating.curves,
-      (curve) => curve.torqueKgcm,
-      (curve) => curve.speedRpm,
-      xMax,
-      speedMax,
-      280,
-      120,
-    );
-    const currentPath = svgPathFromSeries(
-      operating.curves,
-      (curve) => curve.torqueKgcm,
-      (curve) => curve.currentA,
-      xMax,
-      currentMax,
-      280,
-      120,
-    );
-    const powerPath = svgPathFromSeries(
-      operating.curves,
-      (curve) => curve.torqueKgcm,
-      (curve) => curve.mechanicalPowerW,
-      xMax,
-      powerMax,
-      280,
-      120,
-    );
-    const efficiencyPath = svgPathFromSeries(
-      operating.curves,
-      (curve) => curve.torqueKgcm,
-      (curve) => curve.efficiency,
-      xMax,
-      efficiencyMax,
-      280,
-      120,
-    );
 
     const diagnostics = {
       environment: state.environment,
@@ -1026,6 +2348,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       identify: state.identify,
       config: state.config,
       draft: state.draft,
+      sim: state.sim,
       point,
       logs: state.logs,
     };
@@ -1033,7 +2356,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     options.root.innerHTML = `
       <style>
         * { box-sizing: border-box; }
-        body { margin: 0; }
+        html { overflow-y: scroll; }
+        body {
+          margin: 0;
+          font-family:
+            Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
         :root { color-scheme: light; }
 
         .shell {
@@ -1052,7 +2380,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .topline {
           display: grid;
-          grid-template-columns: 1fr auto;
+          grid-template-columns: auto 1fr auto;
           gap: 10px;
           align-items: center;
           margin-bottom: 12px;
@@ -1060,6 +2388,103 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border-radius: 8px;
           background: #161616;
           color: #f7f7f7;
+        }
+
+        .top-menu {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+        }
+
+        .menu-button {
+          width: 36px;
+          height: 36px;
+          padding: 0;
+          border-radius: 8px;
+          border: 1px solid #333333;
+          background: #1e1e1e;
+          color: #f7f7f7;
+          font: inherit;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .menu-button:hover:not(:disabled) {
+          border-color: #6b7280;
+        }
+
+        .menu-button-lines {
+          width: 16px;
+          height: 12px;
+          display: grid;
+          align-content: space-between;
+        }
+
+        .menu-button-lines span {
+          display: block;
+          height: 2px;
+          border-radius: 999px;
+          background: currentColor;
+        }
+
+        .top-menu-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          left: 0;
+          z-index: 30;
+          min-width: 280px;
+          padding: 10px;
+          border: 1px solid #2d2d2d;
+          border-radius: 8px;
+          background: #1b1b1b;
+          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+          display: grid;
+          gap: 10px;
+        }
+
+        .top-menu-copy {
+          color: #c7ccd4;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .top-menu-actions {
+          display: grid;
+          gap: 8px;
+        }
+
+        .top-menu-actions .tool {
+          width: 100%;
+          text-align: left;
+          justify-content: flex-start;
+        }
+
+        .top-menu-section-title {
+          color: #9ca3af;
+          font-size: 10px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .top-menu-checkpoints {
+          display: grid;
+          gap: 8px;
+          max-height: 220px;
+          overflow: auto;
+        }
+
+        .top-menu-checkpoints .checkpoint-item,
+        .top-menu-checkpoints .checkpoint-empty {
+          background: #111111;
+          border-color: #2d2d2d;
+          color: #f7f7f7;
+        }
+
+        .top-menu-checkpoints .checkpoint-meta {
+          color: #9ca3af;
         }
 
         .toolbar {
@@ -1107,7 +2532,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .statebar {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 220px));
+          grid-template-columns: repeat(3, minmax(0, 220px));
           gap: 8px;
         }
 
@@ -1115,6 +2540,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           display: inline-flex;
           gap: 8px;
           align-items: center;
+        }
+
+        .actions .tool,
+        .actions .apply {
+          min-width: 76px;
         }
 
         .state {
@@ -1125,6 +2555,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border-radius: 8px;
           border: 1px solid #2d2d2d;
           background: #1b1b1b;
+        }
+
+        .state-button {
+          width: 100%;
+          text-align: left;
+          cursor: pointer;
         }
 
         .state-label {
@@ -1210,9 +2646,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         .mode-button,
         .direction-button,
         .loss-button,
-        .load-save-button,
-        .profile-chip {
-          min-height: 42px;
+        .load-save-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          height: 44px;
           padding: 0 10px;
           border-radius: 8px;
           border: 1px solid #d4d9e0;
@@ -1225,8 +2664,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .mode-button[data-selected="true"],
         .direction-button[data-selected="true"],
-        .loss-button[data-selected="true"],
-        .profile-chip[data-selected="true"] {
+        .loss-button[data-selected="true"] {
           background: #ffffff;
           border-color: #111111;
           box-shadow: inset 0 0 0 1px #111111;
@@ -1266,18 +2704,101 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           place-items: center;
           width: 16px;
           height: 16px;
+          padding: 0;
           border-radius: 999px;
           border: 1px solid #ccd2d9;
+          background: #ffffff;
           color: #737c89;
           font-size: 11px;
           line-height: 1;
           cursor: help;
+          appearance: none;
+          -webkit-appearance: none;
+        }
+
+        .help:focus-visible {
+          outline: 2px solid #5aa5ff;
+          outline-offset: 2px;
         }
 
         .slider {
           width: 100%;
           margin: 0;
           accent-color: #1f6ed4;
+        }
+
+        .number-input {
+          width: 100%;
+          min-height: 38px;
+          padding: 0 10px;
+          border: 1px solid #d4d9e0;
+          border-radius: 8px;
+          background: #ffffff;
+          color: #111111;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .number-input:disabled {
+          background: #f2f4f7;
+          border-color: #e5e7eb;
+          color: #9ca3af;
+          cursor: not-allowed;
+        }
+
+        .unit-input {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .unit-input .number-input {
+          padding-right: 44px;
+        }
+
+        .unit-suffix {
+          position: absolute;
+          right: 10px;
+          color: #6b7280;
+          font-size: 12px;
+          font-weight: 700;
+          pointer-events: none;
+        }
+
+        .unit-input[data-disabled="true"] .unit-suffix {
+          color: #b6bcc7;
+        }
+
+        .compound-grid {
+          display: grid;
+          gap: 8px;
+        }
+
+        .compound-row {
+          display: grid;
+          gap: 8px;
+          grid-template-columns: 58px minmax(0, 1fr);
+          align-items: center;
+        }
+
+        .compound-label {
+          color: #4c5664;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .compound-inputs {
+          display: grid;
+          gap: 8px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .compound-caption {
+          color: #95a0ae;
+          font-size: 11px;
+          text-align: right;
         }
 
         .toggle-setting {
@@ -1292,7 +2813,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         }
 
         .toggle-pill {
-          min-height: 42px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          height: 44px;
           padding: 0 10px;
           border-radius: 999px;
           border: 1px solid #d4d9e0;
@@ -1309,32 +2834,44 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           box-shadow: inset 0 0 0 1px #111111;
         }
 
-        .load-save-row {
+        .checkpoint-list {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 8px;
+          max-height: 220px;
+          overflow: auto;
         }
 
-        .drop-hint {
-          margin-top: -4px;
-          color: #95a0ae;
-          font-size: 11px;
-          text-align: center;
-        }
-
-        .load-panel {
-          padding: 10px;
-          border: 1px solid #dbe2ea;
+        .checkpoint-item {
+          display: grid;
+          gap: 2px;
+          width: 100%;
+          padding: 10px 12px;
+          border: 1px solid #d4d9e0;
           border-radius: 8px;
-          background: #f7f9fb;
-          display: grid;
-          gap: 8px;
+          background: #ffffff;
+          color: #111111;
+          text-align: left;
+          cursor: pointer;
         }
 
-        .profile-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 8px;
+        .checkpoint-item:hover {
+          border-color: #6b7280;
+        }
+
+        .checkpoint-label {
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .checkpoint-meta {
+          color: #6b7280;
+          font-size: 12px;
+        }
+
+        .checkpoint-empty {
+          color: #6b7280;
+          font-size: 12px;
+          line-height: 1.4;
         }
 
         .sim-pane {
@@ -1388,6 +2925,79 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           cursor: default;
         }
 
+        .empty-note {
+          margin: -4px 0 0;
+          color: #6b7280;
+          font-size: 13px;
+          line-height: 1.4;
+        }
+
+        .status-log {
+          margin-bottom: 12px;
+          padding: 10px 12px;
+          border: 1px solid #dcded9;
+          border-radius: 8px;
+          background: #ffffff;
+        }
+
+        .status-log-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+
+        .status-log-title {
+          color: #111111;
+          font-size: 13px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .status-log-actions {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .status-log-button {
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid #d4d9e0;
+          background: #fafaf8;
+          color: #111111;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+
+        .status-log-list {
+          display: grid;
+          gap: 6px;
+          max-height: 220px;
+          overflow: auto;
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 12px;
+          line-height: 1.4;
+        }
+
+        .status-log-entry {
+          color: #1f2937;
+        }
+
+        .status-log-entry[data-level="debug"] {
+          color: #6b7280;
+        }
+
+        .status-log-time {
+          color: #6b7280;
+          margin-right: 8px;
+        }
+
         .sim-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1410,8 +3020,56 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border: 1px solid #dbe2ea;
           border-radius: 8px;
           background: linear-gradient(180deg, #ffffff 0%, #fbfbf9 100%);
+          display: grid;
+          grid-template-rows: minmax(0, 1fr) auto;
+          gap: 10px;
+        }
+
+        .servo-card-figure {
           display: flex;
           justify-content: center;
+          align-items: center;
+          min-height: 0;
+        }
+
+        .servo-card-controls {
+          display: flex;
+          justify-content: flex-start;
+        }
+
+        .servo-sweep-control {
+          position: relative;
+          z-index: 1;
+          width: 40px;
+          height: 40px;
+          border: none;
+          border-radius: 999px;
+          background: rgba(17, 17, 17, 0.88);
+          color: #ffffff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+          appearance: none;
+          -webkit-appearance: none;
+          touch-action: manipulation;
+          user-select: none;
+        }
+
+        .servo-sweep-control svg {
+          width: 18px;
+          height: 18px;
+          display: block;
+          pointer-events: none;
+        }
+
+        .servo-sweep-control svg * {
+          pointer-events: none;
+        }
+
+        [data-sim-servo] {
+          pointer-events: none;
         }
 
         .servo-svg {
@@ -1470,14 +3128,89 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           background: #ffffff;
         }
 
+        .chart-canvas-wrap {
+          position: relative;
+          height: 168px;
+        }
+
+        .chart-tooltip {
+          position: fixed;
+          z-index: 9999;
+          min-width: 320px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          background: rgba(17, 17, 17, 0.94);
+          color: #f7f7f7;
+          box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+          font-family:
+            Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          opacity: 0;
+          transition: opacity 80ms linear;
+        }
+
+        .chart-tooltip-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .chart-tooltip-table th,
+        .chart-tooltip-table td {
+          padding: 2px 6px;
+          text-align: left;
+          white-space: nowrap;
+        }
+
+        .chart-tooltip-table thead th {
+          color: #9aa3af;
+          font-size: 10px;
+          text-transform: uppercase;
+        }
+
+        .chart-tooltip-table tbody th {
+          color: #d1d5db;
+          font-weight: 700;
+        }
+
+        .help-tooltip {
+          position: fixed;
+          z-index: 10000;
+          max-width: 320px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          background: rgba(17, 17, 17, 0.94);
+          color: #f7f7f7;
+          box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.45;
+          letter-spacing: 0;
+          -webkit-font-smoothing: antialiased;
+          opacity: 0;
+          transition: opacity 80ms linear;
+        }
+
         .chart-head {
           display: flex;
           justify-content: space-between;
           gap: 8px;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
           color: #9aa3af;
           font-size: 11px;
           font-weight: 600;
+        }
+
+        .chart-meta {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 4px;
+          color: #b0b7c1;
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
         }
 
         .chart-svg {
@@ -1551,16 +3284,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           }
 
           .statebar,
-          .profile-grid,
           .loss-row {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
           .mode-row,
           .direction-row,
-          .load-save-row,
           .toggle-pills,
-          .mini-row {
+          .mini-row,
+          .compound-row,
+          .compound-inputs {
             grid-template-columns: 1fr;
           }
         }
@@ -1568,6 +3301,50 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       <div class="shell">
         <div class="frame">
           <div class="topline">
+            <div class="top-menu">
+              <button class="menu-button" type="button" data-command="toggle-file-menu" aria-label="Open file menu" title="Config files">
+                <span class="menu-button-lines" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </span>
+              </button>
+              ${
+                state.loadPanelOpen
+                  ? `
+                    <div class="top-menu-panel" data-load-panel>
+                      <div class="top-menu-actions">
+                        <button class="tool" type="button" data-command="load-file" ${!fileActionsEnabled ? "disabled" : ""}>Load config</button>
+                        <button class="tool" type="button" data-command="save-axon" ${!fileActionsEnabled ? "disabled" : ""}>Save .axon config</button>
+                        <button class="tool" type="button" data-command="save-svo" ${!fileActionsEnabled ? "disabled" : ""}>Export .svo vendor file</button>
+                      </div>
+                      ${
+                        activeModelName
+                          ? `
+                            <div class="top-menu-section-title">${escapeHtml(activeModelName)} Checkpoints</div>
+                            <div class="top-menu-checkpoints">
+                              ${
+                                visibleCheckpoints.length > 0
+                                  ? visibleCheckpoints
+                                      .map(
+                                        (checkpoint) => `
+                                          <button class="checkpoint-item" type="button" data-command="load-checkpoint" data-checkpoint-id="${escapeHtml(checkpoint.id)}">
+                                            <span class="checkpoint-label">${escapeHtml(formatRelativeTime(checkpoint.createdAt))}</span>
+                                          </button>
+                                        `,
+                                      )
+                                      .join("")
+                                  : `<div class="checkpoint-empty">No ${escapeHtml(activeModelName)} checkpoints yet.</div>`
+                              }
+                            </div>
+                          `
+                          : ""
+                      }
+                    </div>
+                  `
+                  : ""
+              }
+            </div>
             <div class="statebar">
               <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
                 <span class="state-label"><span class="state-dot"></span>Adapter</span>
@@ -1577,12 +3354,43 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                 <span class="state-label"><span class="state-dot"></span>Servo</span>
                 <span class="state-value">${escapeHtml(servoLabel)}</span>
               </div>
+              <button class="state state-button ${state.statusMessage === "Ready" ? "ok" : "live"}" type="button" data-command="toggle-status-log" title="Show status log">
+                <span class="state-label"><span class="state-dot"></span>Status</span>
+                <span class="state-value">${escapeHtml(state.statusMessage)}</span>
+              </button>
             </div>
             <div class="actions">
-              <button class="tool" data-command="discard" ${!canDiscard ? "disabled" : ""} title="Re-read the servo and discard unsaved changes.">Discard</button>
-              <button class="apply" data-command="apply" ${!dirty || !state.config ? "disabled" : ""} title="Make the attached servo match the sim. Not wired yet.">Apply</button>
+              <button class="tool" data-command="discard" ${!canDiscard ? "disabled" : ""} title="Throw away local edits and return to the currently loaded config.">Discard</button>
+              <button class="apply" data-command="apply" ${!canApply ? "disabled" : ""} title="Make the attached servo match the current draft. Not wired yet.">Apply</button>
             </div>
           </div>
+
+          ${
+            state.statusOpen
+              ? `
+                <div class="status-log">
+                  <div class="status-log-head">
+                    <div class="status-log-title">Status Log</div>
+                    <div class="status-log-actions">
+                      <button class="status-log-button" type="button" data-command="copy-status-log">Copy</button>
+                      <button class="status-log-button" type="button" data-command="toggle-status-log" aria-label="Close status log">x</button>
+                    </div>
+                  </div>
+                  <div class="status-log-list">
+                    ${state.logs
+                      .map(
+                        (entry) => `
+                          <div class="status-log-entry" data-level="${entry.level}">
+                            <span class="status-log-time">[${escapeHtml(entry.timestamp)}]</span>${entry.level === "debug" ? '<span class="status-log-time">[debug]</span>' : ""}${escapeHtml(entry.message)}
+                          </div>
+                        `,
+                      )
+                      .join("")}
+                  </div>
+                </div>
+              `
+              : ""
+          }
 
           ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
 
@@ -1591,9 +3399,26 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               ? `
                 <section class="pane empty-pane">
                   <div class="empty-content">
-                    <h2 class="empty-title">Adapter not connected</h2>
-                    <p class="empty-copy">Please ensure the adapter is properly plugged in and available to this app. Try unplugging and replugging it.</p>
-                    <button class="empty-action" data-command="connect-adapter" ${state.busyAction ? "disabled" : ""}>Connect Adapter</button>
+                    <h2 class="empty-title">${state.hasAuthorizedAccess ? "Adapter not connected" : "Grant browser permission"}</h2>
+                    <p class="empty-copy">${
+                      state.hasAuthorizedAccess
+                        ? "Please ensure the adapter is properly plugged in and available to this app. Try unplugging and replugging it."
+                        : "Click Grant Permission. When the browser chooser opens, select USB Bootloader v1.3. After that, this page will poll for the adapter and servo automatically."
+                    }</p>
+                    ${
+                      options.requestDevice
+                        ? `
+                          <button class="empty-action" data-command="authorize-adapter" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "Connect" ? "Requesting..." : state.hasAuthorizedAccess ? "Grant Permission Again" : "Grant Permission"}</button>
+                          <p class="empty-note">${
+                            state.busyAction === "Connect"
+                              ? "The browser chooser can take a few seconds to appear. When it opens, select USB Bootloader v1.3."
+                              : state.hasAuthorizedAccess
+                                ? "If the adapter does not return automatically, click Grant Permission Again and reselect USB Bootloader v1.3."
+                                : "When the browser chooser opens, select USB Bootloader v1.3."
+                          }</p>
+                        `
+                        : ""
+                    }
                   </div>
                 </section>
               `
@@ -1603,7 +3428,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                     <div class="empty-content">
                       <h2 class="empty-title">Servo not detected</h2>
                       <p class="empty-copy">Please ensure the servo is plugged into the adapter and powered correctly. Try unplugging and replugging it.</p>
-                      <button class="empty-action" data-command="retry-servo" ${state.busyAction ? "disabled" : ""}>Try Again</button>
                     </div>
                   </section>
                 `
@@ -1615,25 +3439,31 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                 <button class="mode-button" data-mode="cr_mode" data-selected="${state.draft.mode === "cr_mode"}">CR</button>
               </div>
 
-              <div class="setting">
-                <div class="setting-head">
-                  <span class="setting-label">Range ${help("Active sweep from the green limit to the red limit.")}</span>
-                  <span class="setting-value">${Math.round((operating.spec.maxRangeDeg * state.draft.rangePercent) / 100)} deg</span>
-                </div>
-                <input class="slider" data-slider="range" type="range" min="10" max="100" step="1" value="${state.draft.rangePercent}" />
-              </div>
+              ${
+                showRange
+                  ? `
+                    <div class="setting" data-setting="range">
+                      <div class="setting-head">
+                        <span class="setting-label">Range ${help(HELP_TEXT.range)}</span>
+                        <span class="setting-value" data-range-value>${Math.round((operating.spec.maxRangeDeg * state.draft.rangePercent) / 100)} deg</span>
+                      </div>
+                      <input class="slider" data-slider="range" type="range" min="10" max="100" step="1" value="${state.draft.rangePercent}" />
+                    </div>
+                  `
+                  : ""
+              }
 
-              <div class="setting">
+              <div class="setting" data-setting="${state.draft.mode === "servo_mode" ? "center" : "stop-trim"}">
                 <div class="setting-head">
-                  <span class="setting-label">Center ${help("Trim relative to the 1500 us center point.")}</span>
-                  <span class="setting-value">${escapeHtml(formatSignedUs(state.draft.neutralUs))} us</span>
+                  <span class="setting-label">${centerLabel} ${help(state.draft.mode === "servo_mode" ? HELP_TEXT.center : HELP_TEXT.stopTrim)}</span>
+                  <span class="setting-value" data-neutral-value>${escapeHtml(formatSignedUs(state.draft.neutralUs))} us</span>
                 </div>
                 <input class="slider" data-slider="neutral" type="range" min="-127" max="127" step="1" value="${state.draft.neutralUs}" />
               </div>
 
-              <div class="setting">
+              <div class="setting" data-setting="direction">
                 <div class="setting-head">
-                  <span class="setting-label">Direction ${help("Clockwise or counterclockwise positive motion.")}</span>
+                  <span class="setting-label">Direction ${help(HELP_TEXT.direction)}</span>
                   <span class="setting-value">${escapeHtml(directionLabel(state.draft.direction))}</span>
                 </div>
                 <div class="direction-row">
@@ -1642,155 +3472,200 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                 </div>
               </div>
 
-              <div class="toggle-setting">
+              <div class="setting" data-setting="power-limit">
                 <div class="setting-head">
-                  <span class="setting-label">Ramp ${help("Ease into motion instead of slamming to the target.")}</span>
+                  <span class="setting-label">Power limit ${help(HELP_TEXT.powerLimit)}</span>
+                  <span class="setting-value" data-power-limit-value>${state.draft.pwmPowerPercent.toFixed(0)} %</span>
                 </div>
-                <div class="toggle-pills">
-                  <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="false" data-selected="${!state.draft.softStart}">Off</button>
-                  <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="true" data-selected="${state.draft.softStart}">On</button>
-                </div>
+                <input class="slider" data-slider="power-limit" type="range" min="0" max="100" step="1" value="${state.draft.pwmPowerPercent}" />
               </div>
-
-              <div class="setting">
-                <div class="setting-head">
-                  <span class="setting-label">On signal loss ${help("Behavior when PWM goes away.")}</span>
-                </div>
-                <div class="loss-row">
-                  ${(["hold", "release", "neutral"] as const)
-                    .map(
-                      (loss) => `
-                        <button class="loss-button" data-loss="${loss}" data-selected="${state.draft.pwmLossBehavior === loss}">
-                          ${escapeHtml(lossLabel(loss))}
-                        </button>
-                      `,
-                    )
-                    .join("")}
-                </div>
-              </div>
-
-              <div class="load-save-row">
-                <button class="load-save-button" data-command="load">Load</button>
-                <button class="load-save-button" data-command="save">Save</button>
-              </div>
-              <div class="drop-hint">drop JSON</div>
 
               ${
-                state.loadPanelOpen
+                showSensitivity
                   ? `
-                    <div class="load-panel">
-                      <div class="profile-grid">
-                        ${PROFILE_PRESETS.map(
-                          (profile) => `
-                            <button class="profile-chip" data-profile-id="${escapeHtml(profile.id)}" data-selected="${profile.id === state.draft.profileId}">
-                              ${escapeHtml(profile.label)}
-                            </button>
-                          `,
-                        ).join("")}
+                    <div class="setting" data-setting="sensitivity">
+                      <div class="setting-head">
+                        <span class="setting-label">Sensitivity ${help(HELP_TEXT.sensitivity)}</span>
+                        <span class="setting-value" data-sensitivity-value>${state.draft.sensitivityStep} · ${escapeHtml(sensitivityLabel(state.draft.sensitivityStep))}</span>
                       </div>
-                      <button class="load-save-button" data-command="file">File</button>
-                      <input type="file" accept="application/json,.json" data-file-input hidden />
+                      <input class="slider" data-slider="sensitivity" type="range" min="0" max="14" step="1" value="${state.draft.sensitivityStep}" />
                     </div>
                   `
                   : ""
               }
+
+              ${
+                showDampening
+                  ? `
+                    <div class="setting" data-setting="dampening">
+                      <div class="setting-head">
+                        <span class="setting-label">Dampening ${help(HELP_TEXT.dampening)}</span>
+                        <span class="setting-value" data-dampening-value>${state.draft.dampeningFactor}</span>
+                      </div>
+                      <input class="number-input" data-input="dampening" type="number" min="0" max="65535" step="1" value="${state.draft.dampeningFactor}" />
+                    </div>
+                  `
+                  : ""
+              }
+
+              ${
+                showSignalLoss
+                  ? `
+                    <div class="setting" data-setting="signal-loss">
+                      <div class="setting-head">
+                        <span class="setting-label">On signal loss ${help(HELP_TEXT.signalLoss)}</span>
+                      </div>
+                      <div class="loss-row">
+                        ${(["hold", "release", "neutral"] as const)
+                          .map(
+                            (loss) => `
+                              <button class="loss-button" data-loss="${loss}" data-selected="${state.draft.pwmLossBehavior === loss}">
+                                ${escapeHtml(lossLabel(loss))}
+                              </button>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  `
+                  : ""
+              }
+
+              ${
+                showOverload
+                  ? `
+                    <div class="setting" data-setting="overload-protection">
+                      <div class="setting-head">
+                        <span class="setting-label">Load protection ${help(HELP_TEXT.overload)}</span>
+                      </div>
+                      <div class="toggle-pills">
+                        <button class="toggle-pill" data-toggle-kind="overloadProtection" data-toggle-value="false" data-selected="${!state.draft.overloadProtectionEnabled}">Off</button>
+                        <button class="toggle-pill" data-toggle-kind="overloadProtection" data-toggle-value="true" data-selected="${state.draft.overloadProtectionEnabled}">On</button>
+                      </div>
+                      <div class="compound-grid">
+                        ${state.draft.overloadLevels
+                          .map(
+                            (level, index) => `
+                              <div class="compound-row" data-setting="overload-level${index + 1}">
+                                <div class="compound-label">L${index + 1}</div>
+                                <div class="compound-inputs">
+                                  <div class="unit-input" data-disabled="${!state.draft.overloadProtectionEnabled}">
+                                    <input class="number-input" data-input="overload-pct-${index}" type="number" min="10" max="100" step="0.1" value="${level.pct.toFixed(1)}" ${state.draft.overloadProtectionEnabled ? "" : "disabled"} />
+                                    <span class="unit-suffix">%</span>
+                                  </div>
+                                  <div class="unit-input" data-disabled="${!state.draft.overloadProtectionEnabled}">
+                                    <input class="number-input" data-input="overload-sec-${index}" type="number" min="0" max="25.5" step="0.1" value="${level.sec.toFixed(1)}" ${state.draft.overloadProtectionEnabled ? "" : "disabled"} />
+                                    <span class="unit-suffix">sec</span>
+                                  </div>
+                                </div>
+                              </div>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  `
+                  : ""
+              }
+
+              ${
+                showSoftStart
+                  ? `
+                    <div class="toggle-setting" data-setting="ramp">
+                      <div class="setting-head">
+                        <span class="setting-label">Ramp ${help(HELP_TEXT.ramp)}</span>
+                      </div>
+                      <div class="toggle-pills">
+                        <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="false" data-selected="${!state.draft.softStart}">Off</button>
+                        <button class="toggle-pill" data-toggle-kind="softStart" data-toggle-value="true" data-selected="${state.draft.softStart}">On</button>
+                      </div>
+                    </div>
+                  `
+                  : ""
+              }
+
+              ${
+                showProptl
+                  ? `
+                    <div class="setting" data-setting="proptl">
+                      <div class="setting-head">
+                        <span class="setting-label">ProPTL ${help(HELP_TEXT.proptl)}</span>
+                        <span class="setting-value" data-proptl-value>${state.draft.proptlSeconds.toFixed(1)} s</span>
+                      </div>
+                      <input class="slider" data-slider="proptl" type="range" min="0" max="25.5" step="0.1" value="${state.draft.proptlSeconds}" />
+                    </div>
+                  `
+                  : ""
+              }
+              <input type="file" accept=".axon,.svo,application/json,.json" data-file-input hidden />
                     </section>
 
                     <section class="pane sim-pane">
               <div class="sim-grid">
                 <div class="sim-left">
                   <div class="servo-card">
-                    ${servoSketch(operating.spec, point, state.draft)}
+                    <div class="servo-card-figure">
+                      <div data-sim-servo>
+                        ${servoSketch(operating.spec, point, state.draft)}
+                      </div>
+                    </div>
+                    <div class="servo-card-controls">
+                      <button class="servo-sweep-control" data-command="toggle-sweep" title="${
+                        state.draft.mode === "servo_mode"
+                          ? state.sim.sweepEnabled && state.sim.playbackRunning
+                            ? "Pause sweep"
+                            : "Play sweep"
+                          : state.sim.playbackRunning
+                            ? "Pause animation"
+                            : "Play animation"
+                      }" aria-label="${
+                        state.draft.mode === "servo_mode"
+                          ? state.sim.sweepEnabled && state.sim.playbackRunning
+                            ? "Pause sweep"
+                            : "Play sweep"
+                          : state.sim.playbackRunning
+                            ? "Pause animation"
+                            : "Play animation"
+                      }">${sweepControlIcon(state.sim.playbackRunning)}</button>
+                    </div>
                   </div>
-
-                  ${
-                    state.draft.mode === "servo_mode"
-                      ? `
-                        <div class="toggle-setting">
-                          <div class="setting-head">
-                            <span class="setting-label">Sweep ${help("Animate from 500 us to 2500 us and back.")}</span>
-                          </div>
-                          <div class="toggle-pills">
-                            <button class="toggle-pill" data-toggle-kind="sweep" data-toggle-value="false" data-selected="${!state.draft.sweepEnabled}">Manual</button>
-                            <button class="toggle-pill" data-toggle-kind="sweep" data-toggle-value="true" data-selected="${state.draft.sweepEnabled}">Sweep</button>
-                          </div>
-                        </div>
-                      `
-                      : ""
-                  }
 
                   <div class="sim-sliders">
                     <div class="mini-row">
-                      <div class="mini-label">PWM ${help("500 us to 2500 us drive command.")}</div>
+                      <div class="mini-label">${state.draft.mode === "servo_mode" ? "PWM" : "Drive"} ${help(state.draft.mode === "servo_mode" ? HELP_TEXT.pwmServo : HELP_TEXT.pwmCr)}</div>
                       <div>
-                        <div class="mini-value">${point.pwmUs} us</div>
+                        <div class="mini-value" data-live-pwm-value>${point.pwmUs} us</div>
                         <input class="slider" data-slider="pwm" type="range" min="500" max="2500" step="10" value="${point.pwmUs}" />
                         <div class="mini-range"><span>500</span><span>1500</span><span>2500</span></div>
                       </div>
                     </div>
 
                     <div class="mini-row">
-                      <div class="mini-label">Voltage ${help("Supply voltage for the motor curves.")}</div>
+                      <div class="mini-label">Voltage ${help(HELP_TEXT.voltage)}</div>
                       <div>
-                        <div class="mini-value">${state.draft.voltage.toFixed(1)} V</div>
-                        <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.draft.voltage}" list="voltage-detents" />
+                        <div class="mini-value" data-voltage-value>${state.sim.voltage.toFixed(1)} V</div>
+                        <input class="slider" data-slider="voltage" type="range" min="4.8" max="8.4" step="0.1" value="${state.sim.voltage}" list="voltage-detents" />
                         <datalist id="voltage-detents">
                           ${voltageDetents.map((value) => `<option value="${value}"></option>`).join("")}
                         </datalist>
-                        <div class="mini-range">${voltageDetents.map((value) => `<span>${value}</span>`).join("")}</div>
+                        <div class="mini-range" data-voltage-detents>${voltageDetents.map((value) => `<span>${value}</span>`).join("")}</div>
                       </div>
                     </div>
 
                     <div class="mini-row">
-                      <div class="mini-label">Load ${help("Operating load in the same units as the servo data sheet.")}</div>
+                      <div class="mini-label">Load ${help(HELP_TEXT.load)}</div>
                       <div>
-                        <div class="mini-value">${state.draft.loadKgcm.toFixed(1)} kgf*cm</div>
-                        <input class="slider" data-slider="load" type="range" min="0" max="${operating.torqueMax.toFixed(1)}" step="0.1" value="${state.draft.loadKgcm.toFixed(1)}" />
-                        <div class="mini-range"><span>0.0</span><span>${operating.torqueMax.toFixed(1)}</span></div>
+                        <div class="mini-value" data-load-value>${state.sim.loadKgcm.toFixed(1)} kgf*cm</div>
+                        <input class="slider" data-slider="load" type="range" min="0" max="${loadSliderMax.toFixed(2)}" step="0.01" value="${state.sim.loadKgcm.toFixed(2)}" />
+                        <div class="mini-range"><span>0.0</span><span data-load-max>${loadSliderMax.toFixed(1)}</span></div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="sim-right">
-                  ${lineChart(
-                    "speed / current",
-                    `${modeLabel(state.draft.mode)} @ ${state.draft.voltage.toFixed(1)}V`,
-                    xMax,
-                    speedMax,
-                    currentMax,
-                    speedPath,
-                    currentPath,
-                    point.torqueKgcm,
-                    point.speedRpm,
-                    point.currentA,
-                    formatOperatingTooltip(point, "speed"),
-                    formatOperatingTooltip(point, "current"),
-                    "speed (rpm)",
-                    "current (A)",
-                  )}
-
-                  ${powerChart(
-                    "mechanical power",
-                    xMax,
-                    powerMax,
-                    powerPath,
-                    point.torqueKgcm,
-                    point.mechanicalPowerW,
-                    formatOperatingTooltip(point, "power"),
-                    "power (W)",
-                  )}
-
-                  ${powerChart(
-                    "efficiency",
-                    xMax,
-                    efficiencyMax,
-                    efficiencyPath,
-                    point.torqueKgcm,
-                    point.efficiency,
-                    formatOperatingTooltip(point, "efficiency"),
-                    "efficiency",
-                  )}
+                <div class="sim-right" data-sim-charts>
+                  <div data-operating-point hidden></div>
+                  ${simChartsMarkup(state.draft, state.sim)}
                 </div>
               </div>
                     </section>
@@ -1799,7 +3674,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           }
 
           <details class="debug" ${state.diagnosticsOpen ? "open" : ""}>
-            <summary>${help("Diagnostics and raw replies")}</summary>
+            <summary>${help(HELP_TEXT.diagnostics)}</summary>
             <div class="debug-panel">
               <pre>${escapeHtml(toPrettyJson(diagnostics))}</pre>
             </div>
@@ -1808,26 +3683,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       </div>
     `;
 
-    options.root.querySelectorAll<HTMLButtonElement>("[data-profile-id]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.draft = selectProfile(button.dataset.profileId ?? "claw", state.draft);
-        state.sweepPhase = 0;
-        updateSweepTimer();
-        render();
-      });
-    });
-
     options.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
       button.addEventListener("click", () => {
+        const previousMode = state.draft.mode;
         state.draft.mode = button.dataset.mode === "cr_mode" ? "cr_mode" : "servo_mode";
-        if (state.draft.mode === "cr_mode") {
-          state.draft.sweepEnabled = false;
-          state.draft.profileId =
-            state.draft.profileId === "claw" ? "intake" : state.draft.profileId;
-        } else if (!state.draft.sweepEnabled) {
-          state.draft.sweepEnabled = true;
-        }
-        state.sweepPhase = 0;
+        state.sim = syncSimToDraft(
+          state.draft,
+          state.sim,
+          lookupSpec(state.config?.modelId ?? null, state.config?.modelName ?? null, state.config),
+          previousMode,
+        );
         updateSweepTimer();
         render();
       });
@@ -1856,25 +3721,106 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           case "range":
             state.draft.rangePercent = clamp(Number(input.value), 10, 100);
             break;
+          case "sensitivity":
+            state.draft.sensitivityStep = clamp(Math.round(Number(input.value)), 0, 14);
+            break;
           case "neutral":
             state.draft.neutralUs = clamp(Number(input.value), -127, 127);
             break;
+          case "proptl":
+            state.draft.proptlSeconds = clamp(Number(input.value), 0, 25.5);
+            break;
+          case "power-limit":
+            state.draft.pwmPowerPercent = clamp(Number(input.value), 0, 100);
+            state.sim.loadKgcm = clamp(
+              state.sim.loadKgcm,
+              0,
+              maxAvailableTorqueKgcm(
+                lookupSpec(
+                  state.config?.modelId ?? null,
+                  state.config?.modelName ?? null,
+                  state.config,
+                ),
+                state.sim.voltage,
+                state.draft.pwmPowerPercent,
+              ),
+            );
+            break;
           case "pwm":
-            state.draft.pwmUs = clamp(Number(input.value), 500, 2500);
-            state.draft.sweepEnabled = false;
+            state.sim.pwmUs = clamp(Number(input.value), 500, 2500);
+            if (state.draft.mode === "servo_mode") {
+              state.sim.sweepEnabled = false;
+              state.sim.playbackRunning = false;
+            }
             break;
           case "voltage":
-            state.draft.voltage = clamp(Number(input.value), 4.8, 8.4);
+            state.sim.voltage = clamp(Number(input.value), 4.8, 8.4);
+            state.sim.loadKgcm = clamp(
+              state.sim.loadKgcm,
+              0,
+              maxAvailableTorqueKgcm(
+                lookupSpec(
+                  state.config?.modelId ?? null,
+                  state.config?.modelName ?? null,
+                  state.config,
+                ),
+                state.sim.voltage,
+                state.draft.pwmPowerPercent,
+              ),
+            );
             break;
           case "load":
-            state.draft.loadKgcm = clamp(Number(input.value), 0, operating.torqueMax);
+            state.sim.loadKgcm = clamp(
+              Number(input.value),
+              0,
+              maxAvailableTorqueKgcm(
+                lookupSpec(
+                  state.config?.modelId ?? null,
+                  state.config?.modelName ?? null,
+                  state.config,
+                ),
+                state.sim.voltage,
+                state.draft.pwmPowerPercent,
+              ),
+            );
             break;
           default:
             break;
         }
         updateSweepTimer();
-        render();
+        refreshInteractiveUi();
       });
+    });
+
+    options.root.querySelectorAll<HTMLInputElement>("[data-input]").forEach((input) => {
+      const syncInput = () => {
+        const key = input.dataset.input ?? "";
+        if (key === "dampening") {
+          state.draft.dampeningFactor = clamp(Math.round(Number(input.value) || 0), 0, 65535);
+        }
+        if (key.startsWith("overload-pct-")) {
+          const index = Number(key.slice("overload-pct-".length));
+          if (Number.isInteger(index) && state.draft.overloadLevels[index]) {
+            state.draft.overloadLevels[index] = {
+              ...state.draft.overloadLevels[index],
+              pct: clamp(Number(input.value) || 10, 10, 100),
+            };
+          }
+        }
+        if (key.startsWith("overload-sec-")) {
+          const index = Number(key.slice("overload-sec-".length));
+          if (Number.isInteger(index) && state.draft.overloadLevels[index]) {
+            state.draft.overloadLevels[index] = {
+              ...state.draft.overloadLevels[index],
+              sec: clamp(Number(input.value) || 0, 0, 25.5),
+            };
+          }
+        }
+        refreshInteractiveUi();
+      };
+
+      input.addEventListener("input", syncInput);
+      input.addEventListener("change", syncInput);
     });
 
     options.root.querySelectorAll<HTMLButtonElement>("[data-toggle-kind]").forEach((button) => {
@@ -1883,11 +3829,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         if (button.dataset.toggleKind === "softStart") {
           state.draft.softStart = nextValue;
         }
-        if (button.dataset.toggleKind === "sweep") {
-          state.draft.sweepEnabled = nextValue;
-          if (nextValue) {
-            state.sweepPhase = 0;
-          }
+        if (button.dataset.toggleKind === "overloadProtection") {
+          state.draft.overloadProtectionEnabled = nextValue;
         }
         updateSweepTimer();
         render();
@@ -1901,6 +3844,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         if (file) {
           handleFile(file);
         }
+        fileInput.value = "";
       });
     }
 
@@ -1930,35 +3874,119 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       });
     }
 
+    options.root.querySelectorAll<HTMLElement>("[data-help]").forEach((element) => {
+      element.addEventListener("mouseenter", () => {
+        showHelpTooltip(element);
+      });
+      element.addEventListener("mouseleave", () => {
+        hideHelpTooltip();
+      });
+      element.addEventListener("focus", () => {
+        showHelpTooltip(element);
+      });
+      element.addEventListener("blur", () => {
+        hideHelpTooltip();
+      });
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    });
+
     options.root.querySelectorAll<HTMLButtonElement>("[data-command]").forEach((button) => {
       button.addEventListener("click", () => {
         const command = button.dataset.command;
-        if (command === "connect-adapter") void doConnectAndSync();
-        if (command === "retry-servo") void doSync();
-        if (command === "load") {
+        if (command === "authorize-adapter") void doAuthorizeAndConnect();
+        if (command === "toggle-sweep") {
+          if (state.draft.mode === "servo_mode") {
+            if (!state.sim.sweepEnabled) {
+              state.sim.sweepEnabled = true;
+              state.sim.playbackRunning = true;
+              state.sim.servoSweepPhase = 0;
+            } else {
+              state.sim.playbackRunning = !state.sim.playbackRunning;
+            }
+          } else {
+            state.sim.playbackRunning = !state.sim.playbackRunning;
+          }
+          updateSweepTimer();
+          refreshInteractiveUi();
+        }
+        if (command === "toggle-status-log") {
+          state.statusOpen = !state.statusOpen;
+          render();
+        }
+        if (command === "toggle-file-menu") {
           state.loadPanelOpen = !state.loadPanelOpen;
           render();
         }
-        if (command === "file") {
-          fileInput?.click();
+        if (command === "copy-status-log") {
+          const text = logger.snapshot();
+          void navigator.clipboard.writeText(text).then(
+            () => {
+              setStatus("Log copied");
+              if (state.statusOpen) render();
+            },
+            () => {
+              state.error = "Could not copy log.";
+              render();
+            },
+          );
         }
-        if (command === "save") {
-          triggerSave();
+        if (command === "close-load-panel") {
+          state.loadPanelOpen = false;
+          render();
+        }
+        if (command === "load-file") {
+          state.loadPanelOpen = false;
+          void promptLoadFile(fileInput);
+        }
+        if (command === "load-checkpoint") {
+          const checkpointId = button.dataset.checkpointId;
+          if (checkpointId) {
+            loadCheckpoint(checkpointId);
+          }
+        }
+        if (command === "save-axon") {
+          state.loadPanelOpen = false;
+          void triggerSave("axon");
+        }
+        if (command === "save-svo") {
+          state.loadPanelOpen = false;
+          void triggerSave("svo");
         }
         if (command === "discard") {
-          void doSync();
+          discardToBaseline();
         }
         if (command === "apply") {
           state.error = "Apply is not wired in this probe yet.";
-          log("Apply pending");
+          setStatus("Apply pending");
+          setIdleStatus();
           render();
         }
       });
     });
+
+    if (state.loadPanelOpen) {
+      const onPointerDown = (event: PointerEvent) => {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        const menu = options.root.querySelector<HTMLElement>(".top-menu");
+        if (menu && !menu.contains(target)) {
+          state.loadPanelOpen = false;
+          render();
+        }
+      };
+      window.setTimeout(() => {
+        window.addEventListener("pointerdown", onPointerDown, { once: true });
+      }, 0);
+    }
+
+    renderSweepFrame(true);
   }
 
   async function bootstrap(): Promise<void> {
-    log("Boot");
+    setStatus("Starting");
     render();
     try {
       const [environment, inventory] = await Promise.all([
@@ -1967,11 +3995,41 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       ]);
       state.environment = environment;
       updateInventory(inventory);
-      log("Ready");
+      if (options.autoConnectOnLoad && inventory.devices.length > 0) {
+        await doConnectAndSync(false);
+      } else {
+        setIdleStatus();
+      }
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      log("Boot failed");
+      setIdleStatus();
     }
+    if (options.watchInventory) {
+      options.watchInventory((inventory) => {
+        const changed = updateInventory(inventory);
+        if (
+          options.autoConnectOnLoad &&
+          inventory.devices.length > 0 &&
+          !inventory.openedId &&
+          !state.busyAction
+        ) {
+          void doConnectAndSync(false);
+          return;
+        }
+        if (changed) {
+          render();
+        }
+      });
+    }
+    if (options.subscribeTransportLog) {
+      _transportLogCleanup = options.subscribeTransportLog((message) => {
+        logger.debug(message);
+        if (state.statusOpen) {
+          render();
+        }
+      });
+    }
+    updateLivePollTimer();
     updateSweepTimer();
     render();
   }

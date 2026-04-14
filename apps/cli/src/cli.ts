@@ -196,7 +196,8 @@ export async function main(argv: string[]): Promise<number> {
         if (parsed.flags.svo) format = "svo";
         else if (parsed.flags.hex) format = "hex";
         else if (parsed.flags.json || parsed.global.json) format = "json";
-        return await runRead(parsed.global, { format });
+        const debug = parsed.flags.debug === true;
+        return await runRead(parsed.global, { format, debug });
       }
 
       case "write": {
@@ -338,11 +339,14 @@ function printCommandHelp(command: string): void {
       process.stdout.write(
         `axon read — read the current config from the servo\n\n` +
           `FLAGS:\n` +
-          `  (default)   Human-readable summary (named parameters not yet shown)\n` +
-          `  --json      Machine-readable JSON with raw bytes\n` +
+          `  (default)   Human-readable summary of decoded parameters\n` +
+          `  --json      Machine-readable JSON with decoded parameters\n` +
           `  --svo       Raw 95-byte dump to stdout (vendor .svo compatible)\n` +
-          `  --hex       Annotated hex dump (for debugging)\n\n` +
-          `Example:\n` +
+          `  --hex       Annotated hex dump (for debugging)\n` +
+          `  --debug     Include raw block metadata in normal / --json output\n\n` +
+          `Examples:\n` +
+          `  axon read\n` +
+          `  axon read --json\n` +
           `  axon read --svo > backup.svo\n`,
       );
       break;

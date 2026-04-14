@@ -6,6 +6,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": {
+    "@axon/core": "workspace:*",
+    "chart.js": "^4.5.1"
+  },
   "scripts": {
     "check": "bun x @biomejs/biome check src package.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"

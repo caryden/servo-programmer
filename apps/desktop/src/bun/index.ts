@@ -174,6 +174,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
             rawHex: hexDump(config),
             firstChunk: hexDump(config.subarray(0, chunkSplit)),
             secondChunk: hexDump(config.subarray(chunkSplit)),
+            rawBytes: Array.from(config),
           };
           return info;
         }),

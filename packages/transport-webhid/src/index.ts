@@ -4,10 +4,17 @@ import type { ProbeCollectionInfo, ProbeDeviceInfo } from "@axon/ui";
 export const VID = 0x0471;
 export const PID = 0x13aa;
 export const REPORT_SIZE = 64;
+const ECHO_COMMANDS = new Set([0x8a, 0xcd, 0xcb]);
 
 interface InputReportReply {
   reportId: number;
   data: Uint8Array;
+}
+
+interface PendingRead {
+  resolve: (reply: InputReportReply) => void;
+  reject: (error: Error) => void;
+  timer: number;
 }
 
 function hex(value: number, width = 2): string {
@@ -69,24 +76,20 @@ export async function requestAxonDevices(): Promise<HIDDevice[]> {
   });
 }
 
-function waitForInputReport(device: HIDDevice, timeoutMs: number): Promise<InputReportReply> {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      device.removeEventListener("inputreport", onInputReport);
-      reject(new Error(`Timed out waiting for input report after ${timeoutMs} ms`));
-    }, timeoutMs);
+export class WebHidDongle implements DongleHandle {
+  private readonly replies: InputReportReply[] = [];
+  private pendingRead: PendingRead | null = null;
+  private readonly onInputReport: EventListener;
 
-    const onInputReport: EventListener = (event) => {
+  constructor(private readonly device: HIDDevice) {
+    this.onInputReport = (event) => {
       const hidEvent = event as HIDInputReportEvent;
 
-      if (hidEvent.device !== device) {
+      if (hidEvent.device !== this.device) {
         return;
       }
 
-      window.clearTimeout(timer);
-      device.removeEventListener("inputreport", onInputReport);
-
-      resolve({
+      const reply = {
         reportId: hidEvent.reportId,
         data: new Uint8Array(
           hidEvent.data.buffer.slice(
@@ -94,15 +97,30 @@ function waitForInputReport(device: HIDDevice, timeoutMs: number): Promise<Input
             hidEvent.data.byteOffset + hidEvent.data.byteLength,
           ),
         ),
-      });
+      };
+
+      // Some browser/WebHID stacks surface our own outbound report payload back
+      // through `inputreport`. Those frames start with the command byte because
+      // the report ID is delivered separately. Ignore them so protocol reads only
+      // see device replies.
+      const echoedCommand = reply.data[0];
+      if (echoedCommand !== undefined && ECHO_COMMANDS.has(echoedCommand)) {
+        return;
+      }
+
+      if (this.pendingRead) {
+        const pending = this.pendingRead;
+        this.pendingRead = null;
+        window.clearTimeout(pending.timer);
+        pending.resolve(reply);
+        return;
+      }
+
+      this.replies.push(reply);
     };
 
-    device.addEventListener("inputreport", onInputReport);
-  });
-}
-
-export class WebHidDongle implements DongleHandle {
-  constructor(private readonly device: HIDDevice) {}
+    this.device.addEventListener("inputreport", this.onInputReport);
+  }
 
   async write(data: Buffer): Promise<void> {
     if (!this.device.opened) {
@@ -119,11 +137,29 @@ export class WebHidDongle implements DongleHandle {
       throw new Error("Selected HID device is not open.");
     }
 
-    const reply = await waitForInputReport(this.device, timeoutMs);
+    const queued = this.replies.shift();
+    if (queued) {
+      return Buffer.from([queued.reportId, ...queued.data]);
+    }
+
+    const reply = await new Promise<InputReportReply>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingRead = null;
+        reject(new Error(`Timed out waiting for input report after ${timeoutMs} ms`));
+      }, timeoutMs);
+
+      this.pendingRead = { resolve, reject, timer };
+    });
     return Buffer.from([reply.reportId, ...reply.data]);
   }
 
   async release(): Promise<void> {
+    if (this.pendingRead) {
+      window.clearTimeout(this.pendingRead.timer);
+      this.pendingRead.reject(new Error("Selected HID device was closed."));
+      this.pendingRead = null;
+    }
+    this.device.removeEventListener("inputreport", this.onInputReport);
     if (this.device.opened) {
       await this.device.close();
     }

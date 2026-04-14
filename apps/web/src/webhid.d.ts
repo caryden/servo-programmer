@@ -31,11 +31,16 @@ interface HIDDevice extends EventTarget {
   sendReport(reportId: number, data: BufferSource): Promise<void>;
 }
 
-interface HID {
+interface HID extends EventTarget {
   getDevices(): Promise<HIDDevice[]>;
   requestDevice(options: {
     filters: Array<{ vendorId?: number; productId?: number }>;
   }): Promise<HIDDevice[]>;
+  addEventListener(
+    type: "connect",
+    listener: (event: HIDConnectionEvent) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
   addEventListener(
     type: "disconnect",
     listener: (event: HIDConnectionEvent) => void,

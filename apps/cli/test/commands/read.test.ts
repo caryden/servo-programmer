@@ -37,16 +37,19 @@ describe("axon read", () => {
     }));
     const { runRead } = await import("../../src/commands/read.ts");
 
-    const code = await runRead(GLOBAL_FLAGS, { format: "human" });
+    const code = await runRead(GLOBAL_FLAGS, { format: "human", debug: false });
 
     expect(code).toBe(ExitCode.Ok);
     expect(io.stdout).toContain("model      SA33****");
     expect(io.stdout).toContain("Axon Mini");
-    expect(io.stdout).toContain("block      95 bytes");
+    expect(io.stdout).toContain("servo_angle");
+    expect(io.stdout).toContain("servo_neutral");
+    expect(io.stdout).toContain("pwm_power");
+    expect(io.stdout).not.toContain("block      95 bytes");
     expect(released).toBe(true);
   });
 
-  test("json output serializes the model metadata", async () => {
+  test("json output serializes decoded parameters", async () => {
     const mockDongle = new MockDongle();
     await mock.module("../../src/driver/hid.ts", () => ({
       listDongles: () => [],
@@ -58,13 +61,39 @@ describe("axon read", () => {
     }));
     const { runRead } = await import("../../src/commands/read.ts");
 
-    const code = await runRead(JSON_FLAGS, { format: "json" });
+    const code = await runRead(JSON_FLAGS, { format: "json", debug: false });
 
     expect(code).toBe(ExitCode.Ok);
     const parsed = JSON.parse(io.stdout);
     expect(parsed.model.id).toBe("SA33****");
     expect(parsed.model.name).toBe("Axon Mini");
     expect(parsed.model.known).toBe(true);
+    expect(parsed.mode).toBe("servo_mode");
+    expect(parsed.parameters.servo_angle.value).toBe(130);
+    expect(parsed.parameters.servo_neutral.value).toBe(0);
+    expect(parsed.parameters.pwm_power.value).toBe(86);
+    expect(parsed.parameters.sensitivity.value).toBe(0);
+    expect(parsed.raw_bytes_hex).toBeUndefined();
+    expect(parsed.byte_count).toBeUndefined();
+  });
+
+  test("debug json includes raw block metadata", async () => {
+    const mockDongle = new MockDongle();
+    await mock.module("../../src/driver/hid.ts", () => ({
+      listDongles: () => [],
+      isDonglePresent: () => false,
+      openDongle: async () => mockDongle,
+      VID: 0x0471,
+      PID: 0x13aa,
+      REPORT_SIZE: 64,
+    }));
+    const { runRead } = await import("../../src/commands/read.ts");
+
+    const code = await runRead(JSON_FLAGS, { format: "json", debug: true });
+
+    expect(code).toBe(ExitCode.Ok);
+    const parsed = JSON.parse(io.stdout);
+    expect(parsed.raw_bytes_hex).toBeString();
     expect(parsed.byte_count).toBe(95);
   });
 
@@ -80,7 +109,7 @@ describe("axon read", () => {
     }));
     const { runRead } = await import("../../src/commands/read.ts");
 
-    const code = await runRead(GLOBAL_FLAGS, { format: "svo" });
+    const code = await runRead(GLOBAL_FLAGS, { format: "svo", debug: false });
 
     expect(code).toBe(ExitCode.Ok);
     expect(io.stdout.length).toBeGreaterThan(0);
@@ -99,7 +128,7 @@ describe("axon read", () => {
     }));
     const { runRead } = await import("../../src/commands/read.ts");
 
-    const code = await runRead(GLOBAL_FLAGS, { format: "hex" });
+    const code = await runRead(GLOBAL_FLAGS, { format: "hex", debug: false });
 
     expect(code).toBe(ExitCode.Ok);
     expect(io.stdout).toContain("0x00");
