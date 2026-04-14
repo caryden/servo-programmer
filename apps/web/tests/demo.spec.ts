@@ -210,7 +210,7 @@ test.describe("web demo", () => {
     expect(stalled.speed).toBe("0.000");
   });
 
-  test("discard resets to the loaded draft", async ({ page }) => {
+  test("discard reloads the live servo state", async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem(
         "axon-config-checkpoints-v1",
@@ -250,7 +250,7 @@ test.describe("web demo", () => {
     await page.locator('[data-command="load-checkpoint"][data-checkpoint-id="checkpoint-cr"]').click();
 
     await expect(page.locator('[data-mode="cr_mode"]')).toHaveAttribute("data-selected", "true");
-    await expect(page.locator("[data-command='discard']")).toBeDisabled();
+    await expect(page.locator("[data-command='discard']")).toBeEnabled();
     await expect(page.locator("[data-command='apply']")).toBeEnabled();
     await expect(page.locator("[data-setting='proptl']")).toBeVisible();
     await expect(page.locator("[data-proptl-value]")).toHaveText("7.5 s");
@@ -263,7 +263,52 @@ test.describe("web demo", () => {
     await expect(page.locator("[data-proptl-value]")).not.toHaveText("7.5 s");
 
     await page.locator("[data-command='discard']").click();
+    await expect(page.locator('[data-mode="servo_mode"]')).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+    await expect(page.locator("[data-range-value]")).toHaveText("178 deg");
+    await expect(page.locator("[data-power-limit-value]")).toHaveText("85 %");
+    await expect(page.locator("[data-command='discard']")).toBeDisabled();
+  });
+
+  test("apply writes same-mode changes and clears dirty state", async ({ page }) => {
+    await page.goto("/?demo");
+
+    const powerLimitSlider = page.locator('[data-slider="power-limit"]');
+    await powerLimitSlider.focus();
+    await page.keyboard.press("ArrowRight");
+
+    await expect(page.locator("[data-command='apply']")).toBeEnabled();
+    await expect(page.locator("[data-command='discard']")).toBeEnabled();
+    await expect(page.locator("[data-power-limit-value]")).toHaveText("86 %");
+
+    await page.locator("[data-command='apply']").click();
+
+    await expect(page.locator('[title="Show status log"] .state-value')).toHaveText("Ready");
+    await expect(page.locator("[data-command='apply']")).toBeDisabled();
+    await expect(page.locator("[data-command='discard']")).toBeDisabled();
+    await expect(page.locator("[data-power-limit-value]")).toHaveText("86 %");
+  });
+
+  test("apply writes mode changes and clears dirty state", async ({ page }) => {
+    await page.goto("/?demo");
+
+    await page.locator('[data-mode="cr_mode"]').click();
+
+    await expect(page.locator("[data-command='apply']")).toBeEnabled();
+    await expect(page.locator("[data-command='discard']")).toBeEnabled();
+    await expect(page.locator('[data-setting="proptl"]')).toBeVisible();
+
+    await page.locator("[data-command='apply']").click();
+    await expect(page.getByRole("dialog", { name: "Applying Changes" })).toBeVisible();
+    await expect(page.getByText("The attached servo is being updated to match the current settings.")).toBeVisible();
+
+    await expect(page.locator('[title="Show status log"] .state-value')).toHaveText("Ready");
     await expect(page.locator('[data-mode="cr_mode"]')).toHaveAttribute("data-selected", "true");
-    await expect(page.locator("[data-proptl-value]")).toHaveText("7.5 s");
+    await expect(page.locator('[data-setting="proptl"]')).toBeVisible();
+    await expect(page.locator('[data-setting="range"]')).toHaveCount(0);
+    await expect(page.locator("[data-command='apply']")).toBeDisabled();
+    await expect(page.locator("[data-command='discard']")).toBeDisabled();
   });
 });

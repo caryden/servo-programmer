@@ -8,8 +8,10 @@
     "./catalog": "./src/catalog.ts",
     "./config-summary": "./src/config-summary.ts",
     "./errors": "./src/errors.ts",
+    "./sfw": "./src/sfw.ts",
     "./servo-specs": "./src/servo-specs.ts",
     "./driver": "./src/driver/index.ts",
+    "./driver/flash": "./src/driver/flash.ts",
     "./driver/protocol": "./src/driver/protocol.ts",
     "./driver/transport": "./src/driver/transport.ts"
   },

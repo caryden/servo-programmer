@@ -9,12 +9,14 @@
     "test": "playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "bun run build && python3 -m http.server 8765",
-    "start": "bun run build && python3 -m http.server 8765"
+    "start": "bun run build && python3 -m http.server 8765",
+    "live": "bun run build && bun run ./server.ts"
   },
   "dependencies": {
     "@axon/core": "workspace:*",
     "@axon/transport-webhid": "workspace:*",
-    "@axon/ui": "workspace:*"
+    "@axon/ui": "workspace:*",
+    "aes-js": "^3.1.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",

@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
 import { findModel, loadCatalog } from "@axon/core/catalog";
 import { servoModeLabel, summarizeConfig } from "@axon/core/config-summary";
-import { identify, modelIdFromConfig, readFullConfig } from "@axon/core/driver/protocol";
+import {
+  identify,
+  modelIdFromConfig,
+  readFullConfig,
+  writeFullConfig,
+} from "@axon/core/driver/protocol";
 import {
   deviceId,
   listAuthorizedAxonDevices,
@@ -16,6 +21,7 @@ import {
   type ProbeIdentifyInfo,
   type ProbeInventory,
 } from "@axon/ui";
+import { decryptSfwBrowser } from "./sfw-browser";
 
 function hex(value: number, width = 2): string {
   return `0x${value.toString(16).padStart(width, "0")}`;
@@ -23,6 +29,10 @@ function hex(value: number, width = 2): string {
 
 function hexDump(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+}
+
+function parseHexBytes(rawHex: string): number[] {
+  return rawHex.match(/../g)?.map((pair) => Number.parseInt(pair, 16)) ?? [];
 }
 
 const root = document.getElementById("app");
@@ -43,6 +53,8 @@ let activeHandle: Awaited<ReturnType<typeof openDongle>> | null = null;
 let lastIdentifyMode: ProbeIdentifyInfo["mode"] = "unknown";
 const PERMISSION_HINT_KEY = "axon-webhid-permission-granted";
 const transportLogListeners = new Set<(message: string) => void>();
+const statusLogListeners = new Set<(message: string) => void>();
+let hardwareSessionDepth = 0;
 
 function debugLog(message: string, extra?: unknown): void {
   const uiMessage =
@@ -52,6 +64,51 @@ function debugLog(message: string, extra?: unknown): void {
   for (const listener of transportLogListeners) {
     listener(uiMessage);
   }
+}
+
+function statusLog(message: string): void {
+  for (const listener of statusLogListeners) {
+    listener(message);
+  }
+}
+
+function hardwareSessionActive(): boolean {
+  return hardwareSessionDepth > 0;
+}
+
+async function withHardwareSession<T>(label: string, run: () => Promise<T>): Promise<T> {
+  hardwareSessionDepth += 1;
+  try {
+    debugLog(`hardware session start: ${label}`);
+    return await run();
+  } finally {
+    hardwareSessionDepth = Math.max(0, hardwareSessionDepth - 1);
+    debugLog(`hardware session end: ${label}`);
+  }
+}
+
+function formatFlashProgress(
+  event: {
+    phase: string;
+    bytesSent?: number;
+    bytesTotal?: number;
+    recordsSent?: number;
+    recordsTotal?: number;
+    message?: string;
+  },
+  verbose = false,
+): string {
+  const parts = [`Flash ${event.phase}`];
+  if (verbose && typeof event.recordsSent === "number" && typeof event.recordsTotal === "number") {
+    parts.push(`${event.recordsSent}/${event.recordsTotal} records`);
+  }
+  if (verbose && typeof event.bytesSent === "number" && typeof event.bytesTotal === "number") {
+    parts.push(`${event.bytesSent}/${event.bytesTotal} bytes`);
+  }
+  if (event.message) {
+    parts.push(event.message);
+  }
+  return parts.join(" - ");
 }
 
 function getPermissionHint(): boolean {
@@ -73,6 +130,67 @@ function currentInventory(): ProbeInventory {
     devices: selectedDevice ? [summarizeDevice(selectedDevice)] : [],
     openedId: selectedDevice && activeHandle ? deviceId(selectedDevice) : null,
   };
+}
+
+function configInfoFromBytes(
+  configBytes: Uint8Array,
+  mode: ProbeIdentifyInfo["mode"],
+): ProbeConfigInfo {
+  const modelId = modelIdFromConfig(configBytes);
+  const model = findModel(loadCatalog(), modelId);
+  const chunkSplit = 59;
+
+  return {
+    length: configBytes.length,
+    modelId,
+    known: Boolean(model),
+    modelName: model?.name ?? null,
+    docsUrl: model?.docs_url ?? null,
+    mode,
+    modeLabel: servoModeLabel(mode),
+    setup: summarizeConfig(configBytes, modelId),
+    rawHex: hexDump(configBytes),
+    firstChunk: hexDump(configBytes.subarray(0, chunkSplit)),
+    secondChunk: hexDump(configBytes.subarray(chunkSplit)),
+    rawBytes: Array.from(configBytes),
+  };
+}
+
+function catalogFirmwareKey(mode: "servo_mode" | "cr_mode"): "standard" | "continuous" {
+  return mode === "servo_mode" ? "standard" : "continuous";
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digestBytes = Uint8Array.from(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", digestBytes.buffer as ArrayBuffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function loadBundledFirmware(
+  modelId: string,
+  mode: "servo_mode" | "cr_mode",
+): Promise<Buffer> {
+  const model = findModel(loadCatalog(), modelId);
+  if (!model) {
+    throw new Error(`Unknown model ${modelId}.`);
+  }
+  const entry = model.bundled_firmware[catalogFirmwareKey(mode)];
+  if (!entry) {
+    throw new Error(`No bundled firmware is cataloged for ${model.name} ${servoModeLabel(mode)}.`);
+  }
+
+  const response = await fetch(`/downloads/${encodeURIComponent(entry.file)}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not fetch ${entry.file} from local downloads.`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const actual = await sha256Hex(bytes);
+  if (actual.toLowerCase() !== entry.sha256.toLowerCase()) {
+    throw new Error(`Firmware SHA-256 mismatch for ${entry.file}.`);
+  }
+  return Buffer.from(bytes);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -120,8 +238,12 @@ async function withRecoveredHandle<T>(label: string, run: () => Promise<T>): Pro
   }
 }
 
-async function refreshAuthorizedInventory(): Promise<ProbeInventory> {
+async function refreshAuthorizedInventory(force = false): Promise<ProbeInventory> {
   if (!webHidSupported()) {
+    return currentInventory();
+  }
+  if (!force && hardwareSessionActive()) {
+    debugLog("getDevices() skipped", { reason: "hardware session active" });
     return currentInventory();
   }
   const devices = await listAuthorizedAxonDevices();
@@ -147,9 +269,9 @@ function requireHandle() {
   return activeHandle;
 }
 
-async function syncAuthorizedDevices(): Promise<ProbeInventory> {
+async function syncAuthorizedDevices(force = false): Promise<ProbeInventory> {
   const previousId = selectedDevice ? deviceId(selectedDevice) : null;
-  const inventory = await refreshAuthorizedInventory();
+  const inventory = await refreshAuthorizedInventory(force);
   const nextId = selectedDevice ? deviceId(selectedDevice) : null;
   debugLog("syncAuthorizedDevices()", { previousId, nextId, opened: Boolean(activeHandle) });
   if (activeHandle && previousId && previousId !== nextId) {
@@ -159,6 +281,9 @@ async function syncAuthorizedDevices(): Promise<ProbeInventory> {
 }
 
 function demoConfig(): ProbeConfigInfo {
+  const rawBytes = parseHexBytes(
+    "3bd00bf6dcdc8003002b0050230000dc02f0f0f0271f1b1712002b002b002b000000000001e1c0005000500050000000140a17000096327850506423e3000000534132304248532a0000000000000000000000000000000000000000000001",
+  );
   return {
     length: 95,
     modelId: "SA20BHS*",
@@ -190,14 +315,14 @@ function demoConfig(): ProbeConfigInfo {
     rawHex: "",
     firstChunk: "",
     secondChunk: "",
-    rawBytes: null,
+    rawBytes,
   };
 }
 
 function mountDemoApp(): void {
   let connected = true;
   const servoPresent = true;
-  const currentConfig = demoConfig();
+  let currentConfig = demoConfig();
 
   const inventory = (): ProbeInventory => ({
     devices: connected
@@ -267,8 +392,9 @@ function mountDemoApp(): void {
         present: connected && servoPresent,
         statusHi: "0x01",
         statusLo: connected && servoPresent ? "0x00" : "0xfa",
-        modeByte: connected && servoPresent ? "0x03" : null,
-        mode: connected && servoPresent ? "servo_mode" : "unknown",
+        modeByte:
+          connected && servoPresent ? (currentConfig.mode === "cr_mode" ? "0x04" : "0x03") : null,
+        mode: connected && servoPresent ? currentConfig.mode : "unknown",
         rawRx: "",
       }),
     },
@@ -279,6 +405,34 @@ function mountDemoApp(): void {
           throw new Error("Servo not detected.");
         }
         return currentConfig;
+      },
+    },
+    writeFullConfig: {
+      label: "Write",
+      run: async (bytes) => {
+        if (!connected || !servoPresent) {
+          throw new Error("Servo not detected.");
+        }
+        await sleep(40);
+        currentConfig = configInfoFromBytes(bytes, currentConfig.mode);
+      },
+    },
+    flashModeChange: {
+      label: "Flash Mode",
+      run: async ({ targetMode, onProgress }) => {
+        if (!connected || !servoPresent) {
+          throw new Error("Servo not detected.");
+        }
+        onProgress?.({ phase: "prepare", message: "Preparing flash session..." });
+        await sleep(40);
+        onProgress?.({ phase: "write", bytesSent: 1, bytesTotal: 1, message: "Writing firmware" });
+        await sleep(40);
+        onProgress?.({ phase: "done", bytesSent: 1, bytesTotal: 1, message: "Flash complete." });
+        currentConfig = {
+          ...currentConfig,
+          mode: targetMode,
+          modeLabel: servoModeLabel(targetMode),
+        };
       },
     },
   });
@@ -299,6 +453,12 @@ if (demoEnabled) {
         transportLogListeners.delete(push);
       };
     },
+    subscribeStatusLog: (push) => {
+      statusLogListeners.add(push);
+      return () => {
+        statusLogListeners.delete(push);
+      };
+    },
     watchInventory: (onInventory) => {
       if (!webHidSupported()) {
         return;
@@ -308,7 +468,7 @@ if (demoEnabled) {
       let syncing = false;
 
       const refresh = async () => {
-        if (stopped || syncing) return;
+        if (stopped || syncing || hardwareSessionActive()) return;
         syncing = true;
         try {
           onInventory(await syncAuthorizedDevices());
@@ -363,90 +523,127 @@ if (demoEnabled) {
     requestDevice: {
       label: "Find Adapter",
       run: async () => {
-        debugLog("requestDevice()");
-        const devices = await requestAxonDevices();
-        debugLog("requestDevice() resolved", {
-          count: devices.length,
-          products: devices.map((device) => device.productName),
+        return withHardwareSession("requestDevice", async () => {
+          debugLog("requestDevice()");
+          const devices = await requestAxonDevices();
+          debugLog("requestDevice() resolved", {
+            count: devices.length,
+            products: devices.map((device) => device.productName),
+          });
+          setPermissionHint();
+          await releaseHandle();
+          selectedDevice = devices[0] ?? null;
+          return currentInventory();
         });
-        setPermissionHint();
-        await releaseHandle();
-        selectedDevice = devices[0] ?? null;
-        return currentInventory();
       },
     },
     reconnectDevice: {
       label: "Use Remembered Adapter",
       run: async () => {
-        debugLog("reconnectDevice()");
-        await releaseHandle();
-        return refreshAuthorizedInventory();
+        return withHardwareSession("reconnectDevice", async () => {
+          debugLog("reconnectDevice()");
+          await releaseHandle();
+          return refreshAuthorizedInventory(true);
+        });
       },
     },
     openDevice: {
       label: "Connect",
       run: async () => {
-        if (!selectedDevice) {
-          throw new Error("No device selected.");
-        }
-        debugLog("openDevice()", {
-          id: deviceId(selectedDevice),
-          product: selectedDevice.productName,
+        return withHardwareSession("openDevice", async () => {
+          if (!selectedDevice) {
+            throw new Error("No device selected.");
+          }
+          debugLog("openDevice()", {
+            id: deviceId(selectedDevice),
+            product: selectedDevice.productName,
+          });
+          await reopenHandle();
+          debugLog("openDevice() success", { id: deviceId(selectedDevice) });
+          return currentInventory();
         });
-        await reopenHandle();
-        debugLog("openDevice() success", { id: deviceId(selectedDevice) });
-        return currentInventory();
       },
     },
     closeDevice: {
       label: "Disconnect",
       run: async () => {
-        debugLog("closeDevice()");
-        await releaseHandle();
-        return currentInventory();
+        return withHardwareSession("closeDevice", async () => {
+          debugLog("closeDevice()");
+          await releaseHandle();
+          return currentInventory();
+        });
       },
     },
     identifyServo: {
       label: "Find Servo",
       run: async (): Promise<ProbeIdentifyInfo> => {
-        const reply = await withRecoveredHandle("identify", async () => identify(requireHandle()));
-        lastIdentifyMode = reply.mode;
-        const replyBytes = new Uint8Array(reply.rawRx);
-        return {
-          present: reply.present,
-          statusHi: hex(reply.statusHi),
-          statusLo: hex(reply.statusLo),
-          modeByte: reply.modeByte === null ? null : hex(reply.modeByte),
-          mode: reply.mode,
-          rawRx: hexDump(replyBytes),
-        };
+        return withHardwareSession("identifyServo", async () => {
+          const reply = await withRecoveredHandle("identify", async () =>
+            identify(requireHandle()),
+          );
+          lastIdentifyMode = reply.mode;
+          const replyBytes = new Uint8Array(reply.rawRx);
+          return {
+            present: reply.present,
+            statusHi: hex(reply.statusHi),
+            statusLo: hex(reply.statusLo),
+            modeByte: reply.modeByte === null ? null : hex(reply.modeByte),
+            mode: reply.mode,
+            rawRx: hexDump(replyBytes),
+          };
+        });
       },
     },
     readFullConfig: {
       label: "Show Current Setup",
       run: async (): Promise<ProbeConfigInfo> => {
-        const config = await withRecoveredHandle("readFullConfig", async () =>
-          readFullConfig(requireHandle()),
-        );
-        const configBytes = new Uint8Array(config);
-        const modelId = modelIdFromConfig(configBytes);
-        const model = findModel(loadCatalog(), modelId);
-        const chunkSplit = 59;
-
-        return {
-          length: configBytes.length,
-          modelId,
-          known: Boolean(model),
-          modelName: model?.name ?? null,
-          docsUrl: model?.docs_url ?? null,
-          mode: lastIdentifyMode,
-          modeLabel: servoModeLabel(lastIdentifyMode),
-          setup: summarizeConfig(configBytes, modelId),
-          rawHex: hexDump(configBytes),
-          firstChunk: hexDump(configBytes.subarray(0, chunkSplit)),
-          secondChunk: hexDump(configBytes.subarray(chunkSplit)),
-          rawBytes: Array.from(configBytes),
-        };
+        return withHardwareSession("readFullConfig", async () => {
+          const config = await withRecoveredHandle("readFullConfig", async () =>
+            readFullConfig(requireHandle()),
+          );
+          return configInfoFromBytes(new Uint8Array(config), lastIdentifyMode);
+        });
+      },
+    },
+    writeFullConfig: {
+      label: "Apply",
+      run: async (bytes): Promise<void> => {
+        await withHardwareSession("writeFullConfig", async () => {
+          await withRecoveredHandle("writeFullConfig", async () =>
+            writeFullConfig(requireHandle(), Uint8Array.from(bytes)),
+          );
+        });
+      },
+    },
+    flashModeChange: {
+      label: "Flash Mode",
+      run: async ({ targetMode, modelId, onProgress }): Promise<void> => {
+        await withHardwareSession("flashModeChange", async () => {
+          const [{ flashFirmware }] = await Promise.all([import("@axon/core/driver/flash")]);
+          const maybeQueueHandle = activeHandle as
+            | (typeof activeHandle & {
+                clearInputQueue?: () => void;
+              })
+            | null;
+          maybeQueueHandle?.clearInputQueue?.();
+          const firmwareBytes = await loadBundledFirmware(modelId, targetMode);
+          const decrypted = decryptSfwBrowser(Uint8Array.from(firmwareBytes));
+          await flashFirmware(requireHandle(), decrypted, {
+            expectedModelId: modelId,
+            onProgress: (event) => {
+              onProgress?.(event);
+              statusLog(formatFlashProgress(event, debugEnabled));
+              debugLog(`flash ${event.phase}`, {
+                bytesSent: event.bytesSent ?? null,
+                bytesTotal: event.bytesTotal ?? null,
+                recordsSent: event.recordsSent ?? null,
+                recordsTotal: event.recordsTotal ?? null,
+                message: event.message,
+              });
+            },
+          });
+          await sleep(400);
+        });
       },
     },
   });

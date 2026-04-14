@@ -5,6 +5,7 @@ import {
   identify,
   modelIdFromConfig,
   readFullConfig,
+  writeFullConfig,
 } from "@axon/core/driver/protocol";
 import { AxonError } from "@axon/core/errors";
 import { type DongleDescriptor, listDongles, openDongle } from "@axon/transport-nodehid";
@@ -177,6 +178,11 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
             rawBytes: Array.from(config),
           };
           return info;
+        }),
+      writeFullConfig: (params) =>
+        withResult(async () => {
+          const handle = requireOpenHandle();
+          await writeFullConfig(handle, Uint8Array.from(params.bytes));
         }),
     },
     messages: {},

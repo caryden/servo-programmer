@@ -38,6 +38,7 @@ export type DesktopPocSchema = {
       closeAdapter: { params: undefined; response: RpcResult<ProbeInventory> };
       identifyServo: { params: undefined; response: RpcResult<ProbeIdentifyInfo> };
       readFullConfig: { params: undefined; response: RpcResult<ProbeConfigInfo> };
+      writeFullConfig: { params: { bytes: number[] }; response: RpcResult<void> };
     };
     messages: EmptySchema;
   };

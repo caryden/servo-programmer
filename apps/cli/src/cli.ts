@@ -33,6 +33,7 @@ export interface GlobalFlags {
   json: boolean;
   quiet: boolean;
   yes: boolean;
+  debug: boolean;
 }
 
 export interface ParsedArgs {
@@ -60,7 +61,7 @@ function isNegativeNumberToken(arg: string): boolean {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const global: GlobalFlags = { json: false, quiet: false, yes: false };
+  const global: GlobalFlags = { json: false, quiet: false, yes: false, debug: false };
   const flags: Record<string, string | boolean> = {};
   const positional: string[] = [];
   let command: string | null = null;
@@ -100,6 +101,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (name === "json") global.json = true;
       else if (name === "quiet") global.quiet = true;
       else if (name === "yes") global.yes = true;
+      else if (name === "debug") global.debug = true;
       else flags[name] = value;
     } else if (arg.startsWith("-") && arg.length > 1) {
       // short flags: -y, -h, etc
@@ -365,7 +367,7 @@ function printCommandHelp(command: string): void {
       );
       break;
     case "get":
-      printGetHelp({ json: false, quiet: false, yes: false });
+      printGetHelp({ json: false, quiet: false, yes: false, debug: false });
       break;
     case "set":
       process.stdout.write(

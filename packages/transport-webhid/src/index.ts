@@ -164,6 +164,10 @@ export class WebHidDongle implements DongleHandle {
       await this.device.close();
     }
   }
+
+  clearInputQueue(): void {
+    this.replies.length = 0;
+  }
 }
 
 export async function openDongle(device: HIDDevice): Promise<WebHidDongle> {

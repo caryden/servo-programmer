@@ -589,18 +589,55 @@ function friendlyModeName(mode: ServoMode): string {
 }
 
 /** Returns true when AXON_DEBUG=1 is set. */
-function isDebug(): boolean {
-  return process.env.AXON_DEBUG === "1";
+function isDebug(global?: GlobalFlags): boolean {
+  return global?.debug === true || process.env.AXON_DEBUG === "1";
+}
+
+function timestampLabel(date: Date): string {
+  const core = date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${core}.${date.getMilliseconds().toString().padStart(3, "0")}`;
+}
+
+function elapsedLabel(ms: number): string {
+  const seconds = (ms / 1000).toFixed(3);
+  return `+${seconds}s`;
+}
+
+function formatProgressDebugLine(event: FlashProgressEvent): string {
+  const parts = [`Flash ${event.phase}`];
+  if (typeof event.recordsSent === "number" && typeof event.recordsTotal === "number") {
+    parts.push(`${event.recordsSent}/${event.recordsTotal} records`);
+  }
+  if (typeof event.bytesSent === "number" && typeof event.bytesTotal === "number") {
+    parts.push(`${event.bytesSent}/${event.bytesTotal} bytes`);
+  }
+  if (event.message) {
+    parts.push(event.message);
+  }
+  return parts.join(" - ");
 }
 
 function makeProgressSink(global: GlobalFlags): FlashProgressFn {
   if (global.json || global.quiet) return () => {};
 
   const isTTY = process.stderr.isTTY === true;
+  const debug = isDebug(global);
+  let firstEventAt: number | null = null;
   let started = false;
   return (e: FlashProgressEvent) => {
-    if (isDebug()) {
-      process.stderr.write(`  [debug] ${e.phase}: ${e.message ?? ""}\n`);
+    if (debug) {
+      const now = new Date();
+      const nowMs = now.getTime();
+      if (firstEventAt === null) {
+        firstEventAt = nowMs;
+      }
+      process.stderr.write(
+        `[${timestampLabel(now)} ${elapsedLabel(nowMs - firstEventAt)}] ${formatProgressDebugLine(e)}\n`,
+      );
       return;
     }
     if (e.bytesSent !== undefined && e.bytesTotal !== undefined && e.bytesTotal > 0) {

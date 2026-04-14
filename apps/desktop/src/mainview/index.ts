@@ -77,4 +77,9 @@ mountProbeApp({
     label: "Show Current Setup",
     run: async (): Promise<ProbeConfigInfo> => unwrapResult(rpc.request.readFullConfig()),
   },
+  writeFullConfig: {
+    label: "Apply",
+    run: async (bytes: Uint8Array): Promise<void> =>
+      unwrapResult(rpc.request.writeFullConfig({ bytes: Array.from(bytes) })),
+  },
 });

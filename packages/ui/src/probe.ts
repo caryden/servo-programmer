@@ -100,6 +100,20 @@ interface ProbeAction<T> {
   run: () => Promise<T>;
 }
 
+interface ProbeValueAction<TArg, TResult> {
+  label: string;
+  run: (arg: TArg) => Promise<TResult>;
+}
+
+export interface ProbeFlashProgressEvent {
+  phase: string;
+  bytesSent?: number;
+  bytesTotal?: number;
+  recordsSent?: number;
+  recordsTotal?: number;
+  message?: string;
+}
+
 export interface MountProbeAppOptions {
   root: HTMLElement;
   autoConnectOnLoad?: boolean;
@@ -107,6 +121,7 @@ export interface MountProbeAppOptions {
   initialAuthorizedAccess?: boolean;
   livePollIntervalMs?: number;
   subscribeTransportLog?: (push: (message: string) => void) => undefined | (() => void);
+  subscribeStatusLog?: (push: (message: string) => void) => undefined | (() => void);
   watchInventory?: (onInventory: (inventory: ProbeInventory) => void) => undefined | (() => void);
   eyebrow?: string;
   title: string;
@@ -123,6 +138,15 @@ export interface MountProbeAppOptions {
   closeDevice?: ProbeAction<ProbeInventory>;
   identifyServo?: ProbeAction<ProbeIdentifyInfo>;
   readFullConfig?: ProbeAction<ProbeConfigInfo>;
+  writeFullConfig?: ProbeValueAction<Uint8Array, void>;
+  flashModeChange?: ProbeValueAction<
+    {
+      targetMode: ServoMode;
+      modelId: string;
+      onProgress?: (event: ProbeFlashProgressEvent) => void;
+    },
+    void
+  >;
 }
 
 interface LogEntry {
@@ -181,12 +205,16 @@ interface ProbeState {
   identify: ProbeIdentifyInfo | null;
   config: ProbeConfigInfo | null;
   draft: DraftConfig;
-  baselineDraft: DraftConfig | null;
   baselineRawBytes: number[] | null;
   liveSnapshot: DraftConfig | null;
   checkpoints: ConfigCheckpoint[];
   sim: SimState;
   busyAction: string | null;
+  applyProgress: {
+    title: string;
+    detail: string;
+    percent: number;
+  } | null;
   error: string | null;
   logs: LogEntry[];
   statusMessage: string;
@@ -337,7 +365,13 @@ function escapeHtml(value: unknown): string {
 }
 
 function nowLabel(): string {
-  return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const now = new Date();
+  const core = now.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${core}.${now.getMilliseconds().toString().padStart(3, "0")}`;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -355,6 +389,10 @@ function formatRelativeTime(iso: string): string {
     return rtf.format(Math.round(deltaSec / 60), "minute");
   }
   return rtf.format(deltaSec, "second");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function modeLabel(mode: ServoMode): string {
@@ -443,6 +481,14 @@ function draftKey(draft: DraftConfig | null): string | null {
 
 function isDirty(baseline: DraftConfig | null, draft: DraftConfig): boolean {
   return draftKey(baseline) !== null && draftKey(baseline) !== draftKey(draft);
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function readStoredCheckpoints(): ConfigCheckpoint[] {
@@ -1327,12 +1373,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     identify: null,
     config: null,
     draft: initialDraft,
-    baselineDraft: null,
     baselineRawBytes: null,
     liveSnapshot: null,
     checkpoints: readStoredCheckpoints(),
     sim: baseSim(initialDraft),
     busyAction: null,
+    applyProgress: null,
     error: null,
     logs: [],
     statusMessage: "Starting",
@@ -1346,6 +1392,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   let lastSweepFrameTs: number | null = null;
   let livePollTimer: ReturnType<typeof setInterval> | null = null;
   let _transportLogCleanup: undefined | (() => void);
+  let _statusLogCleanup: undefined | (() => void);
   let liveProbeInFlight = false;
   let missingServoStreak = 0;
   let probeFailureStreak = 0;
@@ -1394,6 +1441,96 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
   function setIdleStatus(shouldLog = true): void {
     setStatus(idleStatus(), shouldLog);
+  }
+
+  function reportError(error: unknown, statusMessage = "Error"): string {
+    const message = error instanceof Error ? error.message : String(error);
+    state.error = message;
+    logger.status(`Error: ${message}`);
+    state.statusMessage = statusMessage;
+    return message;
+  }
+
+  function setApplyProgress(title: string, detail: string, percent: number): void {
+    state.applyProgress = {
+      title,
+      detail,
+      percent: clamp(percent, 0, 100),
+    };
+  }
+
+  function clearApplyProgress(): void {
+    state.applyProgress = null;
+  }
+
+  function flashPhaseProgress(
+    targetMode: ServoMode,
+    event: ProbeFlashProgressEvent,
+  ): { title: string; detail: string; percent: number } {
+    const modeLabelText = targetMode === "cr_mode" ? "CR" : "Servo";
+    switch (event.phase) {
+      case "prepare":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: preparing flash session`,
+          percent: 10,
+        };
+      case "boot_query":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: checking bootloader`,
+          percent: 18,
+        };
+      case "key_exchange":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: negotiating flash session`,
+          percent: 26,
+        };
+      case "verify_model":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: verifying firmware`,
+          percent: 32,
+        };
+      case "erase":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: erasing firmware sectors`,
+          percent: 40,
+        };
+      case "write": {
+        const ratio =
+          typeof event.bytesSent === "number" &&
+          typeof event.bytesTotal === "number" &&
+          event.bytesTotal > 0
+            ? event.bytesSent / event.bytesTotal
+            : 0;
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: writing firmware`,
+          percent: 45 + ratio * 35,
+        };
+      }
+      case "finalize":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: finalizing firmware`,
+          percent: 82,
+        };
+      case "done":
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}: reconnecting servo`,
+          percent: 86,
+        };
+      default:
+        return {
+          title: "Applying Changes...",
+          detail: `Switching to ${modeLabelText}`,
+          percent: 25,
+        };
+    }
   }
 
   function inventorySignature(inventory: ProbeInventory): string {
@@ -1465,15 +1602,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     writeStoredCheckpoints(state.checkpoints);
   }
 
-  function adoptDraft(
-    nextDraft: DraftConfig,
-    previousMode: ServoMode | null,
-    asBaseline = false,
-  ): void {
+  function adoptDraft(nextDraft: DraftConfig, previousMode: ServoMode | null): void {
     state.draft = cloneDraftConfig(nextDraft);
-    if (asBaseline) {
-      state.baselineDraft = cloneDraftConfig(nextDraft);
-    }
     state.sim = syncSimToDraft(
       state.draft,
       state.sim,
@@ -1498,25 +1628,204 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     state.liveSnapshot = cloneDraftConfig(nextDraft);
     state.baselineRawBytes = config.rawBytes ? [...config.rawBytes] : null;
     rememberCheckpoint(config, nextDraft);
-    adoptDraft(nextDraft, previousMode, true);
+    adoptDraft(nextDraft, previousMode);
   }
 
-  function discardToBaseline(): void {
-    if (!state.baselineDraft) return;
-    const previousMode = state.draft.mode;
-    adoptDraft(cloneDraftConfig(state.baselineDraft), previousMode, false);
+  async function discardToServo(): Promise<void> {
+    if (state.busyAction || !options.readFullConfig || !state.config) return;
+
+    state.busyAction = "Discard";
     state.error = null;
     state.loadPanelOpen = false;
-    setStatus("Discarded edits");
-    setIdleStatus();
+    setStatus("Reloading setup");
     render();
+
+    try {
+      if (options.identifyServo) {
+        setStatus("Checking for servo", false);
+        const identifyReply = await options.identifyServo.run();
+        state.identify = identifyReply;
+        if (!identifyReply.present) {
+          throw new Error("Servo not detected.");
+        }
+      }
+
+      setStatus("Reading setup", false);
+      const config = await options.readFullConfig.run();
+      applyConfig(config);
+      setStatus("Discarded edits");
+      setIdleStatus();
+    } catch (error) {
+      reportError(error);
+    } finally {
+      state.busyAction = null;
+      render();
+    }
+  }
+
+  async function applyToServo(): Promise<void> {
+    if (
+      state.busyAction ||
+      !state.config ||
+      !state.liveSnapshot ||
+      !options.readFullConfig ||
+      !options.writeFullConfig
+    ) {
+      return;
+    }
+
+    state.busyAction = "Apply";
+    state.error = null;
+    setApplyProgress("Applying Changes...", "Reading current servo setup", 10);
+    setStatus("Reading setup");
+    render();
+
+    try {
+      if (options.identifyServo) {
+        const identifyReply = await options.identifyServo.run();
+        state.identify = identifyReply;
+        if (!identifyReply.present) {
+          throw new Error("Servo not detected.");
+        }
+      }
+
+      const liveConfig = await options.readFullConfig.run();
+      let workingConfig = liveConfig;
+      let workingMode = modeFromConfig(workingConfig);
+
+      if (workingMode !== state.draft.mode) {
+        if (!options.flashModeChange) {
+          throw new Error("Apply for mode changes is not wired here yet.");
+        }
+        setApplyProgress(
+          "Applying Changes...",
+          `Switching to ${state.draft.mode === "cr_mode" ? "CR" : "Servo"}`,
+          8,
+        );
+        setStatus("Flashing mode");
+        await options.flashModeChange.run({
+          targetMode: state.draft.mode,
+          modelId: workingConfig.modelId,
+          onProgress: (event) => {
+            const progress = flashPhaseProgress(state.draft.mode, event);
+            setApplyProgress(progress.title, progress.detail, progress.percent);
+            render();
+          },
+        });
+
+        let flashedConfig: ProbeConfigInfo | null = null;
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await sleep(1000);
+          try {
+            if (options.reconnectDevice) {
+              updateInventory(await options.reconnectDevice.run());
+            }
+            if (!state.inventory.openedId && options.openDevice) {
+              updateInventory(await options.openDevice.run());
+            }
+            if (options.identifyServo) {
+              setApplyProgress("Applying Changes...", "Waiting for servo to reconnect", 88);
+              setStatus("Checking for servo", attempt === 0);
+              const identifyReply = await options.identifyServo.run();
+              state.identify = identifyReply;
+              if (!identifyReply.present) {
+                continue;
+              }
+            }
+            setApplyProgress("Applying Changes...", "Reading reconnected servo setup", 92);
+            setStatus("Reading setup", false);
+            const candidate = await options.readFullConfig.run();
+            if (modeFromConfig(candidate) !== state.draft.mode) {
+              continue;
+            }
+            flashedConfig = candidate;
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        if (!flashedConfig) {
+          if (lastError instanceof Error) throw lastError;
+          throw new Error("Servo did not reconnect in the requested mode after flash.");
+        }
+        workingConfig = flashedConfig;
+        workingMode = modeFromConfig(workingConfig);
+      }
+
+      if (workingMode !== state.draft.mode) {
+        throw new Error("Servo mode did not match the requested draft after reconnect.");
+      }
+      if (!workingConfig.rawBytes) {
+        throw new Error("No raw config block is available for apply.");
+      }
+
+      const targetBytes = encodeDraftOntoRawConfig(
+        Uint8Array.from(workingConfig.rawBytes),
+        state.draft,
+      );
+      const workingBytes = Uint8Array.from(workingConfig.rawBytes);
+      if (sameBytes(targetBytes, workingBytes)) {
+        applyConfig(workingConfig);
+        clearApplyProgress();
+        setStatus("No changes to apply");
+        setIdleStatus();
+        return;
+      }
+
+      setApplyProgress(
+        "Applying Changes...",
+        "Writing setup",
+        workingMode === state.draft.mode && modeFromConfig(liveConfig) === state.draft.mode
+          ? 70
+          : 95,
+      );
+      setStatus("Writing setup");
+      await options.writeFullConfig.run(targetBytes);
+
+      setApplyProgress(
+        "Applying Changes...",
+        "Verifying applied setup",
+        workingMode === state.draft.mode && modeFromConfig(liveConfig) === state.draft.mode
+          ? 90
+          : 98,
+      );
+      setStatus("Verifying");
+      const verifiedConfig = await options.readFullConfig.run();
+      if (!verifiedConfig.rawBytes) {
+        throw new Error("Verification read did not return a raw config block.");
+      }
+      const verifiedBytes = Uint8Array.from(verifiedConfig.rawBytes);
+      if (!sameBytes(targetBytes, verifiedBytes)) {
+        throw new Error("Write verification failed. The servo read-back does not match the draft.");
+      }
+
+      applyConfig(verifiedConfig);
+      setApplyProgress("Applying Changes...", "Finishing", 100);
+      setStatus("Applied");
+      setIdleStatus();
+    } catch (error) {
+      reportError(error);
+      try {
+        if (options.readFullConfig && state.inventory.openedId !== null) {
+          const refreshed = await options.readFullConfig.run();
+          applyConfig(refreshed);
+        }
+      } catch {
+        // keep the current draft and surface the original error
+      }
+    } finally {
+      clearApplyProgress();
+      state.busyAction = null;
+      render();
+    }
   }
 
   function loadCheckpoint(checkpointId: string): void {
     const checkpoint = state.checkpoints.find((entry) => entry.id === checkpointId);
     if (!checkpoint) return;
     const previousMode = state.draft.mode;
-    adoptDraft(cloneDraftConfig(checkpoint.draft), previousMode, true);
+    adoptDraft(cloneDraftConfig(checkpoint.draft), previousMode);
     state.error = null;
     state.loadPanelOpen = false;
     setStatus(`Loaded ${checkpoint.label}`);
@@ -1777,13 +2086,17 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (loadMax) {
       loadMax.textContent = loadSliderMax.toFixed(1);
     }
-    const workingDirty = isDirty(state.baselineDraft, state.draft);
     const liveDirty = isDirty(state.liveSnapshot, state.draft);
     if (discardButton) {
-      discardButton.disabled = !(workingDirty && Boolean(state.baselineDraft) && !state.busyAction);
+      discardButton.disabled = !(liveDirty && Boolean(state.config) && !state.busyAction);
     }
     if (applyButton) {
-      applyButton.disabled = !(liveDirty && state.config && !state.busyAction);
+      applyButton.disabled = !(
+        liveDirty &&
+        state.config &&
+        options.writeFullConfig &&
+        !state.busyAction
+      );
     }
     if (sweepButton) {
       sweepButton.innerHTML = sweepControlIcon(state.sim.playbackRunning);
@@ -1871,9 +2184,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const shouldRun = (options.livePollIntervalMs ?? 0) > 0;
     if (shouldRun && !livePollTimer) {
       livePollTimer = setInterval(() => {
-        const workingDirty = isDirty(state.baselineDraft, state.draft);
         const liveDirty = isDirty(state.liveSnapshot, state.draft);
-        if (state.inventory.openedId !== null && !state.busyAction && !workingDirty && !liveDirty) {
+        if (state.inventory.openedId !== null && !state.busyAction && !liveDirty) {
           void probeLiveStateSilently();
         }
       }, options.livePollIntervalMs);
@@ -2006,8 +2318,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       await doConnectAndSync(false, true);
       return;
     } catch (error) {
-      state.error = error instanceof Error ? error.message : String(error);
-      setIdleStatus();
+      reportError(error);
     } finally {
       if (state.busyAction === "Connect") {
         state.busyAction = null;
@@ -2070,8 +2381,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
       setIdleStatus();
     } catch (error) {
-      state.error = error instanceof Error ? error.message : String(error);
-      setIdleStatus();
+      reportError(error);
     } finally {
       if (!alreadyBusy) {
         state.busyAction = null;
@@ -2163,7 +2473,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           setIdleStatus();
           return;
         }
-        state.error = error instanceof Error ? error.message : String(error);
+        reportError(error);
         render();
         return;
       }
@@ -2171,7 +2481,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
     if (format === "svo") {
       if (!svoBytes) {
-        state.error = "No raw config block is available for .svo export yet.";
+        reportError("No raw config block is available for .svo export yet.");
         render();
         return;
       }
@@ -2200,7 +2510,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
     const previousMode = state.draft.mode;
     const nextDraft = draftFromPartial(configDraft, state.draft);
-    adoptDraft(nextDraft, previousMode, true);
+    adoptDraft(nextDraft, previousMode);
     state.loadPanelOpen = false;
     state.error = null;
     render();
@@ -2211,7 +2521,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   function handleSvoFile(file: File): void {
     const reader = new FileReader();
     reader.onerror = () => {
-      state.error = "Could not read file.";
+      reportError("Could not read file.");
       render();
     };
     reader.onload = () => {
@@ -2223,15 +2533,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
             : state.draft.mode;
         const config = configInfoFromRawBytes(bytes, mode);
         const nextDraft = draftFromConfig(config, state.draft);
-        state.baselineRawBytes = [...(config.rawBytes ?? [])];
-        adoptDraft(nextDraft, state.draft.mode, true);
+        adoptDraft(nextDraft, state.draft.mode);
         state.loadPanelOpen = false;
         state.error = null;
         render();
         setStatus(`Loaded ${file.name}`);
         setIdleStatus();
       } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
+        reportError(error);
         render();
       }
     };
@@ -2246,7 +2555,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
     const reader = new FileReader();
     reader.onerror = () => {
-      state.error = "Could not read file.";
+      reportError("Could not read file.");
       render();
     };
     reader.onload = () => {
@@ -2254,7 +2563,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         const parsed = JSON.parse(String(reader.result ?? ""));
         applyLoadedDraft(parsed);
       } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
+        reportError(error);
         render();
       }
     };
@@ -2317,11 +2626,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         : state.checkpoints
             .filter((checkpoint) => checkpoint.modelId === activeModelId)
             .slice(0, 3);
-    const workingDirty = isDirty(state.baselineDraft, state.draft);
     const liveDirty = isDirty(state.liveSnapshot, state.draft);
     const servoLabel = servoIdentityLabel(state.config, servoPresent);
-    const canDiscard = workingDirty && Boolean(state.baselineDraft) && !state.busyAction;
-    const canApply = liveDirty && Boolean(state.config) && !state.busyAction;
+    const canDiscard = liveDirty && Boolean(state.config) && !state.busyAction;
+    const canApply =
+      liveDirty && Boolean(state.config) && Boolean(options.writeFullConfig) && !state.busyAction;
     const emptyState: EmptyStateKind = !connected ? "adapter" : !servoPresent ? "servo" : null;
     const showRange = state.draft.mode === "servo_mode";
     const centerLabel = state.draft.mode === "servo_mode" ? "Center" : "Stop trim";
@@ -2603,6 +2912,70 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           background: #fff1f2;
           color: #8c101e;
           font-size: 13px;
+        }
+
+        .apply-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 60;
+          background: rgba(17, 17, 17, 0.34);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+
+        .apply-modal {
+          width: min(460px, 100%);
+          padding: 18px 18px 16px;
+          border-radius: 8px;
+          border: 1px solid #dcded9;
+          background: #ffffff;
+          box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+          display: grid;
+          gap: 12px;
+        }
+
+        .apply-modal-title {
+          font-size: 18px;
+          font-weight: 800;
+          color: #111111;
+        }
+
+        .apply-modal-copy {
+          font-size: 13px;
+          line-height: 1.45;
+          color: #4b5563;
+        }
+
+        .apply-progress-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          font-size: 12px;
+          font-weight: 700;
+          color: #374151;
+        }
+
+        .apply-progress-track {
+          height: 10px;
+          border-radius: 999px;
+          background: #e8edf3;
+          overflow: hidden;
+        }
+
+        .apply-progress-fill {
+          height: 100%;
+          border-radius: 999px;
+          background: #1f6ed4;
+          transition: width 120ms linear;
+        }
+
+        .apply-modal-note {
+          font-size: 12px;
+          line-height: 1.4;
+          color: #6b7280;
         }
 
         .workspace {
@@ -3360,8 +3733,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               </button>
             </div>
             <div class="actions">
-              <button class="tool" data-command="discard" ${!canDiscard ? "disabled" : ""} title="Throw away local edits and return to the currently loaded config.">Discard</button>
-              <button class="apply" data-command="apply" ${!canApply ? "disabled" : ""} title="Make the attached servo match the current draft. Not wired yet.">Apply</button>
+              <button class="tool" data-command="discard" ${!canDiscard ? "disabled" : ""} title="Throw away local edits and reload the servo's current setup.">Discard</button>
+              <button class="apply" data-command="apply" ${!canApply ? "disabled" : ""} title="Make the attached servo match the current draft. Mode changes still require flash wiring.">Apply</button>
             </div>
           </div>
 
@@ -3393,6 +3766,27 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           }
 
           ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
+
+          ${
+            state.busyAction === "Apply" && state.applyProgress
+              ? `
+                <div class="apply-modal-backdrop" role="dialog" aria-modal="true" aria-label="Applying Changes">
+                  <div class="apply-modal">
+                    <div class="apply-modal-title">${escapeHtml(state.applyProgress.title)}</div>
+                    <div class="apply-modal-copy">The attached servo is being updated to match the current settings.</div>
+                    <div class="apply-progress-meta">
+                      <span>${escapeHtml(state.applyProgress.detail)}</span>
+                      <span>${Math.round(state.applyProgress.percent)}%</span>
+                    </div>
+                    <div class="apply-progress-track" aria-hidden="true">
+                      <div class="apply-progress-fill" style="width:${state.applyProgress.percent.toFixed(1)}%"></div>
+                    </div>
+                    <div class="apply-modal-note">Do not unplug the adapter or servo while changes are being applied.</div>
+                  </div>
+                </div>
+              `
+              : ""
+          }
 
           ${
             emptyState === "adapter"
@@ -3928,7 +4322,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               if (state.statusOpen) render();
             },
             () => {
-              state.error = "Could not copy log.";
+              reportError("Could not copy log.");
               render();
             },
           );
@@ -3956,13 +4350,10 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           void triggerSave("svo");
         }
         if (command === "discard") {
-          discardToBaseline();
+          void discardToServo();
         }
         if (command === "apply") {
-          state.error = "Apply is not wired in this probe yet.";
-          setStatus("Apply pending");
-          setIdleStatus();
-          render();
+          void applyToServo();
         }
       });
     });
@@ -4001,8 +4392,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         setIdleStatus();
       }
     } catch (error) {
-      state.error = error instanceof Error ? error.message : String(error);
-      setIdleStatus();
+      reportError(error);
     }
     if (options.watchInventory) {
       options.watchInventory((inventory) => {
@@ -4024,6 +4414,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (options.subscribeTransportLog) {
       _transportLogCleanup = options.subscribeTransportLog((message) => {
         logger.debug(message);
+        if (state.statusOpen) {
+          render();
+        }
+      });
+    }
+    if (options.subscribeStatusLog) {
+      _statusLogCleanup = options.subscribeStatusLog((message) => {
+        logger.status(message);
         if (state.statusOpen) {
           render();
         }
