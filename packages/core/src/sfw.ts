@@ -23,19 +23,18 @@
  * tolerate both line endings on parse.
  */
 
-import { createDecipheriv, createHash } from "node:crypto";
+/// <reference path="./types/aes-js.d.ts" />
+
+import { Buffer } from "node:buffer";
+import * as aesjs from "aes-js";
 
 /** AES-128 key used for every .sfw file: sixteen ASCII 'T' bytes. */
-const KEY = Buffer.from("TTTTTTTTTTTTTTTT", "ascii");
-const IV_ZERO = Buffer.alloc(16, 0);
+const KEY = aesjs.utils.utf8.toBytes("TTTTTTTTTTTTTTTT");
+const IV_ZERO = new Uint8Array(16);
 const MIN_SFW_BYTES = 32; // 16-byte ECB header + at least one AES-CBC body block
 
 /** Expected magic run in the 16-byte ECB header: twelve ASCII 'x' bytes. */
 const MAGIC = Buffer.from("xxxxxxxxxxxx", "ascii");
-
-function asBytes(buffer: ArrayLike<number>): Uint8Array {
-  return Uint8Array.from(buffer);
-}
 
 export interface IntelHexRecord {
   /** Byte count field (COUNT in `:CCAAAATT...`). */
@@ -98,19 +97,13 @@ function ensureAligned(ciphertext: Buffer): void {
 }
 
 function decryptEcb16(block: Buffer): Buffer {
-  const decipher = createDecipheriv("aes-128-ecb", asBytes(KEY), null);
-  decipher.setAutoPadding(false);
-  const first = asBytes(decipher.update(asBytes(block)));
-  const second = asBytes(decipher.final());
-  return Buffer.from([...first, ...second]);
+  const mode = new aesjs.ModeOfOperation.ecb(KEY);
+  return Buffer.from(mode.decrypt(Uint8Array.from(block)));
 }
 
 function decryptCbc(body: Buffer): Buffer {
-  const decipher = createDecipheriv("aes-128-cbc", asBytes(KEY), asBytes(IV_ZERO));
-  decipher.setAutoPadding(false);
-  const first = asBytes(decipher.update(asBytes(body)));
-  const second = asBytes(decipher.final());
-  return Buffer.from([...first, ...second]);
+  const mode = new aesjs.ModeOfOperation.cbc(KEY, IV_ZERO);
+  return Buffer.from(mode.decrypt(Uint8Array.from(body)));
 }
 
 /**
@@ -202,7 +195,7 @@ export function decryptSfw(ciphertext: Buffer): DecryptedSfw {
   const header = decryptEcb16(ciphertext.subarray(0, 16));
   const declaredLength = header.readUInt32LE(0);
   const magic = header.subarray(4, 16);
-  if (!magic.equals(asBytes(MAGIC))) {
+  if (magic.toString("hex") !== MAGIC.toString("hex")) {
     throw new Error(
       `sfw: header magic is ${magic.toString("hex")}, expected ${MAGIC.toString("hex")}`,
     );
@@ -285,15 +278,4 @@ export function decryptSfw(ciphertext: Buffer): DecryptedSfw {
     sectorErases,
     hexRecords,
   };
-}
-
-/** Compute the SHA-256 hash of a .sfw file as a lowercase hex string. */
-export function sfwHashHex(ciphertext: Buffer): string {
-  return createHash("sha256").update(asBytes(ciphertext)).digest("hex");
-}
-
-/** Compare a .sfw file's SHA-256 against a known-good hex digest. */
-export function verifySfwHash(ciphertext: Buffer, expectedSha256: string): boolean {
-  const actual = sfwHashHex(ciphertext);
-  return actual.toLowerCase() === expectedSha256.toLowerCase();
 }

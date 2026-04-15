@@ -19,6 +19,9 @@
     "check": "bun x @biomejs/biome check src package.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "aes-js": "^3.1.2"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",
     "@types/bun": "latest",

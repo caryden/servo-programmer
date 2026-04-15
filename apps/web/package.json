@@ -15,8 +15,7 @@
   "dependencies": {
     "@axon/core": "workspace:*",
     "@axon/transport-webhid": "workspace:*",
-    "@axon/ui": "workspace:*",
-    "aes-js": "^3.1.2"
+    "@axon/ui": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",

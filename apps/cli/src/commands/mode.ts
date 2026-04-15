@@ -441,6 +441,7 @@ async function runModeSet(
   await flashFirmware(handle, decrypted, {
     expectedModelId: modelId ?? undefined,
     onProgress: makeProgressSink(global),
+    onWireDebug: makeWireDebugSink(global),
     cmdSleepMs: Number.isFinite(cmdSleepOverride) ? cmdSleepOverride : undefined,
   });
 
@@ -649,6 +650,22 @@ function makeProgressSink(global: GlobalFlags): FlashProgressFn {
         started = true;
       }
     }
+  };
+}
+
+function makeWireDebugSink(global: GlobalFlags): ((message: string) => void) | undefined {
+  if (!isDebug(global)) return undefined;
+
+  let firstEventAt: number | null = null;
+  return (message: string) => {
+    const now = new Date();
+    const nowMs = now.getTime();
+    if (firstEventAt === null) {
+      firstEventAt = nowMs;
+    }
+    process.stderr.write(
+      `[${timestampLabel(now)} ${elapsedLabel(nowMs - firstEventAt)}] [wire] ${message}\n`,
+    );
   };
 }
 

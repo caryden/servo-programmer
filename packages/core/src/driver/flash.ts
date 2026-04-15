@@ -83,21 +83,16 @@ import type { DecryptedSfw, IntelHexRecord } from "../sfw.ts";
 import { REPORT_SIZE } from "./protocol.ts";
 import type { DongleHandle } from "./transport.ts";
 
-function flashWireDebugEnabled(): boolean {
-  return typeof process !== "undefined" && process.env.AXON_DEBUG === "1";
-}
+type RandomSource = {
+  getRandomValues?: (array: Uint8Array) => Uint8Array;
+};
 
 function randomBytesCompat(length: number): Uint8Array {
   const out = new Uint8Array(length);
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(out);
+  const cryptoApi = (globalThis as { crypto?: RandomSource }).crypto;
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    cryptoApi.getRandomValues(out);
     return out;
-  }
-  if (typeof process !== "undefined") {
-    // Keep Node/Bun parity without hard-requiring node:crypto in browser bundles.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { randomBytes } = require("node:crypto") as typeof import("node:crypto");
-    return Uint8Array.from(randomBytes(length));
   }
   throw new Error("flash: no secure random source is available in this environment.");
 }
@@ -224,21 +219,20 @@ async function exchange(
   payload: Uint8Array,
   expectLength: number,
   sleepMs: number,
+  onWireDebug?: (message: string) => void,
 ): Promise<Buffer> {
   if (sleepMs > 0) await sleep(sleepMs);
   const tx = buildFlashTx(cmd, payload);
   await handle.write(tx);
   const rx = await handle.read();
-  if (flashWireDebugEnabled()) {
+  if (onWireDebug !== undefined) {
     const txHex = Array.from(tx.subarray(0, 8))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join(" ");
     const rxHex = Array.from(rx.subarray(0, 16))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join(" ");
-    process.stderr.write(
-      `  [wire] cmd=0x${cmd.toString(16)} tx[0..7]: ${txHex}  rx[0..15]: ${rxHex}\n`,
-    );
+    onWireDebug(`cmd=0x${cmd.toString(16)} tx[0..7]: ${txHex}  rx[0..15]: ${rxHex}`);
   }
   return parseFlashRx(rx, expectLength);
 }
@@ -315,6 +309,8 @@ export function buildHexRecordBuf(record: IntelHexRecord): {
 export interface FlashOptions {
   /** Optional per-record progress callback. */
   onProgress?: FlashProgressFn;
+  /** Optional wire-level debug sink for environment-specific logging. */
+  onWireDebug?: (message: string) => void;
   /**
    * Connected servo's model id (from the config block at 0x40..0x47).
    * Cross-checked against `sfw.header.modelId`. The vendor exe shows
@@ -406,6 +402,7 @@ export async function flashFirmware(
   options: FlashOptions = {},
 ): Promise<void> {
   const progress = options.onProgress ?? (() => {});
+  const wireDebug = options.onWireDebug;
   validateFlashFirmware(firmware);
 
   // Phase 1: model-id pre-check. Purely a client-side sanity check;
@@ -459,11 +456,11 @@ export async function flashFirmware(
     await sleep(5); // vendor exe: Sleep(5) between write and read
   }
   const bootRx = await handle.read();
-  if (flashWireDebugEnabled()) {
+  if (wireDebug !== undefined) {
     const hex = Array.from(bootRx.subarray(0, 16))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join(" ");
-    process.stderr.write(`  [wire] 0x80 boot rx[0..15]: ${hex}\n`);
+    wireDebug(`0x80 boot rx[0..15]: ${hex}`);
   }
   const bootReply = parseFlashRx(bootRx, 6);
   if (bootReply[0] !== 0x56) {
@@ -509,7 +506,14 @@ export async function flashFirmware(
   // Phase 3: key exchange (0x81 + 22 random bytes).
   progress({ phase: "key_exchange", message: "Negotiating flash session key..." });
   const challenge = randomBytesCompat(FLASH_PAYLOAD_SIZE);
-  const response = await exchange(handle, CMD_KEY_EXCHANGE, challenge, FLASH_PAYLOAD_SIZE, sleepMs);
+  const response = await exchange(
+    handle,
+    CMD_KEY_EXCHANGE,
+    challenge,
+    FLASH_PAYLOAD_SIZE,
+    sleepMs,
+    wireDebug,
+  );
   const key = new Uint8Array(FLASH_PAYLOAD_SIZE);
   for (let i = 0; i < FLASH_PAYLOAD_SIZE; i++) {
     key[i] = (challenge[i] ?? 0) ^ (response[i] ?? 0);
@@ -532,7 +536,7 @@ export async function flashFirmware(
   for (const sector of firmware.sectorErases) {
     const buf = buildSectorEraseBuf(sector.bytes);
     xorInPlace(buf, key);
-    const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs);
+    const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs, wireDebug);
     if (reply[0] !== 0x55) {
       const replyByte = reply[0] ?? 0;
       throw AxonError.servoIo(
@@ -554,7 +558,7 @@ export async function flashFirmware(
   for (const rec of firmware.hexRecords) {
     const { buf, expectedReply } = buildHexRecordBuf(rec);
     xorInPlace(buf, key);
-    const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs);
+    const reply = await exchange(handle, CMD_DATA_WRITE, buf, 1, sleepMs, wireDebug);
     // The EOF record (type=0x01) is the last thing sent. After
     // receiving it the servo's MCU finishes the flash and reboots —
     // the HID reply we read back is from the rebooted firmware, not
@@ -586,7 +590,7 @@ export async function flashFirmware(
   finishBuf[1] = 0x55;
   finishBuf[2] = 0xaa;
   fillRandom(finishBuf, 3);
-  await exchange(handle, CMD_FLASH_MARKER, finishBuf, 1, sleepMs);
+  await exchange(handle, CMD_FLASH_MARKER, finishBuf, 1, sleepMs, wireDebug);
 
   // NOTE: 0x90 "exit flash mode" is NOT sent — see the comment at
   // the top of this function about why 0x90 is omitted.

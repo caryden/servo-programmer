@@ -7,6 +7,7 @@ import {
   readFullConfig,
   writeFullConfig,
 } from "@axon/core/driver/protocol";
+import { decryptSfw } from "@axon/core/sfw";
 import {
   deviceId,
   listAuthorizedAxonDevices,
@@ -21,7 +22,6 @@ import {
   type ProbeIdentifyInfo,
   type ProbeInventory,
 } from "@axon/ui";
-import { decryptSfwBrowser } from "./sfw-browser";
 
 function hex(value: number, width = 2): string {
   return `0x${value.toString(16).padStart(width, "0")}`;
@@ -627,7 +627,7 @@ if (demoEnabled) {
             | null;
           maybeQueueHandle?.clearInputQueue?.();
           const firmwareBytes = await loadBundledFirmware(modelId, targetMode);
-          const decrypted = decryptSfwBrowser(Uint8Array.from(firmwareBytes));
+          const decrypted = decryptSfw(firmwareBytes);
           await flashFirmware(requireHandle(), decrypted, {
             expectedModelId: modelId,
             onProgress: (event) => {
@@ -641,6 +641,7 @@ if (demoEnabled) {
                 message: event.message,
               });
             },
+            onWireDebug: debugEnabled ? (message) => debugLog(`[wire] ${message}`) : undefined,
           });
           await sleep(400);
         });
