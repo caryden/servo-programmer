@@ -35,6 +35,8 @@ node_modules/
 apps/cli/bin/
 apps/cli/dist/
 apps/web/dist/
+playwright-report/
+test-results/
 
 # Capture files (large binary data)
 captures/*.sal

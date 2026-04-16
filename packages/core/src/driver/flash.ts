@@ -123,6 +123,8 @@ export const MAX_HEX_RECORD_DATA_BYTES = FLASH_PAYLOAD_SIZE - 6;
 
 /** Inter-command sleep. Matches Sleep(0x19) = 25 ms in the decomp. */
 export const FLASH_CMD_SLEEP_MS = 25;
+/** Flash reads need more headroom than normal config I/O, especially in WebHID. */
+export const FLASH_READ_TIMEOUT_MS = 5_000;
 
 /** Report id used for all dongle HID transfers. */
 const REPORT_ID = 0x04;
@@ -224,7 +226,7 @@ async function exchange(
   if (sleepMs > 0) await sleep(sleepMs);
   const tx = buildFlashTx(cmd, payload);
   await handle.write(tx);
-  const rx = await handle.read();
+  const rx = await handle.read(FLASH_READ_TIMEOUT_MS);
   if (onWireDebug !== undefined) {
     const txHex = Array.from(tx.subarray(0, 8))
       .map((b) => b.toString(16).padStart(2, "0"))
@@ -455,7 +457,7 @@ export async function flashFirmware(
     await handle.write(bootTx);
     await sleep(5); // vendor exe: Sleep(5) between write and read
   }
-  const bootRx = await handle.read();
+  const bootRx = await handle.read(FLASH_READ_TIMEOUT_MS);
   if (wireDebug !== undefined) {
     const hex = Array.from(bootRx.subarray(0, 16))
       .map((b) => b.toString(16).padStart(2, "0"))

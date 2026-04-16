@@ -1,57 +1,56 @@
-# Electrobun PoC
+# Electrobun App
 
-This is a minimal desktop proof-of-concept for talking to the Axon V1.3
-programmer adapter from an Electrobun app.
-
-It answers one narrow question:
-
-> Can a desktop UI built with Electrobun keep the frontend in a WebView,
-> keep HID in the Bun main process, and reuse the existing Axon
-> `node-hid` and protocol code to enumerate, identify, and read config?
+This is the desktop Axon Servo Programmer built with Electrobun.
 
 ## Why this shape
 
-The browser PoC in [`../web/`](../web/) proved that a
-Chromium browser can talk to the adapter through WebHID. That is not a
-good desktop abstraction, though:
+The browser app in [`../web/`](../web/) proved that Chromium can talk
+to the adapter through WebHID. That is not the right desktop boundary:
 
-- Safari/WebKit does not give us the same WebHID path.
-- Electrobun uses the platform's native webview by default.
-- The desktop app should therefore treat HID as a Bun-side transport,
-  not a renderer-side browser feature.
+- Safari/WebKit does not expose the same WebHID path.
+- Electrobun uses the platform native webview by default.
+- The desktop app should keep HID and firmware flashing in the Bun main
+  process, not in the renderer.
 
-So this PoC keeps the UI browser-like but routes all hardware access
-through Electrobun RPC into the Bun process.
+So the desktop app reuses the shared UI, but routes all hardware work
+through Electrobun RPC into Bun.
 
-The current implementation now uses:
+## Architecture
 
-- [`../../packages/ui/`](../../packages/ui/) for the shared probe UI
+- [`../../packages/ui/`](../../packages/ui/) for the shared programmer UI
 - [`../../packages/transport-nodehid/`](../../packages/transport-nodehid/) for desktop HID access
-- [`../../packages/core/`](../../packages/core/) for shared protocol and catalog logic
+- [`../../packages/core/`](../../packages/core/) for shared protocol,
+  flash, catalog, and `.sfw` handling
 
 ## What it does
 
 - shows runtime and transport info
-- lists visible Axon adapters via `node-hid`
-- opens the first visible adapter
-- sends the identify command (`0x8A`)
-- reads the full 95-byte config block via the same two-chunk `0xCD`
-  flow used by the CLI
-
-It does **not** attempt to write config or flash firmware.
+- watches visible Axon adapters via `node-hid`
+- auto-connects to the adapter
+- identifies the attached servo and reads the current setup
+- applies same-mode config changes with read-back verification
+- switches between Servo and CR by flashing bundled firmware,
+  reconnecting, writing setup, and verifying
+- supports native desktop file actions for:
+  - load `.axon` and `.svo`
+  - save `.axon`
+  - export `.svo`
 
 ## Run it
 
-From the repo root, make sure the CLI dependencies are present:
+From the repo root:
 
 ```bash
 cd /Users/caryden/github/servo-programmer
 bun install
-```
-
-Then start the Electrobun app:
-
-```bash
 cd /Users/caryden/github/servo-programmer/apps/desktop
 bun run start
 ```
+
+## Notes
+
+- Keep the adapter on the host OS, not inside a VM such as Parallels.
+- HID and flashing stay in the Bun main process; the renderer only owns
+  UI state.
+- Bundled firmware files are copied into the desktop build under
+  `app/downloads/`.

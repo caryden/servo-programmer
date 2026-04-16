@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { findModel, loadCatalog } from "@axon/core/catalog";
 import { servoModeLabel, summarizeConfig } from "@axon/core/config-summary";
 import {
@@ -11,6 +12,7 @@ import {
   type ServoSpec,
   type VoltagePoint,
 } from "@axon/core/servo-specs";
+import { decryptSfw } from "@axon/core/sfw";
 import {
   Chart,
   type ChartDataset,
@@ -20,12 +22,62 @@ import {
   LinearScale,
   LineController,
   LineElement,
+  type Plugin,
   PointElement,
   Tooltip,
   type TooltipModel,
 } from "chart.js";
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, Filler);
+const operatingPointMarkerPlugin: Plugin<"line"> = {
+  id: "operatingPointMarker",
+  afterDatasetsDraw(chart) {
+    const datasets = chart.data.datasets as Array<
+      ChartDataset<"line", ChartPoint[]> & {
+        operatingMarker?: boolean;
+        markerFill?: string;
+        markerStroke?: string;
+        markerRadius?: number;
+      }
+    >;
+    const xScale = chart.scales.x;
+    if (!xScale) return;
+
+    const ctx = chart.ctx;
+    for (const dataset of datasets) {
+      if (!dataset.operatingMarker) continue;
+      const point = dataset.data?.[0];
+      if (!point || typeof point.x !== "number" || typeof point.y !== "number") continue;
+      const yAxisId = dataset.yAxisID ?? "y";
+      const yScale = chart.scales[yAxisId];
+      if (!yScale) continue;
+
+      const x = xScale.getPixelForValue(point.x);
+      const y = yScale.getPixelForValue(point.y);
+      const radius = dataset.markerRadius ?? 6;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = dataset.markerFill ?? "#8fc2f8";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = dataset.markerStroke ?? "#2d78d0";
+      ctx.stroke();
+      ctx.restore();
+    }
+  },
+};
+
+Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  Tooltip,
+  Legend,
+  Filler,
+  operatingPointMarkerPlugin,
+);
 
 export interface ProbeDeviceInfo {
   id: string | null;
@@ -105,6 +157,22 @@ interface ProbeValueAction<TArg, TResult> {
   run: (arg: TArg) => Promise<TResult>;
 }
 
+export interface ProbeLoadedFile {
+  name: string;
+  format: "axon" | "svo";
+  text?: string;
+  bytes?: number[];
+}
+
+export interface ProbeSavedFile {
+  path: string | null;
+}
+
+export interface ProbeFirmwareFile {
+  name: string;
+  bytes: number[];
+}
+
 export interface ProbeFlashProgressEvent {
   phase: string;
   bytesSent?: number;
@@ -139,10 +207,28 @@ export interface MountProbeAppOptions {
   identifyServo?: ProbeAction<ProbeIdentifyInfo>;
   readFullConfig?: ProbeAction<ProbeConfigInfo>;
   writeFullConfig?: ProbeValueAction<Uint8Array, void>;
+  loadConfigFile?: ProbeAction<ProbeLoadedFile | null>;
+  loadFirmwareFile?: ProbeAction<ProbeFirmwareFile | null>;
+  saveAxonFile?: ProbeValueAction<
+    { suggestedName: string; text: string },
+    ProbeSavedFile | undefined
+  >;
+  exportSvoFile?: ProbeValueAction<
+    { suggestedName: string; bytes: number[] },
+    ProbeSavedFile | undefined
+  >;
   flashModeChange?: ProbeValueAction<
     {
       targetMode: ServoMode;
       modelId: string;
+      onProgress?: (event: ProbeFlashProgressEvent) => void;
+    },
+    void
+  >;
+  flashFirmwareFile?: ProbeValueAction<
+    {
+      bytes: Uint8Array;
+      expectedModelId?: string;
       onProgress?: (event: ProbeFlashProgressEvent) => void;
     },
     void
@@ -204,6 +290,8 @@ interface ProbeState {
   inventory: ProbeInventory;
   identify: ProbeIdentifyInfo | null;
   config: ProbeConfigInfo | null;
+  lastKnownModelId: string | null;
+  lastKnownModelName: string | null;
   draft: DraftConfig;
   baselineRawBytes: number[] | null;
   liveSnapshot: DraftConfig | null;
@@ -220,6 +308,13 @@ interface ProbeState {
   statusMessage: string;
   statusOpen: boolean;
   loadPanelOpen: boolean;
+  recoveryConfirmOpen: boolean;
+  recoverySource: "bundled" | "file";
+  recoveryBundledModelId: string;
+  recoveryBundledMode: ServoMode;
+  recoveryFile: ProbeFirmwareFile | null;
+  recoveryFileModelId: string | null;
+  recoveryFileModelName: string | null;
   hasAuthorizedAccess: boolean;
   diagnosticsOpen: boolean;
 }
@@ -270,6 +365,12 @@ interface ProbeCharts {
 
 const CHECKPOINT_STORAGE_KEY = "axon-config-checkpoints-v1";
 const MAX_CHECKPOINTS = 12;
+const RESIZE_POLL_QUIET_MS = 600;
+const FIXED_LEFT_AXIS_WIDTH = 86;
+const FIXED_RIGHT_AXIS_WIDTH = 74;
+const RECOVERY_MODELS = Array.from(loadCatalog().models.values())
+  .filter((model) => model.bundled_firmware.standard || model.bundled_firmware.continuous)
+  .sort((left, right) => left.name.localeCompare(right.name));
 const HELP_TEXT = {
   range:
     "Sets the servo travel limit. 100% uses the model's full programmed range; lower values narrow the green-to-red sweep.",
@@ -395,10 +496,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function modeLabel(mode: ServoMode): string {
-  return mode === "cr_mode" ? "CR" : "Servo";
-}
-
 function lossLabel(loss: LossBehavior): string {
   if (loss === "release") return "Release";
   if (loss === "hold") return "Hold";
@@ -455,10 +552,13 @@ function baseDraft(): DraftConfig {
 
 function baseSim(config: DraftConfig = baseDraft()): SimState {
   return {
-    pwmUs: 1500,
+    pwmUs: config.mode === "cr_mode" ? 2000 : 1500,
     voltage: 6,
-    loadKgcm: peakEfficiencyLoadKgcm(AXON_MINI_SPEC, 6, config.pwmPowerPercent),
-    sweepEnabled: true,
+    loadKgcm:
+      config.mode === "cr_mode"
+        ? 0
+        : peakEfficiencyLoadKgcm(AXON_MINI_SPEC, 6, config.pwmPowerPercent),
+    sweepEnabled: config.mode === "servo_mode",
     playbackRunning: true,
     servoSweepPhase: 0,
     crAngleDeg: 0,
@@ -522,6 +622,36 @@ function writeStoredCheckpoints(checkpoints: ConfigCheckpoint[]): void {
 function checkpointLabel(config: ProbeConfigInfo, createdAt: string): string {
   const model = shortModelLabel(config.modelName ?? config.modelId ?? "servo").toLowerCase();
   return `${model}-${createdAt.replaceAll(":", "-")}`;
+}
+
+function parseRecoveryFirmwareFile(file: ProbeFirmwareFile): {
+  modelId: string;
+  modelName: string | null;
+} {
+  const decrypted = decryptSfw(Buffer.from(file.bytes));
+  const modelId = decrypted.header.modelId;
+  const model = findModel(loadCatalog(), modelId);
+  return {
+    modelId,
+    modelName: model?.name ?? null,
+  };
+}
+
+function recoveryTargetFromState(
+  state: ProbeState,
+): { modelId: string; modelName: string | null } | null {
+  if (state.lastKnownModelId) {
+    return {
+      modelId: state.lastKnownModelId,
+      modelName: state.lastKnownModelName,
+    };
+  }
+  const checkpoint = state.checkpoints.find((entry) => Boolean(entry.modelId));
+  if (!checkpoint?.modelId) return null;
+  return {
+    modelId: checkpoint.modelId,
+    modelName: checkpoint.modelName,
+  };
 }
 
 function modeFromConfig(config: ProbeConfigInfo | null): ServoMode {
@@ -765,6 +895,7 @@ function syncSimToDraft(
       next.playbackRunning = true;
       next.servoSweepPhase = 0;
       next.crAngleDeg = 0;
+      next.loadKgcm = 0;
       if (Math.abs(next.pwmUs - (1500 + draft.neutralUs)) < 50) {
         next.pwmUs = 2000;
       }
@@ -989,8 +1120,51 @@ function curveData(values: CurvePoint[], select: (value: CurvePoint) => number):
   }));
 }
 
-function withHeadroom(value: number, minimum = 0.1, factor = 1.08): number {
-  return Math.max(minimum, value * factor);
+function fullSpecChartBounds(
+  spec: ServoSpec,
+  voltage: number,
+): {
+  torqueMax: number;
+  speedMax: number;
+  currentMax: number;
+  powerMax: number;
+  efficiencyMax: number;
+} {
+  const sample = interpolatePoint(spec.points, voltage);
+  const torqueMax = Math.max(0.1, sample.torqueKgcm);
+  const speedMax = Math.max(1, rpmFromSec60(sample.speedSec60));
+  const currentMax = Math.max(0.1, sample.stallA);
+  const samplePowerMax =
+    (kgcmToNm(sample.torqueKgcm / 2) * ((rpmFromSec60(sample.speedSec60) / 2) * 2 * Math.PI)) / 60;
+  const sampleElectricalMax = sample.voltage * sample.stallA;
+  const powerMax = Math.max(0.1, samplePowerMax, sampleElectricalMax);
+
+  return {
+    torqueMax,
+    speedMax,
+    currentMax,
+    powerMax,
+    efficiencyMax: 1,
+  };
+}
+
+function formatAxisTick(
+  value: string | number,
+  kind: "torque" | "speed" | "current" | "power" | "efficiency",
+): string {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  if (Math.abs(numeric) < 0.000001) return "0";
+  switch (kind) {
+    case "speed":
+      return String(Math.round(numeric));
+    case "torque":
+      return Number(numeric.toFixed(1)).toFixed(1).replace(/\.0$/, "");
+    case "current":
+    case "power":
+    case "efficiency":
+      return numeric.toFixed(1);
+  }
 }
 
 function createLineDataset(
@@ -998,6 +1172,7 @@ function createLineDataset(
   color: string,
   yAxisID: string,
   data: ChartPoint[],
+  overrides: Partial<ChartDataset<"line", ChartPoint[]>> = {},
 ): ChartDataset<"line", ChartPoint[]> {
   return {
     label,
@@ -1010,6 +1185,7 @@ function createLineDataset(
     tension: 0.22,
     pointRadius: 0,
     pointHoverRadius: 0,
+    ...overrides,
   };
 }
 
@@ -1029,12 +1205,18 @@ function createPointDataset(
     backgroundColor: "#8fc2f8",
     pointBorderColor: "#2d78d0",
     pointBackgroundColor: "#8fc2f8",
-    pointBorderWidth: 1.5,
-    pointRadius: 7,
-    pointHoverRadius: 8,
-    pointStyle: "rectRot",
+    pointBorderWidth: 0,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    pointHitRadius: 12,
+    pointStyle: "circle",
     showLine: false,
     clip: false,
+    order: 99,
+    operatingMarker: true,
+    markerFill: "#8fc2f8",
+    markerStroke: "#2d78d0",
+    markerRadius: 6,
     tooltipData,
   } as ChartDataset<"line", ChartPoint[]>;
 }
@@ -1167,10 +1349,13 @@ function externalTooltipHandler(context: {
 
 function baseChartOptions(
   xMax: number,
+  xTitle: string,
   yMax: number,
   yTitle: string,
+  yKind: "speed" | "power" | "efficiency",
   y1Max?: number,
   y1Title?: string,
+  hideSecondaryAxis = false,
 ): ChartOptions<"line"> {
   return {
     animation: false,
@@ -1200,10 +1385,13 @@ function baseChartOptions(
         ticks: {
           color: "#9aa3af",
           maxTicksLimit: 5,
+          callback(value) {
+            return formatAxisTick(value, "torque");
+          },
         },
         title: {
           display: true,
-          text: "torque (kgf*cm)",
+          text: xTitle,
           color: "#9aa3af",
         },
       },
@@ -1211,12 +1399,18 @@ function baseChartOptions(
         type: "linear",
         min: 0,
         max: yMax,
+        afterFit(scale) {
+          scale.width = FIXED_LEFT_AXIS_WIDTH;
+        },
         grid: {
           color: "#edf1f5",
         },
         ticks: {
           color: "#9aa3af",
           maxTicksLimit: 4,
+          callback(value) {
+            return formatAxisTick(value, yKind);
+          },
         },
         title: {
           display: true,
@@ -1231,17 +1425,23 @@ function baseChartOptions(
               position: "right",
               min: 0,
               max: y1Max,
+              afterFit(scale) {
+                scale.width = FIXED_RIGHT_AXIS_WIDTH;
+              },
               grid: {
                 drawOnChartArea: false,
               },
               ticks: {
-                color: "#9aa3af",
+                color: hideSecondaryAxis ? "rgba(0,0,0,0)" : "#9aa3af",
                 maxTicksLimit: 4,
+                callback(value) {
+                  return formatAxisTick(value, "current");
+                },
               },
               title: {
                 display: true,
                 text: y1Title,
-                color: "#9aa3af",
+                color: hideSecondaryAxis ? "rgba(0,0,0,0)" : "#9aa3af",
               },
             },
           }
@@ -1250,33 +1450,34 @@ function baseChartOptions(
   };
 }
 
-function simChartsMarkup(draft: DraftConfig, sim: SimState): string {
+function syncChartGeometry(canvas: HTMLCanvasElement, chart: Chart<"line">): void {
+  const area = chart.chartArea;
+  if (!area) {
+    return;
+  }
+  const xTitle = chart.options.scales?.x?.title?.text;
+  canvas.dataset.xTitle = typeof xTitle === "string" ? xTitle : "";
+  canvas.dataset.plotLeft = area.left.toFixed(1);
+  canvas.dataset.plotRight = area.right.toFixed(1);
+  canvas.dataset.plotTop = area.top.toFixed(1);
+  canvas.dataset.plotBottom = area.bottom.toFixed(1);
+}
+
+function simChartsMarkup(): string {
   return `
     <div class="chart-card">
-      <div class="chart-head">
-        <span>speed / current</span>
-        <span data-chart-speed-meta>${escapeHtml(`${modeLabel(draft.mode)} @ ${sim.voltage.toFixed(1)}V`)}</span>
-      </div>
       <div class="chart-canvas-wrap">
         <canvas data-chart="speed-current" aria-label="speed and current chart"></canvas>
       </div>
     </div>
 
     <div class="chart-card">
-      <div class="chart-head">
-        <span>mechanical power</span>
-        <span data-chart-power-meta>power (W)</span>
-      </div>
       <div class="chart-canvas-wrap">
         <canvas data-chart="power" aria-label="mechanical power chart"></canvas>
       </div>
     </div>
 
     <div class="chart-card">
-      <div class="chart-head">
-        <span>efficiency</span>
-        <span data-chart-efficiency-meta>efficiency</span>
-      </div>
       <div class="chart-canvas-wrap">
         <canvas data-chart="efficiency" aria-label="efficiency chart"></canvas>
       </div>
@@ -1299,7 +1500,12 @@ function sweepControlIcon(enabled: boolean): string {
     `;
 }
 
-function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftConfig): string {
+function servoSketch(
+  spec: ServoSpec,
+  point: OperatingPoint,
+  draft: DraftConfig,
+  torqueMax: number,
+): string {
   const width = 430;
   const height = 390;
   const bodyX = 168;
@@ -1329,6 +1535,58 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftConfig)
     draft.mode === "servo_mode"
       ? `${point.hornAngleDeg.toFixed(0)} deg`
       : `${point.speedRpm.toFixed(0)} rpm`;
+  const rpmBadge =
+    draft.mode === "cr_mode"
+      ? {
+          label: readout,
+          fill: "#e4f0ff",
+          stroke: "#2d78d0",
+          text: "#1f5fa8",
+        }
+      : null;
+  const loadRatio = torqueMax <= 0.0001 ? 0 : clamp(point.torqueKgcm / torqueMax, 0, 1);
+  const loadBadge =
+    draft.mode === "cr_mode"
+      ? loadRatio >= 0.95
+        ? {
+            label: "stalled",
+            fill: "#fbe4e6",
+            stroke: "#c81e1e",
+            text: "#a61b1b",
+          }
+        : loadRatio >= 0.85
+          ? {
+              label: "near stall",
+              fill: "#fff6d8",
+              stroke: "#d4a514",
+              text: "#8f6a00",
+            }
+          : loadRatio <= 0.01
+            ? {
+                label: "no load",
+                fill: "#e4f0ff",
+                stroke: "#2d78d0",
+                text: "#1f5fa8",
+              }
+            : {
+                label: "loaded",
+                fill: "#e4f0ff",
+                stroke: "#2d78d0",
+                text: "#1f5fa8",
+              }
+      : null;
+  const bodyBottomY = bodyY + spec.bodyHeight;
+  const badgeGap = 10;
+  const badgeHeight = 24;
+  const rpmBadgeWidth = rpmBadge ? Math.max(86, 18 + rpmBadge.label.length * 7.4) : 0;
+  const loadBadgeWidth = loadBadge ? Math.max(72, 18 + loadBadge.label.length * 7.2) : 0;
+  const loadBadgeX = axisX - loadBadgeWidth / 2;
+  const rpmBadgeX = axisX - rpmBadgeWidth / 2;
+  const loadBadgeY = bodyBottomY - badgeGap - badgeHeight;
+  const rpmBadgeY =
+    loadBadge && rpmBadge
+      ? loadBadgeY - badgeGap - badgeHeight
+      : bodyBottomY - badgeGap - badgeHeight;
   const centerColor =
     draft.mode === "cr_mode"
       ? point.commandMagnitude > 0.01
@@ -1341,7 +1599,12 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftConfig)
         : "#ff3a38";
 
   return `
-    <svg viewBox="0 0 ${width} ${height}" class="servo-svg" aria-label="servo operating sketch">
+    <svg
+      viewBox="0 0 ${width} ${height}"
+      class="servo-svg"
+      aria-label="servo operating sketch"
+      data-load-state="${escapeHtml(loadBadge?.label ?? "")}"
+    >
       <defs>
         <marker id="dir-head" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto" markerUnits="strokeWidth">
           <path d="M 0 0 L 8 4 L 0 8 z" fill="#b9bbc0" />
@@ -1360,7 +1623,61 @@ function servoSketch(spec: ServoSpec, point: OperatingPoint, draft: DraftConfig)
       }
       <line x1="${axisX}" y1="${axisY}" x2="${hornEndX.toFixed(1)}" y2="${hornEndY.toFixed(1)}" stroke="#1f6ed4" stroke-width="8" stroke-linecap="round" />
       <circle cx="${axisX}" cy="${axisY}" r="5" fill="${centerColor}" />
-      <text x="${axisX}" y="${axisY + 36}" text-anchor="middle" fill="#7eb4f5" font-size="15" font-weight="700">${readout}</text>
+      ${
+        draft.mode === "servo_mode"
+          ? `<text x="${axisX}" y="${axisY + 36}" text-anchor="middle" fill="#7eb4f5" font-size="15" font-weight="700">${readout}</text>`
+          : ""
+      }
+      ${
+        rpmBadge
+          ? `
+            <rect
+              x="${rpmBadgeX.toFixed(1)}"
+              y="${rpmBadgeY.toFixed(1)}"
+              width="${rpmBadgeWidth.toFixed(1)}"
+              height="${badgeHeight}"
+              rx="12"
+              ry="12"
+              fill="${rpmBadge.fill}"
+              stroke="${rpmBadge.stroke}"
+              stroke-width="1.5"
+            />
+            <text
+              x="${axisX}"
+              y="${(rpmBadgeY + 16).toFixed(1)}"
+              text-anchor="middle"
+              fill="${rpmBadge.text}"
+              font-size="12"
+              font-weight="700"
+            >${rpmBadge.label}</text>
+          `
+          : ""
+      }
+      ${
+        loadBadge
+          ? `
+            <rect
+              x="${loadBadgeX.toFixed(1)}"
+              y="${loadBadgeY.toFixed(1)}"
+              width="${loadBadgeWidth.toFixed(1)}"
+              height="${badgeHeight}"
+              rx="12"
+              ry="12"
+              fill="${loadBadge.fill}"
+              stroke="${loadBadge.stroke}"
+              stroke-width="1.5"
+            />
+            <text
+              x="${axisX}"
+              y="${(loadBadgeY + 16).toFixed(1)}"
+              text-anchor="middle"
+              fill="${loadBadge.text}"
+              font-size="12"
+              font-weight="700"
+            >${loadBadge.label}</text>
+          `
+          : ""
+      }
     </svg>
   `;
 }
@@ -1372,6 +1689,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     inventory: { devices: [], openedId: null },
     identify: null,
     config: null,
+    lastKnownModelId: null,
+    lastKnownModelName: null,
     draft: initialDraft,
     baselineRawBytes: null,
     liveSnapshot: null,
@@ -1384,6 +1703,13 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     statusMessage: "Starting",
     statusOpen: false,
     loadPanelOpen: false,
+    recoveryConfirmOpen: false,
+    recoverySource: "bundled",
+    recoveryBundledModelId: "",
+    recoveryBundledMode: "servo_mode",
+    recoveryFile: null,
+    recoveryFileModelId: null,
+    recoveryFileModelName: null,
     hasAuthorizedAccess: options.initialAuthorizedAccess ?? false,
     diagnosticsOpen: false,
   };
@@ -1398,10 +1724,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   let probeFailureStreak = 0;
   let lastSilentError: string | null = null;
   let charts: ProbeCharts | null = null;
+  let resizeQuietUntil = 0;
+  let resizeEndTimer: ReturnType<typeof setTimeout> | null = null;
+  let statusLogScrollTop = 0;
+  let statusLogPinnedToBottom = true;
   const logger = {
     push(level: "status" | "debug", message: string): void {
-      state.logs.unshift({ timestamp: nowLabel(), message, level });
-      state.logs = state.logs.slice(0, 64);
+      state.logs.push({ timestamp: nowLabel(), message, level });
+      if (state.logs.length > 64) {
+        state.logs = state.logs.slice(-64);
+      }
     },
     status(message: string): void {
       this.push("status", message);
@@ -1412,7 +1744,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     },
     snapshot(): string {
       return [...state.logs]
-        .reverse()
         .map(
           (entry) =>
             `[${entry.timestamp}]${entry.level === "debug" ? "[debug]" : ""} ${entry.message}`,
@@ -1533,6 +1864,75 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
+  function recoveryPhaseProgress(
+    modelLabel: string,
+    event: ProbeFlashProgressEvent,
+  ): { title: string; detail: string; percent: number } {
+    switch (event.phase) {
+      case "prepare":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: preparing flash session`,
+          percent: 10,
+        };
+      case "boot_query":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: checking bootloader`,
+          percent: 18,
+        };
+      case "key_exchange":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: negotiating flash session`,
+          percent: 26,
+        };
+      case "verify_model":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: verifying firmware`,
+          percent: 32,
+        };
+      case "erase":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: erasing firmware sectors`,
+          percent: 40,
+        };
+      case "write": {
+        const ratio =
+          typeof event.bytesSent === "number" &&
+          typeof event.bytesTotal === "number" &&
+          event.bytesTotal > 0
+            ? event.bytesSent / event.bytesTotal
+            : 0;
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: writing firmware`,
+          percent: 45 + ratio * 35,
+        };
+      }
+      case "finalize":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: finalizing firmware`,
+          percent: 82,
+        };
+      case "done":
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}: reconnecting servo`,
+          percent: 86,
+        };
+      default:
+        return {
+          title: "Recovering Servo...",
+          detail: `Recovering ${modelLabel}`,
+          percent: 25,
+        };
+    }
+  }
+
   function inventorySignature(inventory: ProbeInventory): string {
     return JSON.stringify({
       openedId: inventory.openedId,
@@ -1552,7 +1952,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (inventory.devices.length > 0 || inventory.openedId !== null) {
       state.hasAuthorizedAccess = true;
     }
-    if (!inventory.openedId) {
+    if (!inventory.openedId && state.busyAction !== "Apply" && state.busyAction !== "Recover") {
       clearedLiveState = state.identify !== null || state.config !== null;
       state.identify = null;
       state.config = null;
@@ -1616,6 +2016,8 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   function applyConfig(config: ProbeConfigInfo): void {
     const previousMode = state.draft.mode;
     state.config = config;
+    state.lastKnownModelId = config.modelId;
+    state.lastKnownModelName = config.modelName;
     state.identify = {
       present: true,
       statusHi: "0x01",
@@ -1629,6 +2031,86 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     state.baselineRawBytes = config.rawBytes ? [...config.rawBytes] : null;
     rememberCheckpoint(config, nextDraft);
     adoptDraft(nextDraft, previousMode);
+  }
+
+  function openRecoveryWizard(): void {
+    const preferred = recoveryTargetFromState(state);
+    state.recoverySource = "bundled";
+    state.recoveryBundledModelId =
+      preferred?.modelId || state.recoveryBundledModelId || RECOVERY_MODELS[0]?.id || "";
+    state.recoveryBundledMode = "servo_mode";
+    state.recoveryConfirmOpen = true;
+  }
+
+  async function promptRecoveryFirmware(): Promise<void> {
+    if (!options.loadFirmwareFile) {
+      return;
+    }
+    try {
+      const file = await options.loadFirmwareFile.run();
+      if (!file) {
+        return;
+      }
+      const parsed = parseRecoveryFirmwareFile(file);
+      state.recoverySource = "file";
+      state.recoveryFile = file;
+      state.recoveryFileModelId = parsed.modelId;
+      state.recoveryFileModelName = parsed.modelName;
+      state.error = null;
+      render();
+    } catch (error) {
+      reportError(error);
+      render();
+    }
+  }
+
+  async function reconnectAndReadServoAfterFlash(
+    expectedMode: ServoMode | null,
+    progressTitle: string,
+  ): Promise<ProbeConfigInfo> {
+    if (!options.readFullConfig) {
+      throw new Error("Read setup is not available after flash.");
+    }
+
+    let flashedConfig: ProbeConfigInfo | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await sleep(1000);
+      try {
+        if (options.reconnectDevice) {
+          updateInventory(await options.reconnectDevice.run());
+        }
+        if (!state.inventory.openedId && options.openDevice) {
+          updateInventory(await options.openDevice.run());
+        }
+        if (options.identifyServo) {
+          setApplyProgress(progressTitle, "Waiting for servo to reconnect", 88);
+          setStatus("Checking for servo", attempt === 0);
+          const identifyReply = await options.identifyServo.run();
+          state.identify = identifyReply;
+          if (!identifyReply.present) {
+            continue;
+          }
+        }
+        setApplyProgress(progressTitle, "Reading reconnected servo setup", 92);
+        setStatus("Reading setup", false);
+        const candidate = await options.readFullConfig.run();
+        if (expectedMode !== null && modeFromConfig(candidate) !== expectedMode) {
+          continue;
+        }
+        flashedConfig = candidate;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!flashedConfig) {
+      if (lastError instanceof Error) throw lastError;
+      throw new Error("Servo did not reconnect in the requested mode after flash.");
+    }
+    return flashedConfig;
   }
 
   async function discardToServo(): Promise<void> {
@@ -1713,43 +2195,10 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           },
         });
 
-        let flashedConfig: ProbeConfigInfo | null = null;
-        let lastError: unknown = null;
-        for (let attempt = 0; attempt < 8; attempt++) {
-          await sleep(1000);
-          try {
-            if (options.reconnectDevice) {
-              updateInventory(await options.reconnectDevice.run());
-            }
-            if (!state.inventory.openedId && options.openDevice) {
-              updateInventory(await options.openDevice.run());
-            }
-            if (options.identifyServo) {
-              setApplyProgress("Applying Changes...", "Waiting for servo to reconnect", 88);
-              setStatus("Checking for servo", attempt === 0);
-              const identifyReply = await options.identifyServo.run();
-              state.identify = identifyReply;
-              if (!identifyReply.present) {
-                continue;
-              }
-            }
-            setApplyProgress("Applying Changes...", "Reading reconnected servo setup", 92);
-            setStatus("Reading setup", false);
-            const candidate = await options.readFullConfig.run();
-            if (modeFromConfig(candidate) !== state.draft.mode) {
-              continue;
-            }
-            flashedConfig = candidate;
-            break;
-          } catch (error) {
-            lastError = error;
-          }
-        }
-        if (!flashedConfig) {
-          if (lastError instanceof Error) throw lastError;
-          throw new Error("Servo did not reconnect in the requested mode after flash.");
-        }
-        workingConfig = flashedConfig;
+        workingConfig = await reconnectAndReadServoAfterFlash(
+          state.draft.mode,
+          "Applying Changes...",
+        );
         workingMode = modeFromConfig(workingConfig);
       }
 
@@ -1821,6 +2270,110 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
+  async function recoverServo(): Promise<void> {
+    if (
+      state.busyAction ||
+      !options.readFullConfig ||
+      (state.recoverySource === "bundled" && !options.flashModeChange) ||
+      (state.recoverySource === "file" && !options.flashFirmwareFile)
+    ) {
+      return;
+    }
+
+    const bundledModel =
+      state.recoverySource === "bundled"
+        ? findModel(loadCatalog(), state.recoveryBundledModelId)
+        : undefined;
+    const bundledTarget =
+      state.recoverySource === "bundled" && bundledModel
+        ? {
+            modelId: bundledModel.id,
+            modelName: bundledModel.name,
+            mode: state.recoveryBundledMode,
+          }
+        : null;
+    const fileTarget =
+      state.recoverySource === "file" && state.recoveryFile
+        ? {
+            file: state.recoveryFile,
+            modelId: state.recoveryFileModelId,
+            modelName: state.recoveryFileModelName,
+          }
+        : null;
+
+    if (!bundledTarget && !fileTarget) {
+      return;
+    }
+
+    const recoveryLabel = shortModelLabel(
+      bundledTarget?.modelName ?? fileTarget?.modelName ?? fileTarget?.modelId ?? null,
+    );
+    const expectedMode = bundledTarget?.mode ?? null;
+    state.busyAction = "Recover";
+    state.recoveryConfirmOpen = false;
+    state.error = null;
+    setApplyProgress(
+      "Recovering Servo...",
+      `Recovering ${recoveryLabel}: preparing flash session`,
+      8,
+    );
+    setStatus("Flashing recovery firmware");
+    render();
+
+    try {
+      if (bundledTarget) {
+        if (!options.flashModeChange) {
+          throw new Error("Bundled recovery flashing is not available here.");
+        }
+        await options.flashModeChange.run({
+          targetMode: bundledTarget.mode,
+          modelId: bundledTarget.modelId,
+          onProgress: (event) => {
+            const progress = recoveryPhaseProgress(recoveryLabel, event);
+            setApplyProgress(progress.title, progress.detail, progress.percent);
+            render();
+          },
+        });
+      } else if (fileTarget) {
+        if (!options.flashFirmwareFile) {
+          throw new Error("Custom firmware recovery flashing is not available here.");
+        }
+        await options.flashFirmwareFile.run({
+          bytes: Uint8Array.from(fileTarget.file.bytes),
+          expectedModelId: fileTarget.modelId ?? undefined,
+          onProgress: (event) => {
+            const progress = recoveryPhaseProgress(recoveryLabel, event);
+            setApplyProgress(progress.title, progress.detail, progress.percent);
+            render();
+          },
+        });
+      }
+
+      const recoveredConfig = await reconnectAndReadServoAfterFlash(
+        expectedMode,
+        "Recovering Servo...",
+      );
+      applyConfig(recoveredConfig);
+      setApplyProgress("Recovering Servo...", "Finishing", 100);
+      setStatus("Recovered");
+      setIdleStatus();
+    } catch (error) {
+      reportError(error);
+      try {
+        if (options.readFullConfig && state.inventory.openedId !== null) {
+          const refreshed = await options.readFullConfig.run();
+          applyConfig(refreshed);
+        }
+      } catch {
+        // keep the current state and surface the original error
+      }
+    } finally {
+      clearApplyProgress();
+      state.busyAction = null;
+      render();
+    }
+  }
+
   function loadCheckpoint(checkpointId: string): void {
     const checkpoint = state.checkpoints.find((entry) => entry.id === checkpointId);
     if (!checkpoint) return;
@@ -1854,18 +2407,21 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       return;
     }
 
-    const xMax = Math.max(0.1, operating.torqueMax);
-    const speedMax = withHeadroom(Math.max(1, operating.noLoadRpm), 1);
-    const currentMax = withHeadroom(Math.max(0.1, operating.effective.stallA), 0.1);
-    const powerMax = withHeadroom(
-      Math.max(0.1, ...operating.curves.map((curve) => curve.mechanicalPowerW)),
+    const bounds = fullSpecChartBounds(operating.spec, state.sim.voltage);
+    const xMax = Math.max(
       0.1,
+      ...operating.curves.map((curve) => curve.torqueKgcm),
+      operating.point.torqueKgcm,
     );
-    const efficiencyMax = withHeadroom(1, 1, 1.04);
+    const speedMax = bounds.speedMax;
+    const currentMax = bounds.currentMax;
+    const powerMax = bounds.powerMax;
+    const efficiencyMax = bounds.efficiencyMax;
 
     const speedData = curveData(operating.curves, (curve) => curve.speedRpm);
     const currentData = curveData(operating.curves, (curve) => curve.currentA);
-    const powerData = curveData(operating.curves, (curve) => curve.mechanicalPowerW);
+    const mechanicalPowerData = curveData(operating.curves, (curve) => curve.mechanicalPowerW);
+    const totalPowerData = curveData(operating.curves, (curve) => curve.electricalPowerW);
     const efficiencyData = curveData(operating.curves, (curve) => curve.efficiency);
 
     const speedPoint = {
@@ -1884,6 +2440,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       x: Number(operating.point.torqueKgcm.toFixed(3)),
       y: Number(operating.point.efficiency.toFixed(6)),
     };
+    const xAxisTitle = `torque @ ${state.sim.voltage.toFixed(1)} V (kgf*cm)`;
 
     if (!charts) {
       charts = {
@@ -1909,13 +2466,30 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               ),
             ],
           },
-          options: baseChartOptions(xMax, speedMax, "speed (rpm)", currentMax, "current (A)"),
+          options: baseChartOptions(
+            xMax,
+            xAxisTitle,
+            speedMax,
+            "speed (rpm)",
+            "speed",
+            currentMax,
+            "current (A)",
+          ),
         }),
         power: new Chart(powerCanvas, {
           type: "line",
           data: {
             datasets: [
-              createLineDataset("Mechanical power", "#8fc2f8", "y", powerData),
+              createLineDataset("Mechanical power", "#8fc2f8", "y", mechanicalPowerData, {
+                fill: "origin",
+                backgroundColor: "rgba(143,194,248,0.35)",
+              }),
+              createLineDataset("Total input power", "#f0c57a", "y", totalPowerData, {
+                fill: "-1",
+                backgroundColor: "rgba(240,197,122,0.32)",
+                borderColor: "#f0c57a",
+                borderWidth: 2.2,
+              }),
               createPointDataset(
                 "Operating power",
                 "#2d78d0",
@@ -1925,7 +2499,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               ),
             ],
           },
-          options: baseChartOptions(xMax, powerMax, "power (W)"),
+          options: baseChartOptions(
+            xMax,
+            xAxisTitle,
+            powerMax,
+            "power (W)",
+            "power",
+            currentMax,
+            "current (A)",
+            true,
+          ),
         }),
         efficiency: new Chart(efficiencyCanvas, {
           type: "line",
@@ -1941,14 +2524,18 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               ),
             ],
           },
-          options: baseChartOptions(xMax, efficiencyMax, "efficiency"),
+          options: baseChartOptions(
+            xMax,
+            xAxisTitle,
+            efficiencyMax,
+            "efficiency",
+            "efficiency",
+            currentMax,
+            "current (A)",
+            true,
+          ),
         }),
       };
-    }
-
-    const speedMeta = options.root.querySelector<HTMLElement>("[data-chart-speed-meta]");
-    if (speedMeta) {
-      speedMeta.textContent = `${modeLabel(state.draft.mode)} @ ${state.sim.voltage.toFixed(1)}V`;
     }
 
     charts.speedCurrent.data.datasets[0].data = speedData;
@@ -1967,25 +2554,45 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     ).tooltipData = formatOperatingTooltip(operating.point, "current");
     charts.speedCurrent.options.scales = {
       ...(charts.speedCurrent.options.scales ?? {}),
-      x: { ...(charts.speedCurrent.options.scales?.x ?? {}), min: 0, max: xMax },
+      x: {
+        ...(charts.speedCurrent.options.scales?.x ?? {}),
+        min: 0,
+        max: xMax,
+        title: {
+          ...(charts.speedCurrent.options.scales?.x?.title ?? {}),
+          text: xAxisTitle,
+        },
+      },
       y: { ...(charts.speedCurrent.options.scales?.y ?? {}), min: 0, max: speedMax },
       y1: { ...(charts.speedCurrent.options.scales?.y1 ?? {}), min: 0, max: currentMax },
     };
     charts.speedCurrent.update("none");
+    syncChartGeometry(speedCanvas, charts.speedCurrent);
 
-    charts.power.data.datasets[0].data = powerData;
-    charts.power.data.datasets[1].data = [powerPoint];
+    charts.power.data.datasets[0].data = mechanicalPowerData;
+    charts.power.data.datasets[1].data = totalPowerData;
+    charts.power.data.datasets[2].data = [powerPoint];
     (
-      charts.power.data.datasets[1] as ChartDataset<"line", ChartPoint[]> & {
+      charts.power.data.datasets[2] as ChartDataset<"line", ChartPoint[]> & {
         tooltipData?: TooltipTableData;
       }
     ).tooltipData = formatOperatingTooltip(operating.point, "power");
     charts.power.options.scales = {
       ...(charts.power.options.scales ?? {}),
-      x: { ...(charts.power.options.scales?.x ?? {}), min: 0, max: xMax },
+      x: {
+        ...(charts.power.options.scales?.x ?? {}),
+        min: 0,
+        max: xMax,
+        title: {
+          ...(charts.power.options.scales?.x?.title ?? {}),
+          text: xAxisTitle,
+        },
+      },
       y: { ...(charts.power.options.scales?.y ?? {}), min: 0, max: powerMax },
+      y1: { ...(charts.power.options.scales?.y1 ?? {}), min: 0, max: currentMax },
     };
     charts.power.update("none");
+    syncChartGeometry(powerCanvas, charts.power);
 
     charts.efficiency.data.datasets[0].data = efficiencyData;
     charts.efficiency.data.datasets[1].data = [efficiencyPoint];
@@ -1996,10 +2603,20 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     ).tooltipData = formatOperatingTooltip(operating.point, "efficiency");
     charts.efficiency.options.scales = {
       ...(charts.efficiency.options.scales ?? {}),
-      x: { ...(charts.efficiency.options.scales?.x ?? {}), min: 0, max: xMax },
+      x: {
+        ...(charts.efficiency.options.scales?.x ?? {}),
+        min: 0,
+        max: xMax,
+        title: {
+          ...(charts.efficiency.options.scales?.x?.title ?? {}),
+          text: xAxisTitle,
+        },
+      },
       y: { ...(charts.efficiency.options.scales?.y ?? {}), min: 0, max: efficiencyMax },
+      y1: { ...(charts.efficiency.options.scales?.y1 ?? {}), min: 0, max: currentMax },
     };
     charts.efficiency.update("none");
+    syncChartGeometry(efficiencyCanvas, charts.efficiency);
   }
 
   function renderSweepFrame(updateCharts = false): void {
@@ -2033,7 +2650,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       state.draft.pwmPowerPercent,
     );
 
-    servoHost.innerHTML = servoSketch(operating.spec, operating.point, state.draft);
+    servoHost.innerHTML = servoSketch(
+      operating.spec,
+      operating.point,
+      state.draft,
+      operating.torqueMax,
+    );
 
     if (rangeValue) {
       rangeValue.textContent = `${Math.round((operating.spec.maxRangeDeg * state.draft.rangePercent) / 100)} deg`;
@@ -2143,6 +2765,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const liveServoPresent =
       state.inventory.openedId !== null && (state.identify?.present ?? Boolean(state.config));
     const shouldRun =
+      state.busyAction !== "Apply" &&
       liveServoPresent &&
       ((state.draft.mode === "servo_mode" && state.sim.sweepEnabled && state.sim.playbackRunning) ||
         (state.draft.mode === "cr_mode" &&
@@ -2185,7 +2808,12 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (shouldRun && !livePollTimer) {
       livePollTimer = setInterval(() => {
         const liveDirty = isDirty(state.liveSnapshot, state.draft);
-        if (state.inventory.openedId !== null && !state.busyAction && !liveDirty) {
+        if (
+          state.inventory.openedId !== null &&
+          !state.busyAction &&
+          !liveDirty &&
+          Date.now() >= resizeQuietUntil
+        ) {
           void probeLiveStateSilently();
         }
       }, options.livePollIntervalMs);
@@ -2197,7 +2825,14 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   }
 
   async function probeLiveStateSilently(): Promise<void> {
-    if (liveProbeInFlight || state.busyAction || state.inventory.openedId === null) return;
+    if (
+      liveProbeInFlight ||
+      state.busyAction ||
+      state.inventory.openedId === null ||
+      Date.now() < resizeQuietUntil
+    ) {
+      return;
+    }
 
     liveProbeInFlight = true;
     let shouldRender = false;
@@ -2305,6 +2940,20 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
   }
 
+  function handleResize(): void {
+    if (state.busyAction === "Apply") {
+      return;
+    }
+    resizeQuietUntil = Date.now() + RESIZE_POLL_QUIET_MS;
+    if (resizeEndTimer) {
+      clearTimeout(resizeEndTimer);
+    }
+    resizeEndTimer = setTimeout(() => {
+      resizeEndTimer = null;
+      refreshInteractiveUi();
+    }, RESIZE_POLL_QUIET_MS);
+  }
+
   async function doAuthorizeAndConnect(): Promise<void> {
     if (state.busyAction || !options.requestDevice) return;
 
@@ -2332,7 +2981,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (!alreadyBusy) {
       state.busyAction = "Connect";
       state.error = null;
-      setStatus(allowRequest ? "Requesting USB permission" : "Connecting adapter");
+      setStatus(allowRequest ? "Requesting USB permission" : "Opening adapter");
       render();
     }
     try {
@@ -2352,7 +3001,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           );
         }
         if (options.openDevice) {
-          setStatus("Connecting adapter", false);
+          setStatus("Opening adapter", false);
           updateInventory(await options.openDevice.run());
         }
       }
@@ -2417,6 +3066,48 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     const svoBytes = state.baselineRawBytes
       ? encodeDraftOntoRawConfig(Uint8Array.from(state.baselineRawBytes), state.draft)
       : null;
+    const suggestedName = `${baseName}.${format}`;
+
+    if (format === "axon" && options.saveAxonFile) {
+      try {
+        const result = await options.saveAxonFile.run({
+          suggestedName,
+          text: JSON.stringify(payload, null, 2),
+        });
+        if (result && "path" in result && result.path === null) {
+          setIdleStatus();
+          return;
+        }
+        setStatus("Saved .axon");
+        setIdleStatus();
+      } catch (error) {
+        reportError(error);
+        render();
+      }
+      return;
+    }
+
+    if (format === "svo" && options.exportSvoFile) {
+      try {
+        if (!svoBytes) {
+          throw new Error("No raw config block is available for .svo export yet.");
+        }
+        const result = await options.exportSvoFile.run({
+          suggestedName,
+          bytes: Array.from(svoBytes),
+        });
+        if (result && "path" in result && result.path === null) {
+          setIdleStatus();
+          return;
+        }
+        setStatus("Saved .svo");
+        setIdleStatus();
+      } catch (error) {
+        reportError(error);
+        render();
+      }
+      return;
+    }
 
     type SavePickerWindow = Window & {
       showSaveFilePicker?: (options: {
@@ -2435,7 +3126,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     if (typeof saveWindow.showSaveFilePicker === "function") {
       try {
         const handle = await saveWindow.showSaveFilePicker({
-          suggestedName: `${baseName}.${format}`,
+          suggestedName,
           types:
             format === "axon"
               ? [
@@ -2570,7 +3261,60 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     reader.readAsText(file);
   }
 
+  function handleLoadedFile(file: ProbeLoadedFile): void {
+    if (file.format === "svo") {
+      try {
+        if (!Array.isArray(file.bytes)) {
+          throw new Error("Selected .svo file did not provide binary bytes.");
+        }
+        const bytes = Uint8Array.from(file.bytes);
+        const mode: CoreServoMode =
+          state.identify?.mode && state.identify.mode !== "unknown"
+            ? state.identify.mode
+            : state.draft.mode;
+        const config = configInfoFromRawBytes(bytes, mode);
+        const nextDraft = draftFromConfig(config, state.draft);
+        adoptDraft(nextDraft, state.draft.mode);
+        state.loadPanelOpen = false;
+        state.error = null;
+        render();
+        setStatus(`Loaded ${file.name}`);
+        setIdleStatus();
+      } catch (error) {
+        reportError(error);
+        render();
+      }
+      return;
+    }
+
+    try {
+      if (typeof file.text !== "string") {
+        throw new Error("Selected .axon file did not provide text.");
+      }
+      const parsed = JSON.parse(file.text);
+      applyLoadedDraft(parsed);
+      setStatus(`Loaded ${file.name}`);
+      setIdleStatus();
+    } catch (error) {
+      reportError(error);
+      render();
+    }
+  }
+
   async function promptLoadFile(fileInput: HTMLInputElement | null): Promise<void> {
+    if (options.loadConfigFile) {
+      try {
+        const loaded = await options.loadConfigFile.run();
+        if (loaded) {
+          handleLoadedFile(loaded);
+        }
+      } catch (error) {
+        reportError(error);
+        render();
+      }
+      return;
+    }
+
     type OpenPickerWindow = Window & {
       showOpenFilePicker?: (options: {
         multiple?: boolean;
@@ -2611,10 +3355,23 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
   }
 
   function render(): void {
+    const previousStatusLog = options.root.querySelector<HTMLElement>(".status-log-list");
+    if (previousStatusLog) {
+      statusLogScrollTop = previousStatusLog.scrollTop;
+      statusLogPinnedToBottom =
+        previousStatusLog.scrollTop + previousStatusLog.clientHeight >=
+        previousStatusLog.scrollHeight - 8;
+    }
     destroyCharts();
     const connected = Boolean(state.inventory.openedId);
     const visible = state.inventory.devices.length > 0;
     const servoPresent = state.identify?.present ?? Boolean(state.config);
+    const showStableLiveState =
+      state.busyAction === "Apply" ||
+      state.busyAction === "Recover" ||
+      state.applyProgress !== null;
+    const connectedUi = connected || showStableLiveState;
+    const servoPresentUi = servoPresent || (showStableLiveState && Boolean(state.config));
     const activeModelId = servoPresent ? (state.config?.modelId ?? null) : null;
     const activeModelName = servoPresent
       ? shortModelLabel(state.config?.modelName ?? activeModelId)
@@ -2627,11 +3384,23 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
             .filter((checkpoint) => checkpoint.modelId === activeModelId)
             .slice(0, 3);
     const liveDirty = isDirty(state.liveSnapshot, state.draft);
-    const servoLabel = servoIdentityLabel(state.config, servoPresent);
+    const servoLabel = servoIdentityLabel(state.config, servoPresentUi);
+    const selectedRecoveryModel = state.recoveryBundledModelId
+      ? findModel(loadCatalog(), state.recoveryBundledModelId)
+      : undefined;
+    const canRecover = Boolean(options.flashModeChange || options.flashFirmwareFile);
+    const recoverySelectionValid =
+      state.recoverySource === "bundled"
+        ? Boolean(selectedRecoveryModel && options.flashModeChange)
+        : Boolean(state.recoveryFile && options.flashFirmwareFile);
+    const recoverySummaryLabel =
+      state.recoverySource === "bundled"
+        ? shortModelLabel(selectedRecoveryModel?.name ?? null)
+        : shortModelLabel(state.recoveryFileModelName ?? state.recoveryFileModelId);
     const canDiscard = liveDirty && Boolean(state.config) && !state.busyAction;
     const canApply =
       liveDirty && Boolean(state.config) && Boolean(options.writeFullConfig) && !state.busyAction;
-    const emptyState: EmptyStateKind = !connected ? "adapter" : !servoPresent ? "servo" : null;
+    const emptyState: EmptyStateKind = !connectedUi ? "adapter" : !servoPresentUi ? "servo" : null;
     const showRange = state.draft.mode === "servo_mode";
     const centerLabel = state.draft.mode === "servo_mode" ? "Center" : "Stop trim";
     const showSoftStart = state.draft.mode === "servo_mode";
@@ -2671,19 +3440,32 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           font-family:
             Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
-        :root { color-scheme: light; }
+        :root {
+          color-scheme: light;
+          --config-pane-width: 300px;
+          --sim-column-min-width: 300px;
+          --sim-pane-min-width: calc(
+            var(--sim-column-min-width) + var(--sim-column-min-width) + 18px
+          );
+          --frame-min-width: calc(
+            var(--config-pane-width) + var(--sim-pane-min-width) + 12px
+          );
+        }
 
         .shell {
           min-height: 100vh;
           padding: 12px;
           background: #f8f8f6;
           color: #111111;
+          overflow-x: auto;
           font-family:
             Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
         .frame {
-          max-width: 1480px;
+          width: max(100%, var(--frame-min-width));
+          min-width: var(--frame-min-width);
+          max-width: 1640px;
           margin: 0 auto;
         }
 
@@ -2978,10 +3760,55 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           color: #6b7280;
         }
 
+        .confirm-modal {
+          width: min(460px, 100%);
+          padding: 18px 18px 16px;
+          border-radius: 8px;
+          border: 1px solid #dcded9;
+          background: #ffffff;
+          box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+          display: grid;
+          gap: 12px;
+        }
+
+        .confirm-copy {
+          font-size: 13px;
+          line-height: 1.45;
+          color: #4b5563;
+        }
+
+        .confirm-warning {
+          padding: 10px 12px;
+          border: 1px solid #f0b5bc;
+          border-radius: 8px;
+          background: #fff1f2;
+          color: #8c101e;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .confirm-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+        }
+
+        .confirm-actions-left {
+          justify-content: flex-start;
+          align-items: center;
+        }
+
+        .recovery-source-row {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+
         .workspace {
           display: grid;
-          grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+          grid-template-columns: var(--config-pane-width) minmax(var(--sim-pane-min-width), 1fr);
           gap: 12px;
+          align-items: start;
         }
 
         .pane {
@@ -2989,6 +3816,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border-radius: 8px;
           background: #ffffff;
           overflow: hidden;
+          min-width: 0;
         }
 
         .config-pane {
@@ -2996,6 +3824,10 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           padding: 14px;
           display: grid;
           gap: 14px;
+          min-width: 0;
+          width: 100%;
+          max-width: var(--config-pane-width);
+          justify-self: start;
         }
 
         .config-pane.dragging {
@@ -3251,6 +4083,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           padding: 14px;
           display: grid;
           gap: 12px;
+          min-width: 0;
         }
 
         .empty-pane {
@@ -3303,6 +4136,23 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           color: #6b7280;
           font-size: 13px;
           line-height: 1.4;
+        }
+
+        .empty-link {
+          padding: 0;
+          border: 0;
+          background: none;
+          color: #1f6ed4;
+          font: inherit;
+          font-weight: 700;
+          text-decoration: underline;
+          cursor: pointer;
+        }
+
+        .empty-link:disabled {
+          color: #9ca3af;
+          cursor: default;
+          text-decoration: none;
         }
 
         .status-log {
@@ -3373,7 +4223,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
         .sim-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          grid-template-columns: repeat(2, minmax(var(--sim-column-min-width), 1fr));
           gap: 18px;
           align-items: start;
         }
@@ -3381,11 +4231,13 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         .sim-left {
           display: grid;
           gap: 12px;
+          min-width: 0;
         }
 
         .sim-right {
           display: grid;
           gap: 12px;
+          min-width: 0;
         }
 
         .servo-card {
@@ -3499,11 +4351,20 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           border: 1px solid #dbe2ea;
           border-radius: 8px;
           background: #ffffff;
+          min-width: 0;
+          overflow: hidden;
         }
 
         .chart-canvas-wrap {
           position: relative;
           height: 168px;
+          min-width: 0;
+        }
+
+        .chart-canvas-wrap canvas {
+          display: block;
+          width: 100% !important;
+          height: 100% !important;
         }
 
         .chart-tooltip {
@@ -3565,16 +4426,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           transition: opacity 80ms linear;
         }
 
-        .chart-head {
-          display: flex;
-          justify-content: space-between;
-          gap: 8px;
-          margin-bottom: 4px;
-          color: #9aa3af;
-          font-size: 11px;
-          font-weight: 600;
-        }
-
         .chart-meta {
           display: flex;
           justify-content: space-between;
@@ -3613,11 +4464,26 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           cursor: pointer;
           display: inline-flex;
           align-items: center;
-          justify-content: center;
+          justify-content: flex-start;
         }
 
         details.debug > summary::-webkit-details-marker {
           display: none;
+        }
+
+        .debug-toggle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 30px;
+          padding: 0 12px;
+          border: 1px solid #d4d9e0;
+          border-radius: 8px;
+          background: #ffffff;
+          color: #4c5664;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
         }
 
         .debug-panel {
@@ -3640,36 +4506,6 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
 
-        @media (max-width: 1160px) {
-          .workspace,
-          .sim-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        @media (max-width: 760px) {
-          .shell {
-            padding: 10px;
-          }
-
-          .topline {
-            grid-template-columns: 1fr;
-          }
-
-          .statebar,
-          .loss-row {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .mode-row,
-          .direction-row,
-          .toggle-pills,
-          .mini-row,
-          .compound-row,
-          .compound-inputs {
-            grid-template-columns: 1fr;
-          }
-        }
       </style>
       <div class="shell">
         <div class="frame">
@@ -3719,11 +4555,11 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               }
             </div>
             <div class="statebar">
-              <div class="state ${connected ? "ok" : visible ? "warn" : ""}" title="Adapter state">
+              <div class="state ${connectedUi ? "ok" : visible ? "warn" : ""}" title="Adapter state">
                 <span class="state-label"><span class="state-dot"></span>Adapter</span>
-                <span class="state-value">${connected ? "Connected" : "Not Connected"}</span>
+                <span class="state-value">${connectedUi ? "Connected" : "Not Connected"}</span>
               </div>
-              <div class="state ${servoPresent ? "ok" : connected ? "warn" : ""}" title="Servo state">
+              <div class="state ${servoPresentUi ? "ok" : connectedUi ? "warn" : ""}" title="Servo state">
                 <span class="state-label"><span class="state-dot"></span>Servo</span>
                 <span class="state-value">${escapeHtml(servoLabel)}</span>
               </div>
@@ -3749,7 +4585,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                       <button class="status-log-button" type="button" data-command="toggle-status-log" aria-label="Close status log">x</button>
                     </div>
                   </div>
-                  <div class="status-log-list">
+                    <div class="status-log-list">
                     ${state.logs
                       .map(
                         (entry) => `
@@ -3765,15 +4601,19 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
               : ""
           }
 
-          ${state.error ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
+          ${state.error && !showStableLiveState ? `<div class="error">${escapeHtml(state.error)}</div>` : ""}
 
           ${
-            state.busyAction === "Apply" && state.applyProgress
+            (state.busyAction === "Apply" || state.busyAction === "Recover") && state.applyProgress
               ? `
-                <div class="apply-modal-backdrop" role="dialog" aria-modal="true" aria-label="Applying Changes">
+                <div class="apply-modal-backdrop" role="dialog" aria-modal="true" aria-label="${escapeHtml(state.applyProgress.title)}">
                   <div class="apply-modal">
                     <div class="apply-modal-title">${escapeHtml(state.applyProgress.title)}</div>
-                    <div class="apply-modal-copy">The attached servo is being updated to match the current settings.</div>
+                    <div class="apply-modal-copy">${
+                      state.busyAction === "Recover"
+                        ? "The app is reflashing the servo with the selected recovery firmware."
+                        : "The attached servo is being updated to match the current settings."
+                    }</div>
                     <div class="apply-progress-meta">
                       <span>${escapeHtml(state.applyProgress.detail)}</span>
                       <span>${Math.round(state.applyProgress.percent)}%</span>
@@ -3782,6 +4622,79 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                       <div class="apply-progress-fill" style="width:${state.applyProgress.percent.toFixed(1)}%"></div>
                     </div>
                     <div class="apply-modal-note">Do not unplug the adapter or servo while changes are being applied.</div>
+                  </div>
+                </div>
+              `
+              : ""
+          }
+
+          ${
+            state.recoveryConfirmOpen
+              ? `
+                <div class="apply-modal-backdrop" role="dialog" aria-modal="true" aria-label="Recover Servo">
+                  <div class="confirm-modal">
+                    <div class="apply-modal-title">Recover Servo</div>
+                    <div class="confirm-copy">
+                      Choose a bundled firmware by model and mode, or select your own <code>.sfw</code> file.
+                    </div>
+                    <div class="recovery-source-row">
+                      <button class="toggle-pill" type="button" data-command="set-recovery-source" data-recovery-source="bundled" data-selected="${state.recoverySource === "bundled"}">Bundled firmware</button>
+                      <button class="toggle-pill" type="button" data-command="set-recovery-source" data-recovery-source="file" data-selected="${state.recoverySource === "file"}">Choose .sfw file</button>
+                    </div>
+                    ${
+                      state.recoverySource === "bundled"
+                        ? `
+                          <div class="setting">
+                            <div class="setting-head">
+                              <span class="setting-label">Model</span>
+                            </div>
+                            <select class="number-input" data-recovery-model>
+                              <option value="">Select model</option>
+                              ${RECOVERY_MODELS.map(
+                                (model) => `
+                                  <option value="${escapeHtml(model.id)}" ${state.recoveryBundledModelId === model.id ? "selected" : ""}>${escapeHtml(shortModelLabel(model.name))}</option>
+                                `,
+                              ).join("")}
+                            </select>
+                          </div>
+                          <div class="toggle-setting">
+                            <div class="setting-head">
+                              <span class="setting-label">Mode</span>
+                            </div>
+                            <div class="toggle-pills">
+                              <button class="toggle-pill" type="button" data-command="set-recovery-mode" data-recovery-mode="servo_mode" data-selected="${state.recoveryBundledMode === "servo_mode"}">Servo</button>
+                              <button class="toggle-pill" type="button" data-command="set-recovery-mode" data-recovery-mode="cr_mode" data-selected="${state.recoveryBundledMode === "cr_mode"}">CR</button>
+                            </div>
+                          </div>
+                        `
+                        : `
+                          <div class="setting">
+                            <div class="setting-head">
+                              <span class="setting-label">Firmware file</span>
+                            </div>
+                            <div class="confirm-actions confirm-actions-left">
+                              <button class="tool" type="button" data-command="pick-recovery-file">Choose .sfw file</button>
+                              ${
+                                state.recoveryFile
+                                  ? `<span class="checkpoint-meta">${escapeHtml(state.recoveryFile.name)}</span>`
+                                  : `<span class="checkpoint-meta">No file selected</span>`
+                              }
+                            </div>
+                            ${
+                              state.recoveryFileModelId
+                                ? `<div class="checkpoint-meta">Detected model: ${escapeHtml(shortModelLabel(state.recoveryFileModelName ?? state.recoveryFileModelId))}</div>`
+                                : ""
+                            }
+                          </div>
+                        `
+                    }
+                    <div class="confirm-warning">
+                      Confirm that <strong>${escapeHtml(recoverySummaryLabel || "the selected target")}</strong> is correct. Flashing the wrong firmware may irreparably damage the servo.
+                    </div>
+                    <div class="confirm-actions">
+                      <button class="tool" type="button" data-command="cancel-recover-servo">Cancel</button>
+                      <button class="apply" type="button" data-command="confirm-recover-servo" ${!recoverySelectionValid ? "disabled" : ""}>Recover Servo</button>
+                    </div>
                   </div>
                 </div>
               `
@@ -3822,6 +4735,16 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                     <div class="empty-content">
                       <h2 class="empty-title">Servo not detected</h2>
                       <p class="empty-copy">Please ensure the servo is plugged into the adapter and powered correctly. Try unplugging and replugging it.</p>
+                      ${
+                        canRecover
+                          ? `
+                            <p class="empty-note">
+                              If it still does not respond, you can
+                              <button class="empty-link" type="button" data-command="open-recover-servo" ${state.busyAction ? "disabled" : ""}>recover your servo</button>.
+                            </p>
+                          `
+                          : ""
+                      }
                     </div>
                   </section>
                 `
@@ -4000,7 +4923,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                   <div class="servo-card">
                     <div class="servo-card-figure">
                       <div data-sim-servo>
-                        ${servoSketch(operating.spec, point, state.draft)}
+                        ${servoSketch(operating.spec, point, state.draft, operating.torqueMax)}
                       </div>
                     </div>
                     <div class="servo-card-controls">
@@ -4059,7 +4982,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
 
                 <div class="sim-right" data-sim-charts>
                   <div data-operating-point hidden></div>
-                  ${simChartsMarkup(state.draft, state.sim)}
+                  ${simChartsMarkup()}
                 </div>
               </div>
                     </section>
@@ -4067,12 +4990,18 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
                 `
           }
 
-          <details class="debug" ${state.diagnosticsOpen ? "open" : ""}>
-            <summary>${help(HELP_TEXT.diagnostics)}</summary>
-            <div class="debug-panel">
-              <pre>${escapeHtml(toPrettyJson(diagnostics))}</pre>
-            </div>
-          </details>
+          ${
+            options.debugEnabled
+              ? `
+                <details class="debug" ${state.diagnosticsOpen ? "open" : ""}>
+                  <summary><span class="debug-toggle">Diagnostics</span></summary>
+                  <div class="debug-panel">
+                    <pre>${escapeHtml(toPrettyJson(diagnostics))}</pre>
+                  </div>
+                </details>
+              `
+              : ""
+          }
         </div>
       </div>
     `;
@@ -4349,6 +5278,29 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
           state.loadPanelOpen = false;
           void triggerSave("svo");
         }
+        if (command === "open-recover-servo") {
+          openRecoveryWizard();
+          render();
+        }
+        if (command === "set-recovery-source") {
+          state.recoverySource = button.dataset.recoverySource === "file" ? "file" : "bundled";
+          render();
+        }
+        if (command === "set-recovery-mode") {
+          state.recoveryBundledMode =
+            button.dataset.recoveryMode === "cr_mode" ? "cr_mode" : "servo_mode";
+          render();
+        }
+        if (command === "pick-recovery-file") {
+          void promptRecoveryFirmware();
+        }
+        if (command === "cancel-recover-servo") {
+          state.recoveryConfirmOpen = false;
+          render();
+        }
+        if (command === "confirm-recover-servo") {
+          void recoverServo();
+        }
         if (command === "discard") {
           void discardToServo();
         }
@@ -4357,6 +5309,15 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
         }
       });
     });
+
+    const recoveryModelSelect =
+      options.root.querySelector<HTMLSelectElement>("[data-recovery-model]");
+    if (recoveryModelSelect) {
+      recoveryModelSelect.addEventListener("change", () => {
+        state.recoveryBundledModelId = recoveryModelSelect.value;
+        render();
+      });
+    }
 
     if (state.loadPanelOpen) {
       const onPointerDown = (event: PointerEvent) => {
@@ -4371,6 +5332,20 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
       window.setTimeout(() => {
         window.addEventListener("pointerdown", onPointerDown, { once: true });
       }, 0);
+    }
+
+    const statusLogList = options.root.querySelector<HTMLElement>(".status-log-list");
+    if (statusLogList) {
+      if (statusLogPinnedToBottom) {
+        statusLogList.scrollTop = statusLogList.scrollHeight;
+      } else {
+        statusLogList.scrollTop = statusLogScrollTop;
+      }
+      statusLogList.addEventListener("scroll", () => {
+        statusLogScrollTop = statusLogList.scrollTop;
+        statusLogPinnedToBottom =
+          statusLogList.scrollTop + statusLogList.clientHeight >= statusLogList.scrollHeight - 8;
+      });
     }
 
     renderSweepFrame(true);
@@ -4429,6 +5404,7 @@ export function mountProbeApp(options: MountProbeAppOptions): void {
     }
     updateLivePollTimer();
     updateSweepTimer();
+    window.addEventListener("resize", handleResize);
     render();
   }
 

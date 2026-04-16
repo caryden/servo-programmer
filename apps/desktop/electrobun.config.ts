@@ -15,6 +15,7 @@ export default {
     copy: {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
+      "../../downloads": "downloads",
     },
     mac: {
       icons: "icon.iconset",

@@ -15,6 +15,62 @@ async function pointSnapshot(page: Page) {
 }
 
 test.describe("web demo", () => {
+  test("sim pane stays side-by-side at narrower widths", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 980 });
+    await page.goto("/?demo");
+
+    const configPane = page.locator(".config-pane");
+    const simPane = page.locator(".sim-pane");
+    const simLeft = page.locator(".sim-left");
+    const simRight = page.locator(".sim-right");
+
+    const configBox = await configPane.boundingBox();
+    const simBox = await simPane.boundingBox();
+    const simLeftBox = await simLeft.boundingBox();
+    const simRightBox = await simRight.boundingBox();
+
+    expect(configBox).not.toBeNull();
+    expect(simBox).not.toBeNull();
+    expect(simLeftBox).not.toBeNull();
+    expect(simRightBox).not.toBeNull();
+
+    expect(simBox!.x).toBeGreaterThan(configBox!.x + configBox!.width - 20);
+    expect(simRightBox!.x).toBeGreaterThan(simLeftBox!.x + simLeftBox!.width - 20);
+    expect(Math.abs(simRightBox!.y - simLeftBox!.y)).toBeLessThan(4);
+  });
+
+  test("config pane stays capped instead of expanding across the whole viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 1520, height: 980 });
+    await page.goto("/?demo");
+
+    const configPane = page.locator(".config-pane");
+    const configBox = await configPane.boundingBox();
+
+    expect(configBox).not.toBeNull();
+    expect(configBox!.width).toBeGreaterThan(290);
+    expect(configBox!.width).toBeLessThan(330);
+  });
+
+  test("workspace keeps a horizontal overflow path instead of restacking panes", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 980 });
+    await page.goto("/?demo");
+
+    const dimensions = await page.evaluate(() => {
+      const frame = document.querySelector(".frame");
+      const shell = document.querySelector(".shell");
+      if (!(frame instanceof HTMLElement) || !(shell instanceof HTMLElement)) return null;
+      return {
+        viewport: window.innerWidth,
+        frameWidth: frame.getBoundingClientRect().width,
+        shellScrollWidth: shell.scrollWidth,
+      };
+    });
+
+    expect(dimensions).not.toBeNull();
+    expect(dimensions!.frameWidth).toBeGreaterThan(dimensions!.viewport);
+    expect(dimensions!.shellScrollWidth).toBeGreaterThan(dimensions!.viewport);
+  });
+
   test("shared frame layout stays fixed when switching between Servo and CR", async ({ page }) => {
     await page.goto("/?demo");
 
@@ -139,6 +195,20 @@ test.describe("web demo", () => {
     await expect(page.getByText("Status Log")).toHaveCount(0);
   });
 
+  test("diagnostics is hidden in the normal UI", async ({ page }) => {
+    await page.goto("/?demo");
+
+    await expect(page.locator("details.debug")).toHaveCount(0);
+  });
+
+  test("diagnostics is available behind debug mode", async ({ page }) => {
+    await page.goto("/?demo&debug");
+
+    const diagnosticsToggle = page.locator("details.debug > summary .debug-toggle");
+    await expect(diagnosticsToggle).toHaveText("Diagnostics");
+    await expect(page.locator("details.debug > summary .help")).toHaveCount(0);
+  });
+
   test("help tooltip uses the app font stack", async ({ page }) => {
     await page.goto("/?demo");
 
@@ -181,6 +251,8 @@ test.describe("web demo", () => {
       "aria-label",
       "Pause animation",
     );
+    await expect(page.locator("[data-load-value]")).toHaveText("0.0 kgf*cm");
+    await expect(page.locator(".servo-svg")).toHaveAttribute("data-load-state", "no load");
 
     const before = await pointSnapshot(page);
     await expect(page.locator('[data-live-pwm-value]')).toHaveText("2000 us");
@@ -208,6 +280,73 @@ test.describe("web demo", () => {
 
     const stalled = await pointSnapshot(page);
     expect(stalled.speed).toBe("0.000");
+    await expect(page.locator(".servo-svg")).toHaveAttribute("data-load-state", "stalled");
+
+    await loadSlider.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = String(Number(input.max) * 0.9);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await expect(page.locator(".servo-svg")).toHaveAttribute("data-load-state", "near stall");
+
+    await loadSlider.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = String(Number(input.max) * 0.4);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await expect(page.locator(".servo-svg")).toHaveAttribute("data-load-state", "loaded");
+  });
+
+  test("stacked chart plot areas stay horizontally aligned", async ({ page }) => {
+    await page.goto("/?demo");
+    await page.locator('[data-mode="cr_mode"]').click();
+
+    const geometry = await page.evaluate(() => {
+      const read = (name: string) => {
+        const canvas = document.querySelector<HTMLCanvasElement>(`[data-chart='${name}']`);
+        if (!canvas) return null;
+        return {
+          left: Number(canvas.dataset.plotLeft ?? "NaN"),
+          right: Number(canvas.dataset.plotRight ?? "NaN"),
+          top: Number(canvas.dataset.plotTop ?? "NaN"),
+          bottom: Number(canvas.dataset.plotBottom ?? "NaN"),
+        };
+      };
+      return {
+        speedCurrent: read("speed-current"),
+        power: read("power"),
+        efficiency: read("efficiency"),
+      };
+    });
+
+    expect(geometry.speedCurrent).not.toBeNull();
+    expect(geometry.power).not.toBeNull();
+    expect(geometry.efficiency).not.toBeNull();
+
+    expect(geometry.power?.left).toBeCloseTo(geometry.speedCurrent?.left ?? 0, 0);
+    expect(geometry.efficiency?.left).toBeCloseTo(geometry.speedCurrent?.left ?? 0, 0);
+    expect(geometry.power?.right).toBeCloseTo(geometry.speedCurrent?.right ?? 0, 0);
+    expect(geometry.efficiency?.right).toBeCloseTo(geometry.speedCurrent?.right ?? 0, 0);
+  });
+
+  test("charts use the voltage-aware x-axis title instead of a chart-head row", async ({ page }) => {
+    await page.goto("/?demo");
+
+    await expect(page.locator(".chart-head")).toHaveCount(0);
+
+    const xTitles = await page.evaluate(() => {
+      const names = ["speed-current", "power", "efficiency"];
+      return names.map((name) => {
+        const canvas = document.querySelector<HTMLCanvasElement>(`[data-chart='${name}']`);
+        return canvas?.dataset.xTitle ?? "";
+      });
+    });
+
+    expect(xTitles).toEqual([
+      "torque @ 6.0 V (kgf*cm)",
+      "torque @ 6.0 V (kgf*cm)",
+      "torque @ 6.0 V (kgf*cm)",
+    ]);
   });
 
   test("discard reloads the live servo state", async ({ page }) => {

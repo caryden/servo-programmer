@@ -19,6 +19,7 @@ import {
 import {
   mountProbeApp,
   type ProbeConfigInfo,
+  type ProbeFirmwareFile,
   type ProbeIdentifyInfo,
   type ProbeInventory,
 } from "@axon/ui";
@@ -137,6 +138,9 @@ function configInfoFromBytes(
   mode: ProbeIdentifyInfo["mode"],
 ): ProbeConfigInfo {
   const modelId = modelIdFromConfig(configBytes);
+  if (modelId.trim().length === 0) {
+    throw new Error("Invalid config read: missing servo model id.");
+  }
   const model = findModel(loadCatalog(), modelId);
   const chunkSplit = 59;
 
@@ -179,11 +183,23 @@ async function loadBundledFirmware(
     throw new Error(`No bundled firmware is cataloged for ${model.name} ${servoModeLabel(mode)}.`);
   }
 
-  const response = await fetch(`/downloads/${encodeURIComponent(entry.file)}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(`Could not fetch ${entry.file} from local downloads.`);
+  const candidates = [
+    `/downloads/${encodeURIComponent(entry.file)}`,
+    `./downloads/${encodeURIComponent(entry.file)}`,
+  ];
+
+  let response: Response | null = null;
+  for (const candidate of candidates) {
+    const maybeResponse = await fetch(candidate, { cache: "no-store" }).catch(() => null);
+    if (maybeResponse?.ok) {
+      response = maybeResponse;
+      break;
+    }
+  }
+  if (!response) {
+    throw new Error(
+      `Could not fetch ${entry.file} from local downloads. Ensure the web server exposes /downloads or serves apps/web/downloads.`,
+    );
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const actual = await sha256Hex(bytes);
@@ -195,6 +211,37 @@ async function loadBundledFirmware(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pickFirmwareFile(): Promise<ProbeFirmwareFile | null> {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".sfw";
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  try {
+    const file = await new Promise<File | null>((resolve) => {
+      input.addEventListener(
+        "change",
+        () => {
+          resolve(input.files?.[0] ?? null);
+        },
+        { once: true },
+      );
+      input.click();
+    });
+    if (!file) {
+      return null;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return {
+      name: file.name,
+      bytes: Array.from(bytes),
+    };
+  } finally {
+    input.remove();
+  }
 }
 
 async function releaseHandle(): Promise<void> {
@@ -435,6 +482,32 @@ function mountDemoApp(): void {
         };
       },
     },
+    flashFirmwareFile: {
+      label: "Flash Firmware File",
+      run: async ({ bytes, expectedModelId, onProgress }) => {
+        if (!connected || !servoPresent) {
+          throw new Error("Servo not detected.");
+        }
+        const decrypted = decryptSfw(Buffer.from(bytes));
+        onProgress?.({ phase: "prepare", message: "Preparing flash session..." });
+        await sleep(40);
+        onProgress?.({ phase: "write", bytesSent: 1, bytesTotal: 1, message: "Writing firmware" });
+        await sleep(40);
+        onProgress?.({ phase: "done", bytesSent: 1, bytesTotal: 1, message: "Flash complete." });
+        currentConfig = {
+          ...currentConfig,
+          modelId: expectedModelId ?? decrypted.header.modelId,
+          modelName:
+            findModel(loadCatalog(), expectedModelId ?? decrypted.header.modelId)?.name ??
+            currentConfig.modelName,
+          mode: currentConfig.mode,
+        };
+      },
+    },
+    loadFirmwareFile: {
+      label: "Load firmware file",
+      run: async () => pickFirmwareFile(),
+    },
   });
 }
 
@@ -598,10 +671,11 @@ if (demoEnabled) {
       label: "Show Current Setup",
       run: async (): Promise<ProbeConfigInfo> => {
         return withHardwareSession("readFullConfig", async () => {
-          const config = await withRecoveredHandle("readFullConfig", async () =>
-            readFullConfig(requireHandle()),
-          );
-          return configInfoFromBytes(new Uint8Array(config), lastIdentifyMode);
+          const config = await withRecoveredHandle("readFullConfig", async () => {
+            const bytes = await readFullConfig(requireHandle());
+            return configInfoFromBytes(new Uint8Array(bytes), lastIdentifyMode);
+          });
+          return config;
         });
       },
     },
@@ -646,6 +720,41 @@ if (demoEnabled) {
           await sleep(400);
         });
       },
+    },
+    flashFirmwareFile: {
+      label: "Flash Firmware File",
+      run: async ({ bytes, expectedModelId, onProgress }): Promise<void> => {
+        await withHardwareSession("flashFirmwareFile", async () => {
+          const [{ flashFirmware }] = await Promise.all([import("@axon/core/driver/flash")]);
+          const maybeQueueHandle = activeHandle as
+            | (typeof activeHandle & {
+                clearInputQueue?: () => void;
+              })
+            | null;
+          maybeQueueHandle?.clearInputQueue?.();
+          const decrypted = decryptSfw(Buffer.from(bytes));
+          await flashFirmware(requireHandle(), decrypted, {
+            expectedModelId: expectedModelId ?? decrypted.header.modelId,
+            onProgress: (event) => {
+              onProgress?.(event);
+              statusLog(formatFlashProgress(event, debugEnabled));
+              debugLog(`flash ${event.phase}`, {
+                bytesSent: event.bytesSent ?? null,
+                bytesTotal: event.bytesTotal ?? null,
+                recordsSent: event.recordsSent ?? null,
+                recordsTotal: event.recordsTotal ?? null,
+                message: event.message,
+              });
+            },
+            onWireDebug: debugEnabled ? (message) => debugLog(`[wire] ${message}`) : undefined,
+          });
+          await sleep(400);
+        });
+      },
+    },
+    loadFirmwareFile: {
+      label: "Load firmware file",
+      run: async () => pickFirmwareFile(),
     },
   });
 }

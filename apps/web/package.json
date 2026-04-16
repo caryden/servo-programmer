@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build ./src/index.ts --target browser --format esm --outdir ./dist",
-    "check": "bun x @biomejs/biome check src package.json index.html",
+    "build": "bun run ./scripts/sync-downloads.ts && bun build ./src/index.ts --target browser --format esm --outdir ./dist",
+    "check": "bun x @biomejs/biome check src scripts package.json index.html",
     "test": "playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "bun run build && python3 -m http.server 8765",
