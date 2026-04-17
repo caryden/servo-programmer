@@ -137,7 +137,11 @@ fi
 if [[ "${skip_checks}" -eq 0 ]]; then
   (
     cd "${repo_root}"
-    bun run ci
+    bun x turbo run check typecheck --filter=@axon/core --filter=@axon/transport-nodehid --filter=axon
+  )
+  (
+    cd "${cli_dir}"
+    bun test
   )
 fi
 
