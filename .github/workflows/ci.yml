@@ -46,6 +46,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Playwright browsers (Linux)
+        if: runner.os == 'Linux'
+        run: bun x playwright install --with-deps chromium
+
+      - name: Install Playwright browsers (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: bun x playwright install chromium
+
       - name: Biome check
         run: bun run check
 

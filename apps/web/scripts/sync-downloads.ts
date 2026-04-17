@@ -8,14 +8,15 @@ const repoRoot = resolve(webRoot, "..", "..");
 const sourceDir = join(repoRoot, "downloads");
 const targetDir = join(webRoot, "downloads");
 
-if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
-  throw new Error(`downloads directory not found: ${sourceDir}`);
-}
-
 if (existsSync(targetDir)) {
   rmSync(targetDir, { recursive: true, force: true });
 }
 mkdirSync(targetDir, { recursive: true });
+
+if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
+  console.warn(`downloads directory not found: ${sourceDir}; continuing with empty web downloads/`);
+  process.exit(0);
+}
 
 for (const entry of readdirSync(sourceDir)) {
   if (!entry.toLowerCase().endsWith(".sfw")) {
