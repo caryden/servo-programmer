@@ -7,12 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-04-17
+
+### Changed
+
+- `axon read` now emits decoded named parameters by default in both
+  human and `--json` output. The raw config block is no longer printed
+  unless you explicitly request `--svo`, `--hex`, or `--debug`.
+- Release binaries now build from the shared workspace packages used by
+  the web and desktop apps, so the shipped CLI and the app protocol
+  stacks stay aligned.
+
 ### Fixed
 
 - Standalone release binaries now embed the platform-specific `node-hid`
   addon directly instead of relying on the package's dynamic
   `pkg-prebuilds` lookup, so compiled `axon` binaries can enumerate HID
   devices away from the build machine path.
+- CLI mode switching and recovery flows now use the same shared flash
+  engine as the app codepaths, including better progress reporting and
+  safer firmware validation.
+
+### Security
+
+- Release-time firmware handling continues to require SHA-256-verified
+  `.sfw` payloads before a mode change or recovery flash proceeds.
 
 ## [1.0.0] — 2026-04-12
 
@@ -132,6 +151,7 @@ this revision — but the working CLI runs from source.
   rule is **adapter first, then servo**. `dev.reset()` (libusb)
   wipes primed state and is therefore destructive — never call it.
 
-[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/caryden/servo-programmer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/caryden/servo-programmer/compare/61e2c41...v1.0.0
 [0.1.0]: https://github.com/caryden/servo-programmer/tree/61e2c41
