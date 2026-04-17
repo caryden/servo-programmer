@@ -56,7 +56,11 @@ function hex(value: number | undefined, width = 2): string | null {
   return `0x${value.toString(16).padStart(width, "0")}`;
 }
 
-function hexDump(bytes: Uint8Array): string {
+function toUint8Array(bytes: ArrayLike<number>): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(bytes);
+}
+
+function hexDump(bytes: ArrayLike<number>): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
 }
 
@@ -104,8 +108,8 @@ function firstExistingPath(paths: string[]): string | null {
   return null;
 }
 
-function sha256Hex(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
+function sha256Hex(bytes: ArrayLike<number>): string {
+  return createHash("sha256").update(toUint8Array(bytes)).digest("hex");
 }
 
 function catalogFirmwareKey(mode: "servo_mode" | "cr_mode"): "standard" | "continuous" {
@@ -440,7 +444,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
               const config = await withTransientProbeRetry("readFullConfig", async () =>
                 readFullConfig(handle),
               );
-              const modelId = modelIdFromConfig(config);
+              const modelId = modelIdFromConfig(toUint8Array(config));
               const catalog = loadCatalog();
               const model = findModel(catalog, modelId);
               const chunkSplit = 59;
@@ -453,7 +457,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
                 docsUrl: model?.docs_url ?? null,
                 mode: lastIdentifyMode,
                 modeLabel: servoModeLabel(lastIdentifyMode),
-                setup: summarizeConfig(config, modelId),
+                setup: summarizeConfig(toUint8Array(config), modelId),
                 rawHex: hexDump(config),
                 firstChunk: hexDump(config.subarray(0, chunkSplit)),
                 secondChunk: hexDump(config.subarray(chunkSplit)),
@@ -597,7 +601,7 @@ const rpc = BrowserView.defineRPC<DesktopPocSchema>({
           if (!targetPath) {
             return { path: null } satisfies ProbeSavedFile;
           }
-          writeFileSync(targetPath, Buffer.from(params.bytes));
+          writeFileSync(targetPath, toUint8Array(params.bytes));
           return { path: targetPath } satisfies ProbeSavedFile;
         }),
     },
