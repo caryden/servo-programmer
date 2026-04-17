@@ -57,6 +57,7 @@ import {
   resolveCatalogFirmware,
 } from "../firmware-store.ts";
 import { type DecryptedSfw, decryptSfw, sfwHashHex } from "../sfw.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { readLineFromStdin } from "../util/prompt.ts";
 import { renderProgressBar } from "../util/tui.ts";
 
@@ -118,7 +119,7 @@ async function runModeList(handle: DongleHandle, global: GlobalFlags): Promise<n
     throw AxonError.notPrimed();
   }
   const config = await readFullConfig(handle);
-  const modelId = modelIdFromConfig(config);
+  const modelId = modelIdFromConfig(toUint8Array(config));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
   if (model === undefined) {
@@ -194,7 +195,7 @@ async function runModeCurrent(handle: DongleHandle, global: GlobalFlags): Promis
 
   const modeSpec = lookupServoMode(id.mode);
   const config = await readFullConfig(handle);
-  const modelId = modelIdFromConfig(config);
+  const modelId = modelIdFromConfig(toUint8Array(config));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
 
@@ -307,7 +308,7 @@ async function runModeSet(
       );
     }
     const config = await readFullConfig(handle);
-    modelId = modelIdFromConfig(config);
+    modelId = modelIdFromConfig(toUint8Array(config));
     model = findModel(catalog, modelId);
     if (model === undefined) {
       throw AxonError.unknownModel(modelId);

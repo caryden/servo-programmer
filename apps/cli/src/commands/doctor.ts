@@ -19,6 +19,7 @@ import {
 } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
+import { cloneBuffer, toUint8Array } from "../util/bytes.ts";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -116,7 +117,7 @@ class TracingDongle implements DongleHandle {
 
   async read(timeoutMs?: number): Promise<Buffer> {
     const rx = await this.inner.read(timeoutMs);
-    this.reads.push(Buffer.from(rx));
+    this.reads.push(cloneBuffer(rx));
     return rx;
   }
 
@@ -407,7 +408,7 @@ export async function runDoctor(
     }
 
     debug = debugReport(local.debug, traced, identifyReply, config);
-    const modelId = modelIdFromConfig(config);
+    const modelId = modelIdFromConfig(toUint8Array(config));
     const model = findModel(catalog, modelId);
     const servo = {
       present: true,

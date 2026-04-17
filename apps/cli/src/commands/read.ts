@@ -14,6 +14,7 @@ import { openDongle } from "../driver/hid.ts";
 import { identify, modelIdFromConfig, readFullConfig, type ServoMode } from "../driver/protocol.ts";
 import { ExitCode } from "../errors.ts";
 import { listParameters, type ParameterValue } from "../parameters.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { renderParamTable, renderStatusBar } from "../util/tui.ts";
 
 export interface ReadFlags {
@@ -96,7 +97,7 @@ function decodedParameters(config: Buffer, modelId: string, mode: ServoMode) {
 }
 
 function emitJson(config: Buffer, mode: ServoMode, debug: boolean): void {
-  const modelId = modelIdFromConfig(config);
+  const modelId = modelIdFromConfig(toUint8Array(config));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
   const { mapped, notYetMapped } = decodedParameters(config, modelId, mode);
@@ -136,7 +137,7 @@ function formatHumanValue(value: ParameterValue): string {
 }
 
 function emitHuman(config: Buffer, mode: ServoMode, _global: GlobalFlags, debug: boolean): void {
-  const modelId = modelIdFromConfig(config);
+  const modelId = modelIdFromConfig(toUint8Array(config));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
   const { rows, notYetMapped } = decodedParameters(config, modelId, mode);

@@ -11,6 +11,7 @@ import { listDongles, openDongle } from "../driver/hid.ts";
 import { identify, modelIdFromConfig, readFullConfig, type ServoMode } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { CLEAR_LINE, HIDE_CURSOR, renderStatusBar, SHOW_CURSOR } from "../util/tui.ts";
 
 const POLL_INTERVAL_MS = 300;
@@ -70,7 +71,7 @@ export async function runMonitor(flags: GlobalFlags): Promise<number> {
               if (cachedModelName === null) {
                 try {
                   const config = await readFullConfig(handle);
-                  const modelId = modelIdFromConfig(config);
+                  const modelId = modelIdFromConfig(toUint8Array(config));
                   const catalog = loadCatalog();
                   const model = findModel(catalog, modelId);
                   cachedModelName = model?.name ?? modelId;

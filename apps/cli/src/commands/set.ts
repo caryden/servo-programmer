@@ -33,6 +33,7 @@ import {
   notYetMappedReason,
   type ParameterSpec,
 } from "../parameters.ts";
+import { cloneBuffer, toUint8Array } from "../util/bytes.ts";
 import { confirm } from "../util/prompt.ts";
 
 export interface SetFlags {
@@ -83,7 +84,7 @@ export async function runSetWithHandle(
 
   // 2. read current config
   const currentConfig = await readFullConfig(handle);
-  const modelId = modelIdFromConfig(currentConfig);
+  const modelId = modelIdFromConfig(toUint8Array(currentConfig));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
   if (!model) {
@@ -106,7 +107,7 @@ export async function runSetWithHandle(
     // axon set default [--backup <path>]
     if (local.backup) {
       try {
-        writeFileSync(local.backup, currentConfig);
+        writeFileSync(local.backup, toUint8Array(currentConfig));
       } catch (e) {
         throw AxonError.validation(
           `failed to write backup file ${local.backup}: ${(e as Error).message}`,
@@ -229,7 +230,7 @@ export async function runSetWithHandle(
   }
 
   // 5. write
-  await writeFullConfig(handle, newConfig);
+  await writeFullConfig(handle, toUint8Array(newConfig));
 
   // 6. read back + verify
   const verify = await readFullConfig(handle);
@@ -330,7 +331,7 @@ function applyAllDefaults(
   modelId: string,
   mode: ServoMode,
 ): { config: Buffer; changes: ParamChange[] } {
-  let config: Buffer = Buffer.from(current);
+  let config: Buffer = cloneBuffer(current);
   const changes: ParamChange[] = [];
   for (const spec of listParameters()) {
     if (!spec.modes.includes(mode)) continue;
@@ -354,7 +355,7 @@ function applyAllDefaults(
       beforeText: formatForDiff(spec, before.physical),
       afterText: formatForDiff(spec, after.physical),
     });
-    config = Buffer.from(next);
+    config = cloneBuffer(next);
   }
   return { config, changes };
 }

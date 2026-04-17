@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BundledFirmware } from "./catalog.ts";
+import { toUint8Array } from "./util/bytes.ts";
 
 export const FIRMWARE_DOWNLOAD_URL = "https://docs.axon-robotics.com/archive/programmer";
 
@@ -56,8 +57,8 @@ interface FirmwareSearchOptions {
   includeDevDownloads?: boolean;
 }
 
-function sha256Hex(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
+function sha256Hex(bytes: ArrayLike<number>): string {
+  return createHash("sha256").update(toUint8Array(bytes)).digest("hex");
 }
 
 function pushUnique(

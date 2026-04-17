@@ -26,6 +26,7 @@ import {
   type ParameterSpec,
   type ParameterValue,
 } from "../parameters.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { renderStatusBar } from "../util/tui.ts";
 
 export interface GetFlags {
@@ -67,7 +68,7 @@ export async function runGetWithHandle(
 
   // 2. read config → get model id
   const config = await readFullConfig(handle);
-  const modelId = modelIdFromConfig(config);
+  const modelId = modelIdFromConfig(toUint8Array(config));
   const catalog = loadCatalog();
   const model = findModel(catalog, modelId);
   if (!model) {

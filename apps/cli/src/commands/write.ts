@@ -27,6 +27,7 @@ import {
 } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { confirm } from "../util/prompt.ts";
 
 export interface WriteFlags {
@@ -88,8 +89,8 @@ async function runWriteBytesWithHandle(
   const currentBytes = await readFullConfig(handle);
 
   // 3. Model-id sanity check before building or showing a diff.
-  const currentModel = modelIdFromConfig(currentBytes);
-  const newModel = modelIdFromConfig(newBytes);
+  const currentModel = modelIdFromConfig(toUint8Array(currentBytes));
+  const newModel = modelIdFromConfig(toUint8Array(newBytes));
   if (currentModel.length === 0) {
     throw AxonError.validation("Connected servo reported an empty model id. Refusing to write.");
   }
@@ -148,7 +149,7 @@ async function runWriteBytesWithHandle(
   }
 
   // 7. Write
-  await writeFullConfig(handle, newBytes);
+  await writeFullConfig(handle, toUint8Array(newBytes));
 
   // 8. Read back and verify
   const verify = await readFullConfig(handle);

@@ -36,6 +36,7 @@ import {
 } from "../driver/protocol.ts";
 import type { DongleHandle } from "../driver/transport.ts";
 import { AxonError, ExitCode } from "../errors.ts";
+import { toUint8Array } from "../util/bytes.ts";
 import { renderStatusBar } from "../util/tui.ts";
 
 type StatusCategory =
@@ -188,7 +189,7 @@ export async function runStatus(flags: GlobalFlags): Promise<number> {
       throw e;
     }
 
-    const modelId = modelIdFromConfig(config);
+    const modelId = modelIdFromConfig(toUint8Array(config));
     const catalog = loadCatalog();
     const model = findModel(catalog, modelId);
 

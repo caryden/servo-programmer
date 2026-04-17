@@ -27,6 +27,7 @@ import {
   type ModelDefaultValue,
 } from "./catalog.ts";
 import { AxonError } from "./errors.ts";
+import { cloneBuffer } from "./util/bytes.ts";
 
 // ---------------------------------------------------------------------
 // Public types
@@ -94,7 +95,7 @@ function maxRangeDeg(modelId: string): number {
 }
 
 function cloneConfig(config: Buffer): Buffer {
-  return Buffer.from(config);
+  return cloneBuffer(config);
 }
 
 function requireCatalogEntry(name: string): CatalogParameterSpec {
