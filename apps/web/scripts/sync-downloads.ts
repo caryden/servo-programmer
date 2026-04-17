@@ -18,6 +18,9 @@ if (existsSync(targetDir)) {
 mkdirSync(targetDir, { recursive: true });
 
 for (const entry of readdirSync(sourceDir)) {
+  if (!entry.toLowerCase().endsWith(".sfw")) {
+    continue;
+  }
   cpSync(join(sourceDir, entry), join(targetDir, entry), { recursive: true });
 }
 

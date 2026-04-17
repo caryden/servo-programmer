@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run ./scripts/sync-downloads.ts && bun build ./src/index.ts --target browser --format esm --outdir ./dist",
+    "build:pages": "bun run build && bun run ./scripts/build-pages.ts",
     "check": "bun x @biomejs/biome check src scripts package.json index.html",
     "test": "playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
