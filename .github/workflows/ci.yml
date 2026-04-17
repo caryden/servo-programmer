@@ -44,17 +44,21 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
 
       - name: Install dependencies
-        working-directory: axon
         run: bun install --frozen-lockfile
 
+      - name: Install Playwright browsers (Linux)
+        if: runner.os == 'Linux'
+        run: bun x playwright install --with-deps chromium
+
+      - name: Install Playwright browsers (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: bun x playwright install chromium
+
       - name: Biome check
-        working-directory: axon
         run: bun run check
 
       - name: Typecheck
-        working-directory: axon
         run: bun run typecheck
 
       - name: Test
-        working-directory: axon
-        run: bun test
+        run: bun run test

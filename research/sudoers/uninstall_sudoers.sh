@@ -33,6 +33,6 @@ fi
 echo "  $DEST is gone."
 echo
 echo "Sanity check — the axon CLI should now work without sudo:"
-echo "    cd axon && bun run src/cli.ts status"
+echo "    cd apps/cli && bun run src/cli.ts status"
 echo
 echo "If that works, the libusb-era sudoers setup is fully gone."

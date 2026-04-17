@@ -1,0 +1,26 @@
+{
+  "name": "@axon/web-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run ./scripts/sync-downloads.ts && bun build ./src/index.ts --target browser --format esm --outdir ./dist",
+    "build:pages": "bun run build && bun run ./scripts/build-pages.ts",
+    "check": "bun x @biomejs/biome check src scripts package.json index.html",
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "bun run build && python3 -m http.server 8765",
+    "start": "bun run build && python3 -m http.server 8765",
+    "live": "bun run build && bun run ./server.ts"
+  },
+  "dependencies": {
+    "@axon/core": "workspace:*",
+    "@axon/transport-webhid": "workspace:*",
+    "@axon/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

@@ -5,7 +5,7 @@ in the `servo-programmer` distribution and confirms they are
 compatible with the project's MIT license.
 
 The audit was generated on 2026-04-09 from the dependency tree of
-`axon/package.json` at commit `4963ab1`, using `bun pm ls --all`.
+`apps/cli/package.json` at commit `4963ab1`, using `bun pm ls --all`.
 
 ## Summary
 
@@ -32,7 +32,7 @@ library `hidapi` that ships inside the `node-hid` tarball.
 
 `hidapi` is tri-licensed: the user may choose GPL-3.0, a BSD-style
 license, or the original permissive HIDAPI license. See
-`axon/node_modules/node-hid/hidapi/LICENSE.txt`. We use it under the
+`node_modules/node-hid/hidapi/LICENSE.txt`. We use it under the
 **BSD-3-Clause** option, which is MIT-compatible. The BSD-3-Clause
 attribution clause requires reproducing the copyright notice in binary
 distributions; the notice will be carried in the third-party notices

@@ -3,7 +3,7 @@
 This directory holds **everything we did to figure out how the Axon
 servo programmer works**, kept here for reproducibility and so the
 [blog post](../docs/the-adventure.md) has receipts. None of these
-files are imported by the production CLI in [`../axon/`](../axon/) —
+files are imported by the production CLI in [`../apps/cli/`](../apps/cli/) —
 they're archaeology.
 
 ## What's in each subdirectory
@@ -48,3 +48,9 @@ The chronological path is:
 The full first-person narrative — with the dead ends, the
 "aha" moments, and the reflections on doing this with an agent —
 is in [`docs/the-adventure.md`](../docs/the-adventure.md).
+
+Two artifacts that began as research have now graduated into active app
+packages:
+
+- [`../apps/web/`](../apps/web/) — the browser WebHID PoC
+- [`../apps/desktop/`](../apps/desktop/) — the Electrobun desktop PoC

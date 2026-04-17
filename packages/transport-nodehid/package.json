@@ -1,0 +1,23 @@
+{
+  "name": "@axon/transport-nodehid",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/hid.ts",
+    "./nodehid": "./src/nodehid.ts"
+  },
+  "scripts": {
+    "check": "bun x @biomejs/biome check src package.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@axon/core": "workspace:*",
+    "node-hid": "^3.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

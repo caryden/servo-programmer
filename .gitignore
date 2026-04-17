@@ -30,9 +30,14 @@ ENV/
 
 # Node / Bun
 node_modules/
+.turbo/
 *.log
-axon/bin/
-axon/dist/
+apps/cli/bin/
+apps/cli/dist/
+apps/web/dist/
+apps/web/.pages/
+playwright-report/
+test-results/
 
 # Capture files (large binary data)
 captures/*.sal

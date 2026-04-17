@@ -1,0 +1,22 @@
+{
+  "name": "@axon/transport-webhid",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "bun x @biomejs/biome check src package.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@axon/core": "workspace:*",
+    "@axon/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
