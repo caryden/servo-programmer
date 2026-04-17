@@ -1,8 +1,12 @@
 /**
- * Tests for the production HID transport wrapper in `src/driver/hid.ts`.
+ * Tests for the production node-hid transport in
+ * `packages/transport-nodehid/src/hid.ts`.
  *
- * These use a mocked node-hid binding wrapper from the transport package
- * so we can exercise the adapter logic without requiring a programmer.
+ * These bypass the CLI re-export layer on purpose. Other CLI command tests
+ * mock `src/driver/hid.ts`, and importing that wrapper here can race with
+ * those mocks on Windows. By importing the transport package source directly,
+ * this file exercises the real HID wrapper without sharing a module identity
+ * with the higher-level CLI tests.
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -43,7 +47,7 @@ describe("hid transport", () => {
       close(): void {}
     }
 
-    await mock.module("@axon/transport-nodehid/nodehid", () => ({
+    await mock.module("../../../../packages/transport-nodehid/src/nodehid.ts", () => ({
       getNodeHidBinding: () => ({
         devices: () => [device],
         HID: FakeHID,
@@ -51,7 +55,7 @@ describe("hid transport", () => {
     }));
 
     const { listDongles, openDongle, REPORT_SIZE } = await import(
-      "../../src/driver/hid.ts?hid-transport-test"
+      "../../../../packages/transport-nodehid/src/hid.ts?hid-transport-test"
     );
 
     expect(listDongles()).toHaveLength(1);
