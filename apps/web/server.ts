@@ -51,6 +51,12 @@ function resolvePath(url: URL): string | null {
   if (url.pathname === "/" || url.pathname === "/index.html") {
     return join(webRoot, "index.html");
   }
+  if (url.pathname === "/favicon.ico") {
+    return join(webRoot, "favicon.ico");
+  }
+  if (url.pathname === "/favicon.png") {
+    return join(webRoot, "favicon.png");
+  }
   if (url.pathname.startsWith("/dist/")) {
     return safeJoin(join(webRoot, "dist"), decodeURIComponent(url.pathname.slice("/dist/".length)));
   }
