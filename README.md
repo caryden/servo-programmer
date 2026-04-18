@@ -105,6 +105,28 @@ packaging path. The CLI remains the primary supported install surface;
 desktop packaging is still experimental. Tagged releases are intended
 to publish a macOS DMG alongside the CLI assets.
 
+### Experimental desktop app (macOS)
+
+Download the latest experimental desktop app from the
+[latest release](https://github.com/caryden/servo-programmer/releases/latest):
+
+- `Axon-Servo-Programmer-macos-arm64.dmg`
+
+Install path:
+
+1. download the DMG from the latest release
+2. open it and drag `Axon Servo Programmer.app` into `Applications`
+3. launch it from `Applications`
+
+Notes:
+
+- this app is still experimental
+- current packaged desktop release is macOS Apple Silicon only
+- because the app is not yet signed/notarized, macOS may require
+  `right-click -> Open` the first time
+- desktop assets are published by the tagged release workflow; merging
+  to `main` alone does not create a downloadable DMG
+
 ## Features
 
 Current source supports:
