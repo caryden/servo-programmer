@@ -10,7 +10,7 @@ the binaries.
 
 There are four distinct pieces:
 
-1. A **git tag** such as `v1.1.0`
+1. A **git tag** such as `v1.2.0`
 2. A **GitHub Actions release workflow run**
 3. A **draft GitHub Release** associated with that tag
 4. The **published GitHub Release** that end users see as the latest release
@@ -59,8 +59,8 @@ flowchart TD
    ```bash
    git checkout main
    git pull --ff-only
-   git tag -a v1.1.0 -m "v1.1.0"
-   git push origin v1.1.0
+   git tag -a v1.2.0 -m "v1.2.0"
+   git push origin v1.2.0
    ```
 
 5. Watch the workflow:
@@ -73,8 +73,8 @@ flowchart TD
 6. Inspect the draft release:
 
    ```bash
-   gh release view v1.1.0
-   gh release view v1.1.0 --json isDraft,url,assets,body
+   gh release view v1.2.0
+   gh release view v1.2.0 --json isDraft,url,assets,body
    ```
 
 7. Confirm the draft has:
@@ -91,13 +91,13 @@ flowchart TD
 9. Publish the draft release:
 
    ```bash
-   gh release edit v1.1.0 --draft=false
+   gh release edit v1.2.0 --draft=false
    ```
 
 10. Verify the public page:
 
     ```bash
-   gh release view v1.1.0 --json isDraft,url,publishedAt
+   gh release view v1.2.0 --json isDraft,url,publishedAt
     ```
 
 ## Rerunning a release for an existing tag
@@ -108,7 +108,7 @@ cut a fake new version just to re-run the pipeline.
 Use the manual dispatch path against the existing tag:
 
 ```bash
-gh workflow run Release --ref main -f tag=v1.1.0
+gh workflow run Release --ref main -f tag=v1.2.0
 ```
 
 That asks the workflow to rebuild and recreate or update the draft
@@ -121,7 +121,7 @@ opaque URL segment like `untagged-<random>`. That does **not** mean the
 release lost its tag. Check the actual tag association with:
 
 ```bash
-gh release view v1.1.0 --json tagName,isDraft,url
+gh release view v1.2.0 --json tagName,isDraft,url
 ```
 
 Once published, the public release path should resolve normally under

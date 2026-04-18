@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-04-18
+
+### Added
+
+- A live GitHub Pages deployment for the WebHID browser app, including
+  bundled firmware assets for in-browser mode switching and recovery.
+- An experimental macOS desktop release artifact built with
+  Electrobun. Tagged releases now publish
+  `Axon-Servo-Programmer-macos-arm64.dmg` alongside the CLI assets.
+- Guided recovery flows in the web and desktop apps that can recover a
+  servo from either bundled model/mode firmware or a user-selected
+  `.sfw` file.
+
+### Changed
+
+- The web and desktop apps now share the production apply/discard
+  workflow: verified same-mode apply, Servo/CR mode switching, and a
+  blocking progress modal for destructive operations.
+- The desktop app is now explicitly documented as a side experiment
+  used to prove fidelity with the shared CLI/web stack and to explore a
+  macOS packaging path.
+- README and install docs now describe all three delivery surfaces:
+  released CLI, live browser app, and the experimental macOS desktop
+  app.
+
+### Fixed
+
+- Browser mode switching now uses browser-safe `.sfw` decryption,
+  hardened flash timeouts, and reduced UI churn during flash/reconnect.
+- Desktop mode switching no longer risks breaking firmware flashes on
+  RPC timeout; flashing now runs as a long-lived Bun job with progress
+  events instead of a normal timeout-bound request.
+- Shared UI and chart logic were corrected across web/desktop,
+  including operating-point invariants, chart alignment, axis scaling,
+  tooltip behavior, and log scrolling during active operations.
+
 ## [1.1.0] — 2026-04-17
 
 ### Changed
@@ -151,7 +187,8 @@ this revision — but the working CLI runs from source.
   rule is **adapter first, then servo**. `dev.reset()` (libusb)
   wipes primed state and is therefore destructive — never call it.
 
-[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/caryden/servo-programmer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/caryden/servo-programmer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/caryden/servo-programmer/compare/61e2c41...v1.0.0
 [0.1.0]: https://github.com/caryden/servo-programmer/tree/61e2c41
