@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -11,25 +12,28 @@ if (!wrapperBundlePath || !appVersion || targetOs !== "macos") {
 
 const infoPlistPath = join(wrapperBundlePath, "Contents", "Info.plist");
 const original = readFileSync(infoPlistPath, "utf8");
+let updated = original;
 
-if (original.includes("CFBundleShortVersionString")) {
-  process.exit(0);
+if (!original.includes("CFBundleShortVersionString")) {
+  const replacement = [
+    "<key>CFBundleVersion</key>",
+    `    <string>${appVersion}</string>`,
+    "    <key>CFBundleShortVersionString</key>",
+    `    <string>${appVersion}</string>`,
+  ].join("\n");
+
+  updated = original.replace(
+    /<key>CFBundleVersion<\/key>\s*<string>.*?<\/string>/,
+    replacement,
+  );
+
+  if (updated === original) {
+    throw new Error(`Could not patch ${infoPlistPath} with CFBundleShortVersionString`);
+  }
+
+  writeFileSync(infoPlistPath, updated);
 }
 
-const replacement = [
-  "<key>CFBundleVersion</key>",
-  `    <string>${appVersion}</string>`,
-  "    <key>CFBundleShortVersionString</key>",
-  `    <string>${appVersion}</string>`,
-].join("\n");
-
-const updated = original.replace(
-  /<key>CFBundleVersion<\/key>\s*<string>.*?<\/string>/,
-  replacement,
-);
-
-if (updated === original) {
-  throw new Error(`Could not patch ${infoPlistPath} with CFBundleShortVersionString`);
-}
-
-writeFileSync(infoPlistPath, updated);
+execFileSync("codesign", ["--force", "--deep", "--sign", "-", wrapperBundlePath], {
+  stdio: "inherit",
+});

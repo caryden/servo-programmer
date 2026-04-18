@@ -10,7 +10,7 @@ the binaries.
 
 There are four distinct pieces:
 
-1. A **git tag** such as `v1.2.0`
+1. A **git tag** such as `v1.2.1`
 2. A **GitHub Actions release workflow run**
 3. A **draft GitHub Release** associated with that tag
 4. The **published GitHub Release** that end users see as the latest release
@@ -27,7 +27,7 @@ flowchart TD
     D --> E["Push tag to origin"]
     E --> F["GitHub Actions: Release workflow"]
     F --> G["Build CLI binaries<br/>linux-x64, linux-arm64,<br/>darwin-arm64, darwin-x64,<br/>windows-x64"]
-    F --> H["Build desktop macOS artifact<br/>DMG + raw app archive"]
+    F --> H["Build desktop macOS artifact<br/>DMG"]
     G --> I["Upload temporary Actions artifacts"]
     H --> I
     I --> J["Release job downloads artifacts<br/>and creates or updates a<br/>draft GitHub Release"]
@@ -59,8 +59,8 @@ flowchart TD
    ```bash
    git checkout main
    git pull --ff-only
-   git tag -a v1.2.0 -m "v1.2.0"
-   git push origin v1.2.0
+   git tag -a v1.2.1 -m "v1.2.1"
+   git push origin v1.2.1
    ```
 
 5. Watch the workflow:
@@ -73,8 +73,8 @@ flowchart TD
 6. Inspect the draft release:
 
    ```bash
-   gh release view v1.2.0
-   gh release view v1.2.0 --json isDraft,url,assets,body
+   gh release view v1.2.1
+   gh release view v1.2.1 --json isDraft,url,assets,body
    ```
 
 7. Confirm the draft has:
@@ -91,13 +91,13 @@ flowchart TD
 9. Publish the draft release:
 
    ```bash
-   gh release edit v1.2.0 --draft=false
+   gh release edit v1.2.1 --draft=false
    ```
 
 10. Verify the public page:
 
     ```bash
-   gh release view v1.2.0 --json isDraft,url,publishedAt
+   gh release view v1.2.1 --json isDraft,url,publishedAt
     ```
 
 ## Rerunning a release for an existing tag
@@ -108,7 +108,7 @@ cut a fake new version just to re-run the pipeline.
 Use the manual dispatch path against the existing tag:
 
 ```bash
-gh workflow run Release --ref main -f tag=v1.2.0
+gh workflow run Release --ref main -f tag=v1.2.1
 ```
 
 That asks the workflow to rebuild and recreate or update the draft
@@ -121,7 +121,7 @@ opaque URL segment like `untagged-<random>`. That does **not** mean the
 release lost its tag. Check the actual tag association with:
 
 ```bash
-gh release view v1.2.0 --json tagName,isDraft,url
+gh release view v1.2.1 --json tagName,isDraft,url
 ```
 
 Once published, the public release path should resolve normally under
@@ -137,7 +137,7 @@ The release workflow has three jobs:
 
 2. `build-desktop-macos`
    - builds the experimental desktop app on `macos-14`
-   - packages a DMG plus a raw `.app.tar.zst` archive
+   - packages the experimental macOS DMG
    - normalizes the release filenames
    - uploads them as temporary GitHub Actions artifacts
 
@@ -167,7 +167,6 @@ The release currently publishes:
 - matching `.sha256` files
 - `install.sh`
 - `Axon-Servo-Programmer-macos-arm64.dmg`
-- `Axon-Servo-Programmer-macos-arm64.app.tar.zst`
 
 The desktop artifacts are intentionally macOS-only for now. Windows and
 Linux desktop packaging are out of scope for the current release path.

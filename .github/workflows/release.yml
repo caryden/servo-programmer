@@ -142,13 +142,6 @@ jobs:
             cp "$file" "release-desktop/Axon-Servo-Programmer-macos-${arch}.dmg"
           done
 
-          for file in apps/desktop/artifacts/stable-macos-*-AxonServoProgrammer.app.tar.zst; do
-            [[ -e "$file" ]] || continue
-            arch="${file#apps/desktop/artifacts/stable-macos-}"
-            arch="${arch%-AxonServoProgrammer.app.tar.zst}"
-            cp "$file" "release-desktop/Axon-Servo-Programmer-macos-${arch}.app.tar.zst"
-          done
-
           ls -la release-desktop/
 
       - name: Upload desktop artifact
@@ -199,7 +192,6 @@ jobs:
             axon-windows-x64.exe
             axon-windows-x64.exe.sha256
             Axon-Servo-Programmer-macos-arm64.dmg
-            Axon-Servo-Programmer-macos-arm64.app.tar.zst
             install.sh
           )
 
@@ -262,6 +254,5 @@ jobs:
             ### Experimental desktop app (macOS)
 
             - Apple Silicon macOS build: `Axon-Servo-Programmer-macos-arm64.dmg`
-            - Raw app bundle archive: `Axon-Servo-Programmer-macos-arm64.app.tar.zst`
             - This desktop app is still an experimental side project built with Electrobun.
             - If Gatekeeper warns on first launch, open the app via Finder with right-click → `Open`.

@@ -61,13 +61,11 @@ bun run clean
 bun run package
 ```
 
-Current stable build outputs land in:
+Current stable build output lands in:
 
 - `apps/desktop/artifacts/stable-macos-arm64-AxonServoProgrammer.dmg`
-- `apps/desktop/artifacts/stable-macos-arm64-AxonServoProgrammer.app.tar.zst`
 
-The DMG is the end-user install path. The `.app.tar.zst` archive is the
-raw packaged bundle used as a fallback/debug artifact.
+The DMG is the end-user install path.
 
 ## Notes
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-04-18
+
+### Fixed
+
+- The experimental macOS desktop app release now re-signs the wrapped
+  app bundle after the post-wrap `Info.plist` patch, so the shipped DMG
+  installs as a normal unsigned app instead of a damaged bundle.
+- The public release no longer ships the stale raw `.app.tar.zst`
+  artifact that was created before the final bundle re-sign.
+
 ## [1.2.0] — 2026-04-18
 
 ### Added
@@ -187,7 +197,8 @@ this revision — but the working CLI runs from source.
   rule is **adapter first, then servo**. `dev.reset()` (libusb)
   wipes primed state and is therefore destructive — never call it.
 
-[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/caryden/servo-programmer/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/caryden/servo-programmer/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/caryden/servo-programmer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/caryden/servo-programmer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/caryden/servo-programmer/compare/61e2c41...v1.0.0

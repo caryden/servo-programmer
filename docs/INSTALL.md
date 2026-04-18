@@ -164,7 +164,7 @@ To install a specific release instead of the latest published one:
 
 ```bash
 curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | \
-  AXON_VERSION=v1.2.0 bash
+  AXON_VERSION=v1.2.1 bash
 ```
 
 For a no-sudo install:
