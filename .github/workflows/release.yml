@@ -107,9 +107,63 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-desktop-macos:
+    name: build desktop macos
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build packaged desktop app
+        run: |
+          cd apps/desktop
+          bun run clean
+          bun run package
+
+      - name: Normalize desktop artifact names
+        shell: bash
+        run: |
+          mkdir -p release-desktop
+
+          for file in apps/desktop/artifacts/stable-macos-*-AxonServoProgrammer.dmg; do
+            [[ -e "$file" ]] || continue
+            arch="${file#apps/desktop/artifacts/stable-macos-}"
+            arch="${arch%-AxonServoProgrammer.dmg}"
+            cp "$file" "release-desktop/Axon-Servo-Programmer-macos-${arch}.dmg"
+          done
+
+          for file in apps/desktop/artifacts/stable-macos-*-AxonServoProgrammer.app.tar.zst; do
+            [[ -e "$file" ]] || continue
+            arch="${file#apps/desktop/artifacts/stable-macos-}"
+            arch="${arch%-AxonServoProgrammer.app.tar.zst}"
+            cp "$file" "release-desktop/Axon-Servo-Programmer-macos-${arch}.app.tar.zst"
+          done
+
+          ls -la release-desktop/
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: release-desktop/*
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: release
-    needs: build
+    needs:
+      - build
+      - build-desktop-macos
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -126,7 +180,7 @@ jobs:
       - name: Flatten artifact tree
         run: |
           mkdir -p release
-          find artifacts -type f \( -name 'axon-*' -o -name '*.sha256' \) -exec cp {} release/ \;
+          find artifacts -type f \( -name 'axon-*' -o -name '*.sha256' -o -name 'Axon-Servo-Programmer-*' \) -exec cp {} release/ \;
           cp scripts/install.sh release/install.sh
           ls -la release/
 
@@ -144,6 +198,8 @@ jobs:
             axon-linux-x64.sha256
             axon-windows-x64.exe
             axon-windows-x64.exe.sha256
+            Axon-Servo-Programmer-macos-arm64.dmg
+            Axon-Servo-Programmer-macos-arm64.app.tar.zst
             install.sh
           )
 
@@ -202,3 +258,10 @@ jobs:
             - Full install matrix: [docs/INSTALL.md](https://github.com/caryden/servo-programmer/blob/main/docs/INSTALL.md)
             - Project background: [docs/the-adventure.md](https://github.com/caryden/servo-programmer/blob/main/docs/the-adventure.md)
             - Homebrew, npm, and Scoop remain planned follow-on channels; direct download and `install.sh` are the v1.0 path.
+
+            ### Experimental desktop app (macOS)
+
+            - Apple Silicon macOS build: `Axon-Servo-Programmer-macos-arm64.dmg`
+            - Raw app bundle archive: `Axon-Servo-Programmer-macos-arm64.app.tar.zst`
+            - This desktop app is still an experimental side project built with Electrobun.
+            - If Gatekeeper warns on first launch, open the app via Finder with right-click → `Open`.

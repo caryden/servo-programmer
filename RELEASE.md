@@ -1,6 +1,7 @@
 # Release Process
 
-Maintainer-facing notes for cutting and publishing a release of `axon`.
+Maintainer-facing notes for cutting and publishing a release of `axon`
+plus the experimental macOS desktop app artifact.
 
 `INSTALL.md` is for end users. This document is for the person shipping
 the binaries.
@@ -25,15 +26,17 @@ flowchart TD
     C --> D["Create annotated tag<br/>vX.Y.Z"]
     D --> E["Push tag to origin"]
     E --> F["GitHub Actions: Release workflow"]
-    F --> G["Build platform binaries<br/>linux-x64, linux-arm64,<br/>darwin-arm64, darwin-x64,<br/>windows-x64"]
-    G --> H["Upload temporary Actions artifacts"]
-    H --> I["Release job downloads artifacts<br/>and creates or updates a<br/>draft GitHub Release"]
-    I --> J["Review assets and release notes"]
-    J --> K["Download one release asset<br/>from the draft release"]
-    K --> L["Verify SHA-256"]
-    L --> M["Run downloaded binary<br/>against real hardware"]
-    M --> N["Publish the draft release"]
-    N --> O["install.sh latest/download now points at this release"]
+    F --> G["Build CLI binaries<br/>linux-x64, linux-arm64,<br/>darwin-arm64, darwin-x64,<br/>windows-x64"]
+    F --> H["Build desktop macOS artifact<br/>DMG + raw app archive"]
+    G --> I["Upload temporary Actions artifacts"]
+    H --> I
+    I --> J["Release job downloads artifacts<br/>and creates or updates a<br/>draft GitHub Release"]
+    J --> K["Review assets and release notes"]
+    K --> L["Download one release asset<br/>from the draft release"]
+    L --> M["Verify SHA-256"]
+    M --> N["Run downloaded binary or app<br/>against real hardware"]
+    N --> O["Publish the draft release"]
+    O --> P["install.sh latest/download now points at this release"]
 ```
 
 ## Where the mechanics live
@@ -48,6 +51,8 @@ flowchart TD
 
 1. Make sure `main` is the intended release commit and CI is green.
 2. Update [apps/cli/package.json](apps/cli/package.json) to the release version.
+   The desktop app bundle version is derived from that file, so there is
+   no second desktop version to bump manually.
 3. Update [CHANGELOG.md](CHANGELOG.md) with the dated release entry.
 4. Create and push the tag:
 
@@ -75,6 +80,7 @@ flowchart TD
 7. Confirm the draft has:
    - all expected assets
    - `install.sh`
+   - the experimental macOS desktop DMG
    - release notes that match the corresponding `CHANGELOG.md` entry
    - the project-story link to `docs/the-adventure.md`
 
@@ -123,13 +129,19 @@ Once published, the public release path should resolve normally under
 
 ## What the release workflow actually does
 
-The release workflow has two jobs:
+The release workflow has three jobs:
 
 1. `build`
    - builds the standalone binaries on the appropriate runners
    - uploads them as temporary GitHub Actions artifacts
 
-2. `release`
+2. `build-desktop-macos`
+   - builds the experimental desktop app on `macos-14`
+   - packages a DMG plus a raw `.app.tar.zst` archive
+   - normalizes the release filenames
+   - uploads them as temporary GitHub Actions artifacts
+
+3. `release`
    - downloads those temporary artifacts
    - flattens them into one directory
    - adds `install.sh`
@@ -142,6 +154,23 @@ Important distinction:
 - **Release assets** are the files attached to the GitHub release page
 
 End users only care about the release assets.
+
+## Current release asset set
+
+The release currently publishes:
+
+- `axon-darwin-arm64`
+- `axon-darwin-x64`
+- `axon-linux-arm64`
+- `axon-linux-x64`
+- `axon-windows-x64.exe`
+- matching `.sha256` files
+- `install.sh`
+- `Axon-Servo-Programmer-macos-arm64.dmg`
+- `Axon-Servo-Programmer-macos-arm64.app.tar.zst`
+
+The desktop artifacts are intentionally macOS-only for now. Windows and
+Linux desktop packaging are out of scope for the current release path.
 
 ## Native HID packaging note
 

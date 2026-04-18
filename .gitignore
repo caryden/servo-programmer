@@ -34,6 +34,8 @@ node_modules/
 *.log
 apps/cli/bin/
 apps/cli/dist/
+apps/desktop/artifacts/
+apps/desktop/build/
 apps/web/dist/
 apps/web/.pages/
 playwright-report/
