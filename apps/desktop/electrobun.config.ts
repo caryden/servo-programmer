@@ -1,10 +1,16 @@
+import { readFileSync } from "node:fs";
 import type { ElectrobunConfig } from "electrobun";
+
+const cliPackage = JSON.parse(
+  readFileSync(new URL("../cli/package.json", import.meta.url), "utf8"),
+) as { version?: string };
+const appVersion = cliPackage.version ?? "0.0.1";
 
 export default {
   app: {
     name: "Axon Servo Programmer",
     identifier: "com.caryden.axon.servo-programmer",
-    version: "0.0.1",
+    version: appVersion,
   },
   build: {
     views: {
@@ -28,5 +34,8 @@ export default {
     win: {
       bundleCEF: false,
     },
+  },
+  scripts: {
+    postWrap: "./scripts/post-wrap.ts",
   },
 } satisfies ElectrobunConfig;

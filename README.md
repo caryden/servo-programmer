@@ -2,9 +2,12 @@
 
 > Cross-platform replacement for the legacy Axon Robotics Servo
 > Programming Software: a released CLI, a live browser app, and a
-> desktop app built from scratch by reverse-engineering a closed HW/SW
-> system with [Claude Code](https://claude.com/claude-code), a Saleae
-> Logic 8, and Ghidra.
+> desktop side experiment built with Electrobun to prove UI/runtime
+> fidelity against the CLI and web app, and to explore a macOS app
+> packaging path, all built from scratch by reverse-engineering a
+> closed HW/SW system with
+> [Claude Code](https://claude.com/claude-code), a Saleae Logic 8, and
+> Ghidra.
 >
 > This started as a research experiment — *"how far can a single
 > developer get with a coding agent on a reverse-engineering project
@@ -96,7 +99,33 @@ axon --version
 axon status
 ```
 
-There is no desktop app installer yet. The desktop app remains a source/dev build for now.
+The desktop app was a side experiment with Electrobun. We pushed it far
+enough to prove fidelity with the CLI/web stack and to explore a macOS
+packaging path. The CLI remains the primary supported install surface;
+desktop packaging is still experimental. Tagged releases are intended
+to publish a macOS DMG alongside the CLI assets.
+
+### Experimental desktop app (macOS)
+
+Download the latest experimental desktop app from the
+[latest release](https://github.com/caryden/servo-programmer/releases/latest):
+
+- `Axon-Servo-Programmer-macos-arm64.dmg`
+
+Install path:
+
+1. download the DMG from the latest release
+2. open it and drag `Axon Servo Programmer.app` into `Applications`
+3. launch it from `Applications`
+
+Notes:
+
+- this app is still experimental
+- current packaged desktop release is macOS Apple Silicon only
+- because the app is not yet signed/notarized, macOS may require
+  `right-click -> Open` the first time
+- desktop assets are published by the tagged release workflow; merging
+  to `main` alone does not create a downloadable DMG
 
 ## Features
 
@@ -189,7 +218,7 @@ The repo is now organized as a Bun workspace:
 
 - [`apps/cli/`](apps/cli/) — production `axon` CLI
 - [`apps/web/`](apps/web/) — browser WebHID app
-- [`apps/desktop/`](apps/desktop/) — Electrobun desktop app
+- [`apps/desktop/`](apps/desktop/) — Electrobun desktop PoC / side experiment
 - [`packages/core/`](packages/core/) — shared transport-agnostic protocol/catalog logic
 - [`packages/ui/`](packages/ui/) — shared probe UI used by the browser and desktop apps
 - [`packages/transport-nodehid/`](packages/transport-nodehid/) — Node/Bun HID transport

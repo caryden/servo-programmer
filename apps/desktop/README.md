@@ -1,6 +1,10 @@
 # Electrobun App
 
-This is the desktop Axon Servo Programmer built with Electrobun.
+This is the desktop Axon Servo Programmer built with Electrobun. It is
+still best understood as a side experiment: the goal was to prove that
+the shared UI and shared core logic could survive a native desktop
+packaging path, not to replace the CLI or web app as the primary
+surface.
 
 ## Why this shape
 
@@ -46,6 +50,24 @@ bun install
 cd /Users/caryden/github/servo-programmer/apps/desktop
 bun run start
 ```
+
+## Package it
+
+To build a production desktop artifact locally on macOS:
+
+```bash
+cd /Users/caryden/github/servo-programmer/apps/desktop
+bun run clean
+bun run package
+```
+
+Current stable build outputs land in:
+
+- `apps/desktop/artifacts/stable-macos-arm64-AxonServoProgrammer.dmg`
+- `apps/desktop/artifacts/stable-macos-arm64-AxonServoProgrammer.app.tar.zst`
+
+The DMG is the end-user install path. The `.app.tar.zst` archive is the
+raw packaged bundle used as a fallback/debug artifact.
 
 ## Notes
 

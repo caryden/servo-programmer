@@ -13,6 +13,7 @@ Pick the install method that matches how you work.
 | macOS (Apple Silicon or Intel)| `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
 | Linux (x64 or arm64)          | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
 | Windows (x64)                 | Download `axon-windows-x64.exe`, rename it to `axon.exe`, and put it on `%PATH%`                 |
+| macOS desktop app (experimental) | Download `Axon-Servo-Programmer-macos-arm64.dmg` from the latest release and drag the app to `Applications` |
 | "I already have a Node toolchain" | `npm install -g @caryden/axon` *(once published)*                                            |
 | "I already have a Bun toolchain"  | `bunx @caryden/axon` *(once published; runs without installing)*                             |
 | "I'm in CI and need a one-liner"  | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
@@ -83,6 +84,30 @@ Pick the install method that matches how you work.
    $env:Path += ";$HOME\\bin"
    axon --version
    ```
+
+## Experimental desktop app (macOS)
+
+The desktop app is an Electrobun side experiment. It shares the same
+core logic and UI as the CLI/web surfaces, but the packaged app itself
+is still experimental.
+
+Download from the [latest release](https://github.com/caryden/servo-programmer/releases/latest):
+
+- `Axon-Servo-Programmer-macos-arm64.dmg`
+
+Install:
+
+1. open the DMG
+2. drag `Axon Servo Programmer.app` into `Applications`
+3. launch it from `Applications`
+
+Notes:
+
+- current packaged desktop builds are macOS Apple Silicon only
+- because the app is not yet signed/notarized, macOS may require
+  `right-click -> Open` on first launch
+- desktop artifacts are published by the tagged release workflow; a
+  merge to `main` does not by itself create a downloadable DMG
 
 ## Homebrew (macOS / Linuxbrew)
 

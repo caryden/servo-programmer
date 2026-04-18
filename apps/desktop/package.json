@@ -1,10 +1,15 @@
 {
   "name": "@axon/desktop-poc",
-  "version": "0.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "bun x @biomejs/biome check src package.json electrobun.config.ts",
+    "check": "bun x @biomejs/biome check src scripts package.json electrobun.config.ts",
+    "clean": "rm -rf build artifacts",
+    "build": "electrobun build --env=dev",
+    "build:canary": "electrobun build --env=canary",
+    "build:stable": "electrobun build --env=stable",
+    "package": "electrobun build --env=stable",
     "start": "electrobun dev",
     "dev": "electrobun dev --watch",
     "typecheck": "tsc --noEmit"
