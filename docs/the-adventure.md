@@ -4,6 +4,11 @@
 system end-to-end with Claude Code, a Saleae Logic 8, and a lot of wrong
 turns.*
 
+> Update, 2026-04-17: this story now has a released CLI, a live GitHub
+> Pages WebHID app, and a desktop app behind it. The narrative below is
+> still the original path through the reverse-engineering work; the
+> later productization steps are summarized in Sections 11 and 14.
+
 ## 1. The hook
 
 I have an FTC robot, and it uses Axon smart servos. Axon sells a little
@@ -156,6 +161,8 @@ A Saleae Logic 8 is a USB logic analyzer with eight channels. Clip a
 lead onto a wire, tell its software (Logic 2) what kind of signal to
 expect, and it records edges at up to 100 MS/s. I opened the dongle's
 3-wire connector and clipped Channel 0 to the signal wire.
+
+![Saleae Logic 8 clipped onto the Axon programmer signal wire during the capture setup.](assets/saleae-setup.jpeg)
 
 I had no idea what baud rate the servo used, but 8051-family micros
 almost all use one of a handful of boilerplate baud rates: 9600,
@@ -381,9 +388,10 @@ I spent the next hour deleting things. Sudoers rule, gone.
 `dev.reset()` calls, gone. libusb imports, gone. What was left was a
 tiny, sudo-free, cross-platform transport.
 
-## 11. Building the CLI
+## 11. From reverse engineering to product surface
 
-The production client is in [`apps/cli/`](../apps/cli/). Stack:
+The first production client was the CLI in
+[`apps/cli/`](../apps/cli/). Stack:
 
 - **Bun** — fast TypeScript runtime with built-in bundler, produces
   single-file standalone binaries for Mac, Linux, and Windows.
@@ -405,7 +413,7 @@ clever: open by VID/PID, write 64-byte output reports, read 64-byte
 input reports. No `dev.reset()` anywhere — node-hid doesn't even
 expose a reset primitive, so the footgun is impossible by construction.
 
-The v1.0 command surface, spec'd in
+The original v1.0 command surface, spec'd in
 [`docs/CLI_DESIGN.md`](CLI_DESIGN.md):
 
 ```
@@ -418,11 +426,31 @@ axon set <param> <value>    # read-modify-write with diff-confirm
 axon mode set <name>        # flash a known firmware mode
 ```
 
-Today, `status`, `monitor`, `read`, and `write` are working. `get` /
-`set` with named parameters and `mode set` are the remaining v1.0
-items. The current direction is to make the CLI itself navigable for
-both humans and agents through `--help`, stable JSON output, and
-error messages that say what to do next.
+That is no longer just a plan. Today the repo has:
+
+- a **released CLI** with standalone binaries for macOS, Linux, and
+  Windows, plus a release-hosted `install.sh`
+- a **browser WebHID app** in [`apps/web/`](../apps/web/) published at
+  [caryden.github.io/servo-programmer](https://caryden.github.io/servo-programmer/)
+- a **desktop app** in [`apps/desktop/`](../apps/desktop/) built with
+  Electrobun, using the same shared UI and most of the same shared
+  protocol/config code as the web app
+
+The current shared layout looks like this:
+
+- [`packages/core/`](../packages/core/) — protocol, catalog, flashing,
+  config encode/decode
+- [`packages/ui/`](../packages/ui/) — shared Servo/CR setup UI,
+  operating-point charts, apply/recovery flows
+- [`packages/transport-nodehid/`](../packages/transport-nodehid/) —
+  Node/Bun HID transport
+- [`packages/transport-webhid/`](../packages/transport-webhid/) —
+  browser WebHID transport
+
+The important part is that the reverse-engineered facts did not stay
+trapped in research scripts. They turned into a shipping toolchain:
+CLI release, web deployment, desktop runtime, recovery flows, and a
+firmware/apply path exercised on real hardware.
 
 ## 12. Reflection: reverse-engineering closed systems
 
@@ -459,10 +487,10 @@ it's a commodity logic analyzer — but because it gave me an
 independent, un-lying source of truth about what was actually
 happening at the wire.
 
-## 13. Reflection: working with Claude Code on a project like this
+## 13. Reflection: working with Claude Code, then Codex
 
 The point of the exercise was partly to answer: *how does an agent
-like Claude Code change the calculus of a project like this?*
+change the calculus of a project like this?*
 
 **Where the agent was strong.** Reading decompilation. Parallel
 exploration ("go look at X, Y, Z in Ghidra at once"). Writing small
@@ -472,45 +500,87 @@ All the "I know what I want, I just don't want to type it" work. A
 human alone would have spent a week on what we got through in a day
 or two.
 
-**Where the agent was weak.** The libusb detour. Claude Code committed
-hard to "hidapi is broken" right alongside me and we both kept
-reinforcing it for a day. In retrospect the agent should have been
-pushing back with "wait, we never actually proved that — let's write
-the five-minute test," and I should have been listening harder.
-There's also context window pressure on long projects: we'd
+**Where the agent was weak.** The libusb detour. Claude Code jumped
+straight to "hidapi is broken," then got itself into a self-reinforcing
+loop around that conclusion until I finally broke it out of it. That
+was an early indication that it was not going to be able to do this
+kind of work without a lot of human guidance. In retrospect the agent
+should have been pushing back with "wait, we never actually proved
+that — let's write the five-minute test." There's also context window
+pressure on long projects: we'd
 occasionally have to rebuild mental state across sessions, which a
 human collaborator doesn't have as sharply. The work-around is
 aggressive note-taking into living documents in the repo — which is
 exactly what [`research/`](../research/) is.
 
+There was also a clear breaking point where I stopped using Claude Code
+and switched to Codex. The repo history marks it pretty cleanly. Issue
+[#31](https://github.com/caryden/servo-programmer/issues/31) is the
+last big "something is wrong with the agent workflow itself" moment: a
+review pass that surfaced four P0 bugs plus a pile of cleanups after
+too many confident-but-wrong claims about byte mappings, parameter
+support, and what had supposedly been verified. The next day, the
+branch history flips over to `codex/*` work — first the hardening and
+recovery PRs [#59](https://github.com/caryden/servo-programmer/pull/59),
+[#60](https://github.com/caryden/servo-programmer/pull/60), and
+[#61](https://github.com/caryden/servo-programmer/pull/61), then later
+the workspace split, shared UI/runtime work, recovery flows, Pages
+deployment, and release engineering in PRs like
+[#77](https://github.com/caryden/servo-programmer/pull/77) and
+[#82](https://github.com/caryden/servo-programmer/pull/82).
+
+The reason was simple: Claude Code had become actively unreliable for
+this repo. At the end I literally asked it to convince me to keep using
+it, and the answer started with: *"I can't convince you. The pattern
+speaks for itself."* That was accurate. It had helped a lot with the
+early reverse-engineering push, but by that point it was too eager to
+self-certify work that had not actually been proved against the vendor
+software or real hardware. Codex was not magic, but it was better at
+working in narrower increments, keeping the reasoning explicit, and
+holding up under repeated "prove it on the bench" demands. That switch
+is part of the story too, because the shipped web/desktop/runtime work
+mostly happened after it.
+
 **Who did what.** *I* supplied the hardware, ran the Saleae captures
 in Logic 2, replugged the servo every time the dongle went cold, made
 the architectural calls (Bun, Electrobun as the GUI target, MIT
-license, what features belonged in v1 vs. v1.1), and insisted on the
-dual-capture experiment that finally broke the impasse. *Claude Code*
-drove Ghidra headless and read the decompilation, wrote all seven
-libusb test scripts and the hidapi retry, decoded the wire captures,
-reconstructed the 95-byte config block layout, built the CLI
-scaffolding and the transport-abstraction refactor, set up the test
-infrastructure, wrote the unit tests, and drafted most of the docs.
-Neither half alone would have finished this in any reasonable time.
-The research-experiment answer is: with a good agent, a single
-developer can take on a reverse-engineering project of this shape and
-actually ship it.
+license, what features belonged in v1 vs. v1.1), insisted on the
+dual-capture experiment that finally broke the impasse, and forced the
+real-hardware verification bar whenever an agent started bluffing.
+*Claude Code* drove most of the early reverse-engineering work:
+Ghidra, the seven libusb test scripts, the hidapi retry, the initial
+wire-capture decoding, the first pass on the 95-byte config mapping,
+and the original CLI scaffolding. *Codex* picked up the later product
+phase: hardening the CLI, shipping releases, splitting the workspace,
+building the shared UI, wiring the browser and desktop apps, and doing
+the long stretch of "okay, now prove it actually works on the Micro"
+integration work. Neither half alone would have finished this in any
+reasonable time. The research-experiment answer is still yes: with a
+good agent and a human who refuses to accept hand-wavy verification, a
+single developer can take on a reverse-engineering project of this
+shape and actually ship it.
 
 ## 14. What's next
 
-The v0.1 CLI — status, monitor, read, write — is working today. The
-v1.0 items on the
-[milestone](https://github.com/caryden/servo-programmer/milestones)
-are named parameters with unit conversion, firmware mode flashing,
-cross-compiled standalone binaries, and the remaining release polish.
+The "can we read and write the servo at all?" question is answered.
+The remaining work is more specific now:
 
-One request: **if you have an Axon Max, Mini, or Micro and you'd run
-the CLI against it and send me the output, I'd like to add your servo
-to [`data/servo_catalog.json`](../data/servo_catalog.json).** I've
-only tested on my own Mini. Open an issue on
-[`caryden/servo-programmer`](https://github.com/caryden/servo-programmer/issues).
+- **Catalog completion**
+  - Micro is the primary development hardware and most of the current
+    CLI/web/desktop work has been validated on it, but the Servo-mode
+    defaults and final physical constants still need to be captured
+    cleanly
+  - Mini is the baseline catalog model and needs a fresh end-to-end
+    validation pass against the current GUI/recovery flows
+  - Max is recognized and routed correctly, but still needs physical
+    config/default capture before it can be called complete
+- **Desktop distribution**
+  - the desktop app works from source, but does not yet have a release
+    pipeline or installers
+- **Recovery and regression hardening**
+  - destructive flows now exist in CLI, web, and desktop, so the
+    remaining work is less about protocol discovery and more about
+    making those flows mechanically hard to misuse
 
 If you have a different closed USB device you'd like to try
 reverse-engineering, I'd suggest starting the same way I did:

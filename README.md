@@ -1,9 +1,10 @@
 # servo-programmer
 
-> Cross-platform CLI replacement for the legacy Axon Robotics Servo
-> Programming Software, built from scratch by reverse-engineering a
-> closed HW/SW system with [Claude Code](https://claude.com/claude-code),
-> a Saleae Logic 8, and Ghidra.
+> Cross-platform replacement for the legacy Axon Robotics Servo
+> Programming Software: a released CLI, a live browser app, and a
+> desktop app built from scratch by reverse-engineering a closed HW/SW
+> system with [Claude Code](https://claude.com/claude-code), a Saleae
+> Logic 8, and Ghidra.
 >
 > This started as a research experiment — *"how far can a single
 > developer get with a coding agent on a reverse-engineering project
@@ -12,6 +13,10 @@
 
 [![CI](https://github.com/caryden/servo-programmer/actions/workflows/ci.yml/badge.svg)](https://github.com/caryden/servo-programmer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> [!WARNING]
+> This is an experimental reverse-engineered project. Use it on your
+> servos at your own risk.
 
 ## What this is
 
@@ -30,6 +35,68 @@ writes the same 95-byte config block, and flashes user-supplied vendor
 The current Axon MK2 programmer/servo family uses bootloader v1.4 and
 is not implemented yet. The HID/protocol layers are intentionally kept
 separate so this project can be adapted if hardware becomes available.
+
+## Use it now
+
+### Browser app
+
+Live WebHID app:
+
+- [https://caryden.github.io/servo-programmer/](https://caryden.github.io/servo-programmer/)
+
+Notes:
+
+- Requires a Chromium-family browser with WebHID support
+- Requires HTTPS or localhost; GitHub Pages satisfies that
+- Best suited to desktops/laptops; this is not intended for phone/tablet use
+
+### CLI install
+
+#### macOS and Linux
+
+Install the latest released CLI with the release-hosted installer:
+
+```bash
+curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | bash
+```
+
+For a user-local install without sudo:
+
+```bash
+curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | \
+  AXON_INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+#### Windows
+
+Download the latest Windows binary from the
+[latest release](https://github.com/caryden/servo-programmer/releases/latest):
+
+- `axon-windows-x64.exe`
+
+Rename it to `axon.exe`, put it on `%PATH%`, then run:
+
+```powershell
+axon --version
+```
+
+#### Verify the install
+
+On macOS/Linux:
+
+```bash
+axon --version
+axon status
+```
+
+On Windows:
+
+```powershell
+axon --version
+axon status
+```
+
+There is no desktop app installer yet. The desktop app remains a source/dev build for now.
 
 ## Features
 
@@ -69,7 +136,7 @@ Current source supports:
 
 Full command surface: [docs/CLI_DESIGN.md](docs/CLI_DESIGN.md).
 
-## Quick start
+## Build from source
 
 ```bash
 # 1. Install Bun if you don't have it
@@ -98,12 +165,14 @@ bun run src/cli.ts --json status
 
 No `sudo` required on any platform.
 
+Full end-user CLI install notes are in [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Supported servos
 
 | Model ID   | Name       | Catalog status |
 |------------|------------|----------------|
-| `SA33****` | Axon Mini  | Confirmed on hardware; full v1 parameter defaults and firmware hashes are cataloged |
-| `SA20BHS*` | Axon Micro | Confirmed on hardware in CR mode; CR defaults and firmware hashes are cataloged, servo-mode defaults still need capture |
+| `SA33****` | Axon Mini  | Baseline supported model; defaults and firmware hashes are cataloged, fresh GUI/runtime validation is still tracked separately |
+| `SA20BHS*` | Axon Micro | Primary development hardware; same-mode apply, mode switching, discard, and recovery are confirmed in CLI/web/desktop, with servo-mode catalog completion still pending |
 | `SA81BHMW` | Axon Max   | Model ID and firmware hashes are known from `.sfw` headers; physical config/default capture still needed |
 
 **Got an Axon Max, another Micro capture, or an unknown model?** Please
@@ -119,10 +188,10 @@ I'll add the model/defaults to
 The repo is now organized as a Bun workspace:
 
 - [`apps/cli/`](apps/cli/) — production `axon` CLI
-- [`apps/web/`](apps/web/) — browser WebHID PoC
-- [`apps/desktop/`](apps/desktop/) — Electrobun desktop PoC
+- [`apps/web/`](apps/web/) — browser WebHID app
+- [`apps/desktop/`](apps/desktop/) — Electrobun desktop app
 - [`packages/core/`](packages/core/) — shared transport-agnostic protocol/catalog logic
-- [`packages/ui/`](packages/ui/) — shared probe UI used by the browser and desktop PoCs
+- [`packages/ui/`](packages/ui/) — shared probe UI used by the browser and desktop apps
 - [`packages/transport-nodehid/`](packages/transport-nodehid/) — Node/Bun HID transport
 - [`packages/transport-webhid/`](packages/transport-webhid/) — browser WebHID transport
 
@@ -164,12 +233,12 @@ axon mode set servo --recover micro
 
 ## How it was built
 
-The whole thing is a research experiment: a single developer plus a
-coding agent (Claude Code), pointed at a closed vendor stack, to see
-how far the pair could get. The agent drove the tools — Ghidra,
-libusb, hidapi, the Saleae automation API, ETW captures in a Parallels
-Windows VM — and I supplied hardware, architectural choices, and the
-occasional "wait, that's wrong."
+The whole thing is a research experiment: a single developer plus
+coding agents, pointed at a closed vendor stack, to see how far that
+pairing could get. The tools that actually mattered were Ghidra,
+Saleae wire capture, hidapi/node-hid, WebHID, and some ETW captures in
+a Parallels Windows VM. `libusb` was part of the investigation, but it
+turned out to be a dead end rather than part of the final system.
 
 The path:
 
@@ -184,9 +253,8 @@ The path:
    proved the dongle is a transparent HID-to-wire proxy — every byte
    written to HID interface 1 shows up unchanged on the serial line.
 4. **A libusb detour** chasing what looked like a transport bug turned
-   out to be a misdiagnosed protocol bug. We pivoted back to plain
-   hidapi, which is simpler, has no sudo requirements, and worked on
-   the first try.
+   out to be a misdiagnosed protocol bug. The final shipping clients
+   use hidapi/node-hid and WebHID instead.
 5. **A clean CLI** on Bun + node-hid, with the catalog embedded at
    build time and externally supplied `.sfw` files decrypted
    internally.
@@ -249,8 +317,11 @@ and protocol-edge-case `.sal` captures are also welcome.
   [Bun](https://bun.sh) maintainers** for the open infrastructure
   this sits on top of.
 - **Anthropic** and **[Claude Code](https://claude.com/claude-code)**
-  for the agent that drove most of the hands-on work. This project
-  would not exist in its current form without it.
+  for the early reverse-engineering push that got the project off the
+  ground.
+- **OpenAI** and **Codex** for the later hardening, shared UI,
+  browser/desktop integration, recovery flows, releases, and overall
+  productization push that turned the research repo into a usable tool.
 
 ## License
 

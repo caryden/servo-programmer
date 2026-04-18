@@ -9,7 +9,7 @@ the binaries.
 
 There are four distinct pieces:
 
-1. A **git tag** such as `v1.0.0`
+1. A **git tag** such as `v1.1.0`
 2. A **GitHub Actions release workflow run**
 3. A **draft GitHub Release** associated with that tag
 4. The **published GitHub Release** that end users see as the latest release
@@ -20,7 +20,7 @@ Those are related, but they are not the same object.
 
 ```mermaid
 flowchart TD
-    A["Merge release-prep changes to main"] --> B["Bump axon/package.json version"]
+    A["Merge release-prep changes to main"] --> B["Bump apps/cli/package.json version"]
     B --> C["Update CHANGELOG.md"]
     C --> D["Create annotated tag<br/>vX.Y.Z"]
     D --> E["Push tag to origin"]
@@ -47,15 +47,15 @@ flowchart TD
 ## Standard release checklist
 
 1. Make sure `main` is the intended release commit and CI is green.
-2. Update [axon/package.json](axon/package.json) to the release version.
+2. Update [apps/cli/package.json](apps/cli/package.json) to the release version.
 3. Update [CHANGELOG.md](CHANGELOG.md) with the dated release entry.
 4. Create and push the tag:
 
    ```bash
    git checkout main
    git pull --ff-only
-   git tag -a v1.0.0 -m "v1.0.0 - first public release"
-   git push origin v1.0.0
+   git tag -a v1.1.0 -m "v1.1.0"
+   git push origin v1.1.0
    ```
 
 5. Watch the workflow:
@@ -68,8 +68,8 @@ flowchart TD
 6. Inspect the draft release:
 
    ```bash
-   gh release view v1.0.0
-   gh release view v1.0.0 --json isDraft,url,assets,body
+   gh release view v1.1.0
+   gh release view v1.1.0 --json isDraft,url,assets,body
    ```
 
 7. Confirm the draft has:
@@ -85,13 +85,13 @@ flowchart TD
 9. Publish the draft release:
 
    ```bash
-   gh release edit v1.0.0 --draft=false
+   gh release edit v1.1.0 --draft=false
    ```
 
 10. Verify the public page:
 
     ```bash
-    gh release view v1.0.0 --json isDraft,url,publishedAt
+   gh release view v1.1.0 --json isDraft,url,publishedAt
     ```
 
 ## Rerunning a release for an existing tag
@@ -102,7 +102,7 @@ cut a fake new version just to re-run the pipeline.
 Use the manual dispatch path against the existing tag:
 
 ```bash
-gh workflow run Release --ref main -f tag=v1.0.0
+gh workflow run Release --ref main -f tag=v1.1.0
 ```
 
 That asks the workflow to rebuild and recreate or update the draft
@@ -115,7 +115,7 @@ opaque URL segment like `untagged-<random>`. That does **not** mean the
 release lost its tag. Check the actual tag association with:
 
 ```bash
-gh release view v1.0.0 --json tagName,isDraft,url
+gh release view v1.1.0 --json tagName,isDraft,url
 ```
 
 Once published, the public release path should resolve normally under
@@ -147,7 +147,7 @@ End users only care about the release assets.
 
 The standalone binaries intentionally embed the platform-specific
 `node-hid` N-API prebuild selected by
-[axon/src/driver/nodehid.ts](axon/src/driver/nodehid.ts).
+[apps/cli/src/driver/nodehid.ts](apps/cli/src/driver/nodehid.ts).
 
 That file exists for a specific reason: Bun standalone executables can
 embed `.node` addons when they are required directly, but the stock

@@ -2,16 +2,20 @@
 
 This directory holds **everything we did to figure out how the Axon
 servo programmer works**, kept here for reproducibility and so the
-[blog post](../docs/the-adventure.md) has receipts. None of these
-files are imported by the production CLI in [`../apps/cli/`](../apps/cli/) —
-they're archaeology.
+[project narrative](../docs/the-adventure.md) has receipts. None of these
+files are part of the shipped release artifacts. They're archaeology,
+evidence, and lab notes for the products that grew out of this work:
+
+- [`../apps/cli/`](../apps/cli/) — released cross-platform CLI
+- [`../apps/web/`](../apps/web/) — live WebHID app on GitHub Pages
+- [`../apps/desktop/`](../apps/desktop/) — Electrobun desktop app
 
 ## What's in each subdirectory
 
 | Subdirectory | What's there | Why we kept it |
 |---|---|---|
 | [`python-tests/`](python-tests/) | All the Python scripts we used to probe the dongle: `axon_libusb_test{,2..7}.py`, `axon_hid_test_probe.py`, `axon_libusb_test_monitor.py`, `axon_libusb_test_status.py`, `hid_probe.py`, the upstream Saleae automation library, and a couple of one-off interleave / monitor scripts | Each one is a chapter in the reverse-engineering story. The numbered `axon_libusb_test*.py` series in particular is the path of progressively-smarter experiments that led to the final working protocol understanding. The `axon_hid_test_probe.py` is the 5-minute hidapi retest that proved libusb was never actually needed. |
-| [`saleae-captures/`](saleae-captures/) | Decoded Async Serial CSV exports from the Saleae Logic 2 software, plus small `.sal` session files | These are the wire captures we built our protocol understanding on top of. The 0xCD capture decoded the read flow; the 0xCB capture decoded the write flow; the dual_test7 capture confirmed the dongle is a transparent HID-to-wire proxy. [`axon-recover-micro-2026-04-11-summary.md`](saleae-captures/axon-recover-micro-2026-04-11-summary.md) confirms the firmware recovery/flash path uses 115200 8N1 and then returns to 9600 identify traffic. The 160 MB `Session 0.sal` is gitignored — re-capture if needed. |
+| [`saleae-captures/`](saleae-captures/) | Decoded Async Serial CSV exports from the Saleae Logic 2 software, plus small `.sal` session files | These are the wire captures we built our protocol understanding on top of. The 0xCD capture decoded the read flow; the 0xCB capture decoded the write flow; the dual_test7 capture confirmed the dongle is a transparent HID-to-wire proxy. [`axon-recover-micro-2026-04-11-summary.md`](saleae-captures/axon-recover-micro-2026-04-11-summary.md) confirms the firmware recovery/flash path uses 115200 8N1 and then returns to 9600 identify traffic. The 160 MB `Session 0.sal` is gitignored — re-capture if needed. These captures are still the first place to check when a later UI/runtime change needs wire-level validation. |
 | [`etw-traces/`](etw-traces/) | Windows ETW trace of the vendor exe running in Parallels: `axon-usb.etl` (binary) and `axon-usb.xml` (decoded) | This is the only USB-side capture we have from the Windows host. Useful as cross-check that our hidapi-side TX bytes match what the vendor exe emits. |
 | [`static-analysis/`](static-analysis/) | Decompiled vendor exe source (Ghidra output), the Jython scripts that drove `analyzeHeadless`, the early capstone/pefile probe (`static_analyze.py`), and the Saleae CSV decoder (`decode_saleae_csv.py`) | The Ghidra output is the primary source of truth for "which byte of the config block means what" — see [`docs/BYTE_MAPPING.md`](../docs/BYTE_MAPPING.md). The decoder is reusable for any future capture. |
 | [`decrypted-firmware/`](decrypted-firmware/) | The four `.plain.bin` plaintexts from running our `.sfw` decrypter against the bundled Axon Mini and Max firmware files | Ground truth for the TypeScript SFW decrypter port in [#11](https://github.com/caryden/servo-programmer/issues/11). |
@@ -49,8 +53,16 @@ The full first-person narrative — with the dead ends, the
 "aha" moments, and the reflections on doing this with an agent —
 is in [`docs/the-adventure.md`](../docs/the-adventure.md).
 
-Two artifacts that began as research have now graduated into active app
-packages:
+Several artifacts that began as research have now graduated into active
+product/runtime packages:
 
-- [`../apps/web/`](../apps/web/) — the browser WebHID PoC
-- [`../apps/desktop/`](../apps/desktop/) — the Electrobun desktop PoC
+- [`../apps/cli/`](../apps/cli/) — released production CLI
+- [`../apps/web/`](../apps/web/) — the browser WebHID app
+- [`../apps/desktop/`](../apps/desktop/) — the Electrobun desktop app
+
+What still lives only here:
+
+- raw captures
+- one-off Python probes
+- Ghidra output and scratch analysis
+- historical dead ends that are still useful when something regresses

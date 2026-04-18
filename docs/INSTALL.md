@@ -12,7 +12,7 @@ Pick the install method that matches how you work.
 |-------------------------------|--------------------------------------------------------------------------------------------------|
 | macOS (Apple Silicon or Intel)| `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
 | Linux (x64 or arm64)          | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
-| Windows (x64)                 | Download `axon-windows-x64.exe`, put it on `%PATH%`                                              |
+| Windows (x64)                 | Download `axon-windows-x64.exe`, rename it to `axon.exe`, and put it on `%PATH%`                 |
 | "I already have a Node toolchain" | `npm install -g @caryden/axon` *(once published)*                                            |
 | "I already have a Bun toolchain"  | `bunx @caryden/axon` *(once published; runs without installing)*                             |
 | "I'm in CI and need a one-liner"  | `curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh \| bash` |
@@ -64,7 +64,7 @@ Pick the install method that matches how you work.
    shasum -a 256 -c axon-darwin-arm64.sha256
    ```
 
-4. Make it executable and drop it on `$PATH`:
+4. Install it:
 
    ```bash
    chmod +x axon-darwin-arm64
@@ -72,8 +72,17 @@ Pick the install method that matches how you work.
    axon --version
    ```
 
-   On Windows, put `axon-windows-x64.exe` somewhere on `%PATH%`
-   (e.g. `C:\Users\<you>\bin\axon.exe`).
+   On Windows, rename `axon-windows-x64.exe` to `axon.exe`, then put it
+   somewhere on `%PATH%` (for example `C:\Users\<you>\bin\axon.exe`).
+
+   A minimal PowerShell path looks like this:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$HOME\\bin" | Out-Null
+   Move-Item .\\axon-windows-x64.exe "$HOME\\bin\\axon.exe"
+   $env:Path += ";$HOME\\bin"
+   axon --version
+   ```
 
 ## Homebrew (macOS / Linuxbrew)
 
@@ -130,7 +139,7 @@ To install a specific release instead of the latest published one:
 
 ```bash
 curl -fsSL https://github.com/caryden/servo-programmer/releases/latest/download/install.sh | \
-  AXON_VERSION=v1.0.0 bash
+  AXON_VERSION=v1.1.0 bash
 ```
 
 For a no-sudo install:
@@ -172,6 +181,13 @@ Linux you'll also need `libudev-dev` (Debian/Ubuntu) or `libudev`
 After installing via any method, run:
 
 ```bash
+axon --version
+axon status
+```
+
+On Windows PowerShell, the same commands are:
+
+```powershell
 axon --version
 axon status
 ```
